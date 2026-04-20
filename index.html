@@ -1,0 +1,1814 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aeris — الفضاء يبدأ من هنا</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg-primary:#0A1628;--bg-secondary:#050B14;--bg-tertiary:#0F1F35;--bg-card:#0D1B30;
+  --gold:#C9A961;--gold-light:#E8D4A8;--gold-dark:#8B7339;
+  --text-primary:#FAFAFA;--text-secondary:#A8B2C1;--text-muted:#6B7A8F;
+  --border:rgba(201,169,97,0.15);--border-strong:rgba(201,169,97,0.35);
+}
+*{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+html{scroll-behavior:smooth}
+body{background:var(--bg-primary);color:var(--text-primary);font-family:'IBM Plex Sans Arabic','Inter',sans-serif;font-weight:400;line-height:1.75;overflow-x:hidden;position:relative}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.79 0 0 0 0 0.66 0 0 0 0 0.38 0 0 0 0.08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");opacity:0.35;mix-blend-mode:overlay}
+.font-display{font-family:'Playfair Display',serif;letter-spacing:-0.01em}
+.font-inter{font-family:'Inter',sans-serif}
+.font-ar{font-family:'IBM Plex Sans Arabic',sans-serif}
+.gold{color:var(--gold)}.gold-light{color:var(--gold-light)}
+.text-sec{color:var(--text-secondary)}.text-mut{color:var(--text-muted)}
+.bg-card{background:var(--bg-card)}.bg-tert{background:var(--bg-tertiary)}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg-secondary)}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--gold-dark),var(--gold));border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--gold-light)}
+.progress-bar{position:fixed;top:0;left:0;right:0;height:2px;background:transparent;z-index:100}
+.progress-bar::after{content:"";position:absolute;top:0;right:0;height:100%;width:var(--progress,0%);background:linear-gradient(90deg,var(--gold-dark),var(--gold),var(--gold-light));box-shadow:0 0 12px rgba(201,169,97,0.5);transition:width 0.15s linear}
+.nav-dots{position:fixed;left:28px;top:50%;transform:translateY(-50%);z-index:50;display:flex;flex-direction:column;gap:14px}
+.nav-dot{width:8px;height:8px;border-radius:50%;background:rgba(168,178,193,0.25);border:1px solid transparent;cursor:pointer;transition:all 0.3s ease;position:relative;display:block}
+.nav-dot:hover{background:var(--gold);transform:scale(1.3)}
+.nav-dot.active{background:var(--gold);border-color:var(--gold-light);box-shadow:0 0 10px rgba(201,169,97,0.6)}
+.nav-dot .nav-label{position:absolute;left:20px;top:50%;transform:translateY(-50%);white-space:nowrap;font-size:11px;color:var(--text-secondary);opacity:0;pointer-events:none;transition:opacity 0.2s;font-family:'IBM Plex Sans Arabic',sans-serif;background:rgba(10,22,40,0.92);padding:4px 10px;border-radius:4px;border:1px solid var(--border)}
+.nav-dot:hover .nav-label{opacity:1}
+.gold-line{height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:0.5}
+.gold-line-draw{height:1px;background:var(--gold);transform-origin:center;transform:scaleX(0);transition:transform 1.4s cubic-bezier(0.65,0,0.35,1)}
+.gold-line-draw.visible{transform:scaleX(1)}
+.fade-up{opacity:0;transform:translateY(30px);transition:opacity 0.9s ease,transform 0.9s cubic-bezier(0.22,1,0.36,1)}
+.fade-up.visible{opacity:1;transform:translateY(0)}
+.fade-in{opacity:0;transition:opacity 1.1s ease}
+.fade-in.visible{opacity:1}
+.scale-in{opacity:0;transform:scale(0.96);transition:opacity 0.8s ease,transform 0.8s cubic-bezier(0.22,1,0.36,1)}
+.scale-in.visible{opacity:1;transform:scale(1)}
+.stagger > *{opacity:0;transform:translateY(20px);transition:opacity 0.7s ease,transform 0.7s cubic-bezier(0.22,1,0.36,1)}
+.stagger.visible > *{opacity:1;transform:translateY(0)}
+.stagger.visible > *:nth-child(1){transition-delay:0.05s}
+.stagger.visible > *:nth-child(2){transition-delay:0.15s}
+.stagger.visible > *:nth-child(3){transition-delay:0.25s}
+.stagger.visible > *:nth-child(4){transition-delay:0.35s}
+.stagger.visible > *:nth-child(5){transition-delay:0.45s}
+.stagger.visible > *:nth-child(6){transition-delay:0.55s}
+.stagger.visible > *:nth-child(7){transition-delay:0.65s}
+.stagger.visible > *:nth-child(8){transition-delay:0.75s}
+.stagger.visible > *:nth-child(9){transition-delay:0.85s}
+.card{background:linear-gradient(180deg,rgba(15,31,53,0.75),rgba(10,22,40,0.65));border:1px solid var(--border);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:4px;transition:all 0.5s cubic-bezier(0.22,1,0.36,1);position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:0;transition:opacity 0.5s}
+.card:hover{border-color:var(--border-strong);transform:translateY(-4px);box-shadow:0 20px 60px -20px rgba(201,169,97,0.18),0 0 0 1px rgba(201,169,97,0.1)}
+.card:hover::before{opacity:1}
+.glass{background:rgba(15,31,53,0.4);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1px solid var(--border)}
+.hero{position:relative;min-height:100vh;background:radial-gradient(ellipse at 50% 30%,rgba(201,169,97,0.08),transparent 60%),radial-gradient(ellipse at 20% 80%,rgba(201,169,97,0.04),transparent 50%),linear-gradient(180deg,#050B14 0%,#0A1628 50%,#050B14 100%);overflow:hidden}
+.hero-jet{position:absolute;inset:0;opacity:0.28;background:radial-gradient(ellipse 60% 40% at 50% 55%,rgba(255,255,255,0.06),transparent 70%),radial-gradient(ellipse 80% 20% at 50% 70%,rgba(201,169,97,0.08),transparent)}
+.hero-streak{position:absolute;height:1px;background:linear-gradient(90deg,transparent,rgba(201,169,97,0.5),transparent);opacity:0;animation:streakFade 3s ease-out forwards}
+@keyframes streakFade{0%{opacity:0;transform:translateX(-100px)}30%{opacity:1}100%{opacity:0;transform:translateX(100px)}}
+.hero-title{font-family:'Playfair Display',serif;font-weight:400;letter-spacing:0.28em;background:linear-gradient(180deg,var(--gold-light) 0%,var(--gold) 50%,var(--gold-dark) 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.scroll-ind{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);width:24px;height:40px;border:1px solid var(--border-strong);border-radius:12px;display:flex;justify-content:center;padding-top:8px}
+.scroll-ind::after{content:"";width:3px;height:8px;background:var(--gold);border-radius:2px;animation:scrollDot 2s ease-in-out infinite}
+@keyframes scrollDot{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(12px);opacity:0.3}}
+.section-tag{font-family:'Inter',sans-serif;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:var(--gold);display:inline-flex;align-items:center;gap:12px}
+.section-tag::before{content:"";width:32px;height:1px;background:var(--gold);display:block}
+.h-display{font-family:'Playfair Display',serif;font-weight:500;line-height:1.15;letter-spacing:-0.015em}
+.h-ar{font-family:'IBM Plex Sans Arabic',sans-serif;font-weight:500;line-height:1.3}
+.quote-block{font-family:'IBM Plex Sans Arabic',sans-serif;font-size:1.35rem;line-height:1.7;font-weight:400;color:var(--gold-light);border-right:2px solid var(--gold);padding-right:28px;position:relative}
+.timeline{position:relative}
+.timeline::before{content:"";position:absolute;right:32px;top:0;bottom:0;width:1px;background:linear-gradient(180deg,transparent 0%,var(--border-strong) 10%,var(--border-strong) 90%,transparent 100%)}
+.timeline-node{position:absolute;right:22px;width:22px;height:22px;border-radius:50%;background:var(--bg-primary);border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;z-index:2;top:8px}
+.timeline-node::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.timeline-num{font-family:'Playfair Display',serif;font-size:3.5rem;font-weight:500;line-height:1;background:linear-gradient(180deg,var(--gold-light),var(--gold-dark));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;opacity:0.9}
+.mockup-phone{width:240px;height:480px;background:linear-gradient(145deg,#1a2a42,#0d1a2e);border-radius:36px;padding:10px;box-shadow:0 30px 60px -20px rgba(0,0,0,0.7),0 0 0 1px rgba(201,169,97,0.15),inset 0 0 0 2px rgba(255,255,255,0.03);position:relative;flex-shrink:0}
+.mockup-phone::before{content:"";position:absolute;top:18px;left:50%;transform:translateX(-50%);width:70px;height:6px;background:#050B14;border-radius:3px;z-index:3}
+.mockup-screen{width:100%;height:100%;background:linear-gradient(180deg,#0A1628,#050B14);border-radius:26px;overflow:hidden;display:flex;flex-direction:column;padding:28px 14px 14px}
+.mockup-desktop{width:100%;max-width:520px;background:linear-gradient(145deg,#1a2a42,#0d1a2e);border-radius:10px;padding:6px;box-shadow:0 30px 60px -20px rgba(0,0,0,0.7),0 0 0 1px rgba(201,169,97,0.12)}
+.mockup-desktop-bar{height:22px;display:flex;align-items:center;gap:5px;padding:0 8px}
+.mockup-desktop-bar span{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.12)}
+.mockup-desktop-screen{background:linear-gradient(180deg,#0A1628,#050B14);border-radius:6px;padding:14px;min-height:280px;font-size:10px}
+.ui-pill{display:inline-block;padding:3px 8px;border-radius:10px;background:rgba(201,169,97,0.12);color:var(--gold-light);font-size:9px;font-weight:500}
+.ui-row{background:rgba(201,169,97,0.05);border:1px solid rgba(201,169,97,0.08);border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:9px;color:var(--text-secondary);display:flex;justify-content:space-between;align-items:center}
+.ui-row.gold{background:rgba(201,169,97,0.1);border-color:rgba(201,169,97,0.25)}
+.ui-line{height:5px;background:rgba(168,178,193,0.15);border-radius:2px;margin-bottom:5px}
+.ui-line.s{width:60%}
+.ui-line.m{width:80%}
+.ui-line.gold{background:linear-gradient(90deg,var(--gold-dark),var(--gold));height:4px}
+.comp-table{border-collapse:collapse;width:100%}
+.comp-table th,.comp-table td{padding:18px 20px;border-bottom:1px solid var(--border);text-align:right;font-size:14px}
+.comp-table th{font-family:'Playfair Display',serif;color:var(--gold);font-weight:500;font-size:15px;letter-spacing:0.02em;border-bottom:1px solid var(--border-strong);background:rgba(15,31,53,0.4)}
+.comp-table td:first-child{color:var(--text-secondary);font-weight:500}
+.comp-table tbody tr{transition:background 0.3s}
+.comp-table tbody tr:hover{background:rgba(201,169,97,0.03)}
+.comp-check{color:#9BC88F;font-weight:600}
+.comp-x{color:#C88F8F;font-weight:600}
+.comp-warn{color:var(--gold);font-weight:600}
+.badge{display:inline-block;padding:5px 12px;border:1px solid var(--border-strong);background:rgba(201,169,97,0.06);color:var(--gold-light);font-size:10px;letter-spacing:0.2em;text-transform:uppercase;font-family:'Inter',sans-serif;font-weight:500;border-radius:2px}
+.roadmap-track{position:relative;padding:40px 0}
+.roadmap-track::before{content:"";position:absolute;top:60px;left:5%;right:5%;height:1px;background:linear-gradient(90deg,transparent,var(--border-strong),var(--border-strong),transparent)}
+.roadmap-dot{width:16px;height:16px;border-radius:50%;background:var(--bg-primary);border:2px solid var(--gold);margin:0 auto;position:relative;z-index:2}
+.roadmap-dot.filled{background:var(--gold)}
+.step-num{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,var(--bg-tertiary),var(--bg-card));border:1px solid var(--border-strong);display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:26px;font-weight:500;color:var(--gold);position:relative;flex-shrink:0}
+.step-num::before{content:"";position:absolute;inset:-6px;border:1px solid var(--border);border-radius:50%;opacity:0.5}
+.container-x{max-width:1200px;margin:0 auto;padding:0 32px}
+.section-pad{padding:120px 0}
+.stat-num{font-family:'Playfair Display',serif;font-size:3.5rem;font-weight:500;line-height:1;background:linear-gradient(180deg,var(--gold-light),var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.icon-circle{width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,rgba(201,169,97,0.15),rgba(201,169,97,0.05));border:1px solid var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--gold);flex-shrink:0}
+.corner-ornament{position:absolute;width:50px;height:50px;border:1px solid var(--gold);opacity:0.4;pointer-events:none}
+.corner-ornament.tl{top:16px;right:16px;border-left:none;border-bottom:none}
+.corner-ornament.br{bottom:16px;left:16px;border-right:none;border-top:none}
+@media(max-width:900px){
+  .section-pad{padding:80px 0}
+  .container-x{padding:0 20px}
+  .nav-dots{left:10px;gap:10px}
+  .timeline::before{right:18px}
+  .timeline-node{right:8px}
+  .hero-title{font-size:3.5rem !important;letter-spacing:0.2em !important}
+  .mockup-phone{width:200px;height:400px}
+  .stat-num{font-size:2.5rem}
+}
+@media print{
+  .nav-dots,.progress-bar,.scroll-ind{display:none}
+  body{background:white;color:black}
+  .section-pad{padding:40px 0;page-break-inside:avoid}
+  .card{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progressBar"></div>
+
+<nav class="nav-dots" id="navDots">
+  <a class="nav-dot active" data-section="s1" href="#s1"><span class="nav-label">الغلاف</span></a>
+  <a class="nav-dot" data-section="s2" href="#s2"><span class="nav-label">ملخص المشروع</span></a>
+  <a class="nav-dot" data-section="s3" href="#s3"><span class="nav-label">الفرصة السوقية</span></a>
+  <a class="nav-dot" data-section="s4" href="#s4"><span class="nav-label">نموذج العمل</span></a>
+  <a class="nav-dot" data-section="s5" href="#s5"><span class="nav-label">المنظومة</span></a>
+  <a class="nav-dot" data-section="s6" href="#s6"><span class="nav-label">رحلة العميل</span></a>
+  <a class="nav-dot" data-section="s7" href="#s7"><span class="nav-label">رحلة المشغل</span></a>
+  <a class="nav-dot" data-section="s8" href="#s8"><span class="nav-label">إدارة المنصة</span></a>
+  <a class="nav-dot" data-section="s9" href="#s9"><span class="nav-label">الموقع التنافسي</span></a>
+  <a class="nav-dot" data-section="s10" href="#s10"><span class="nav-label">خارطة الطريق</span></a>
+  <a class="nav-dot" data-section="s11" href="#s11"><span class="nav-label">الموارد</span></a>
+  <a class="nav-dot" data-section="s12" href="#s12"><span class="nav-label">تقييم المخاطر</span></a>
+  <a class="nav-dot" data-section="s13" href="#s13"><span class="nav-label">مؤشرات النجاح</span></a>
+  <a class="nav-dot" data-section="s14" href="#s14"><span class="nav-label">الخطوات التالية</span></a>
+</nav>
+
+<!-- SECTION 1: HERO -->
+<section id="s1" class="hero" style="z-index:2">
+  <div class="hero-jet"></div>
+  <div class="hero-streak" style="top:22%;right:-100px;width:300px;animation-delay:0.5s"></div>
+  <div class="hero-streak" style="top:62%;right:-100px;width:400px;animation-delay:1.2s"></div>
+  <div class="hero-streak" style="top:45%;right:-100px;width:250px;animation-delay:2s"></div>
+  <div class="absolute inset-0 flex flex-col items-center justify-center px-6">
+    <div class="fade-in visible text-center max-w-4xl">
+      <div class="mb-10 flex justify-center"><div class="gold-line-draw visible" style="width:120px"></div></div>
+      <h1 class="hero-title text-7xl md:text-9xl mb-8">AERIS</h1>
+      <div class="flex items-center justify-center gap-6 mb-4">
+        <div class="gold-line-draw visible" style="width:60px;transition-delay:0.6s"></div>
+        <p class="font-ar text-xl md:text-2xl gold-light" style="letter-spacing:0.08em;font-weight:300">الفضاء يبدأ من هنا</p>
+        <div class="gold-line-draw visible" style="width:60px;transition-delay:0.6s"></div>
+      </div>
+      <p class="font-inter text-sm text-sec mt-3" style="letter-spacing:0.24em;text-transform:uppercase">Where the sky begins</p>
+      <div class="mt-20 flex flex-col items-center gap-3">
+        <p class="badge">نموذج مشروع تجاري</p>
+        <p class="font-inter text-xs text-mut mt-4" style="letter-spacing:0.18em">APRIL · 2026 &nbsp;·&nbsp; PREPARED BY BLTECH SOLUTIONS</p>
+      </div>
+    </div>
+  </div>
+  <div class="scroll-ind"></div>
+</section>
+
+<!-- SECTION 2: EXECUTIVE SUMMARY -->
+<section id="s2" class="section-pad relative" style="z-index:2">
+  <div class="container-x">
+    <div class="text-center mb-16 fade-up">
+      <span class="section-tag">01 · OVERVIEW</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">ملخص المشروع</h2>
+      <div class="gold-line mx-auto" style="width:80px"></div>
+    </div>
+    <div class="max-w-4xl mx-auto text-center fade-up">
+      <p class="font-ar text-xl md:text-2xl leading-relaxed text-sec" style="font-weight:300">
+        <span class="gold font-medium">Aeris</span> منصة رقمية متكاملة لقطاع الطيران الخاص، تربط بين العملاء المميزين والمشغلين المعتمدين عبر تجربة احترافية تليق بمستوى الخدمة. تقدم المنصة حلاً شاملاً لإدارة دورة حياة الرحلة بالكامل — من الطلب إلى الإقلاع — مع نموذج إيراد مستدام قائم على العمولات والاشتراكات.
+      </p>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-5 mt-20 stagger">
+      <div class="card p-8 text-center"><div class="stat-num" data-target="3">0</div><div class="gold-line mx-auto my-4" style="width:32px"></div><p class="text-sec text-sm">أدوار متكاملة</p></div>
+      <div class="card p-8 text-center"><div class="stat-num" data-target="24" data-suffix="/7">0</div><div class="gold-line mx-auto my-4" style="width:32px"></div><p class="text-sec text-sm">توفر النظام</p></div>
+      <div class="card p-8 text-center"><div class="stat-num" data-target="15" data-prefix="+">0</div><div class="gold-line mx-auto my-4" style="width:32px"></div><p class="text-sec text-sm">عملية مؤتمتة</p></div>
+      <div class="card p-8 text-center"><div class="stat-num" data-target="4">0</div><div class="gold-line mx-auto my-4" style="width:32px"></div><p class="text-sec text-sm">أشهر للإطلاق التجريبي</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 3: MARKET OPPORTUNITY -->
+<section id="s3" class="section-pad relative" style="z-index:2;background:linear-gradient(180deg,transparent,rgba(5,11,20,0.6),transparent)">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">02 · MARKET</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">الفرصة السوقية</h2>
+      <p class="text-sec mt-4 font-ar">لماذا الآن، ولماذا هذا السوق</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="card p-10 fade-up">
+        <div class="flex items-center gap-4 mb-8">
+          <div class="icon-circle"><i data-lucide="trending-up" style="width:22px;height:22px"></i></div>
+          <h3 class="h-ar text-2xl gold-light">سوق ينمو بسرعة</h3>
+        </div>
+        <ul class="space-y-5">
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">نمو سوق الطيران الخاص في الخليج بمعدلات مضاعفة بعد 2020</p></li>
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">تحول جيل جديد من رجال الأعمال إلى التذاكر الخاصة</p></li>
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">رؤية 2030 تدفع نحو السياحة الفاخرة والأعمال الدولية</p></li>
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">زيادة الطلب على الخصوصية والمرونة في السفر</p></li>
+        </ul>
+      </div>
+      <div class="card p-10 fade-up">
+        <div class="flex items-center gap-4 mb-8">
+          <div class="icon-circle"><i data-lucide="target" style="width:22px;height:22px"></i></div>
+          <h3 class="h-ar text-2xl gold-light">فجوة رقمية واضحة</h3>
+        </div>
+        <ul class="space-y-5">
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">معظم الحجوزات لا تزال تتم عبر الواتساب والمكالمات</p></li>
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">لا توجد منصة محلية متكاملة بمستوى عالمي</p></li>
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">المنافسون العالميون لا يفهمون خصوصية السوق المحلي</p></li>
+          <li class="flex gap-4"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><p class="font-ar text-sec leading-relaxed">فرصة الريادة الرقمية الإقليمية مفتوحة</p></li>
+        </ul>
+      </div>
+    </div>
+    <div class="max-w-3xl mx-auto mt-20 fade-up">
+      <p class="quote-block text-right">السوق جاهز للحل الرقمي الذي يفهمه — والوقت هو الآن</p>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 4: BUSINESS MODEL -->
+<section id="s4" class="section-pad relative" style="z-index:2">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">03 · BUSINESS MODEL</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">نموذج العمل</h2>
+      <p class="text-sec mt-4 font-ar">كيف يولد المشروع إيرادات مستدامة</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-6 stagger">
+      <div class="card p-10">
+        <div class="flex items-start justify-between mb-6">
+          <div class="icon-circle"><i data-lucide="percent" style="width:22px;height:22px"></i></div>
+          <span class="badge">المصدر الأساسي</span>
+        </div>
+        <h3 class="h-ar text-2xl mb-3 gold-light">عمولة على الحجوزات</h3>
+        <div class="gold-line my-5" style="width:40px"></div>
+        <p class="font-ar text-sec mb-4 leading-relaxed">نسبة محسوبة من قيمة كل رحلة يتم حجزها عبر المنصة.</p>
+        <div class="space-y-3 text-sm">
+          <div class="flex justify-between items-center py-2 border-b border-[var(--border)]"><span class="text-mut font-ar">النسبة</span><span class="gold font-display">5% – 10%</span></div>
+          <div class="flex justify-between items-center py-2 border-b border-[var(--border)]"><span class="text-mut font-ar">طريقة الدفع</span><span class="text-sec font-ar text-xs">يدفعها المشغل من قيمة الحجز</span></div>
+          <div class="flex justify-between items-center py-2"><span class="text-mut font-ar">التوقيت</span><span class="text-sec font-ar text-xs">عند إتمام الرحلة</span></div>
+        </div>
+      </div>
+
+      <div class="card p-10">
+        <div class="flex items-start justify-between mb-6">
+          <div class="icon-circle"><i data-lucide="crown" style="width:22px;height:22px"></i></div>
+          <span class="badge">إيراد ثابت</span>
+        </div>
+        <h3 class="h-ar text-2xl mb-3 gold-light">اشتراكات المشغلين</h3>
+        <div class="gold-line my-5" style="width:40px"></div>
+        <p class="font-ar text-sec mb-4 leading-relaxed">باقات شهرية متدرجة تمنح المشغل وصولاً لميزات متقدمة وأولوية في العرض.</p>
+        <div class="space-y-3 text-sm">
+          <div class="flex justify-between items-center py-2 border-b border-[var(--border)]"><span class="text-mut font-ar">الأساسية</span><span class="text-sec font-ar text-xs">إدراج قياسي + تحليلات أساسية</span></div>
+          <div class="flex justify-between items-center py-2 border-b border-[var(--border)]"><span class="text-mut font-ar">المتقدمة</span><span class="text-sec font-ar text-xs">أولوية الظهور + تحليلات أعمق</span></div>
+          <div class="flex justify-between items-center py-2"><span class="text-mut font-ar">النخبة</span><span class="text-sec font-ar text-xs">ميزات مخصصة + إعلانات داخلية</span></div>
+        </div>
+      </div>
+
+      <div class="card p-10">
+        <div class="flex items-start justify-between mb-6">
+          <div class="icon-circle"><i data-lucide="concierge-bell" style="width:22px;height:22px"></i></div>
+          <span class="badge">هامش إضافي</span>
+        </div>
+        <h3 class="h-ar text-2xl mb-3 gold-light">خدمات إضافية</h3>
+        <div class="gold-line my-5" style="width:40px"></div>
+        <p class="font-ar text-sec mb-4 leading-relaxed">تنسيق مع شركاء خدمة لتعزيز قيمة الرحلة وتحقيق هوامش من الإحالات.</p>
+        <div class="space-y-3 text-sm">
+          <div class="flex items-center gap-3 py-2 border-b border-[var(--border)]"><i data-lucide="car" class="gold" style="width:14px"></i><span class="text-sec font-ar">نقل أرضي فاخر</span></div>
+          <div class="flex items-center gap-3 py-2 border-b border-[var(--border)]"><i data-lucide="bed-double" class="gold" style="width:14px"></i><span class="text-sec font-ar">حجوزات فندقية مميزة</span></div>
+          <div class="flex items-center gap-3 py-2"><i data-lucide="sparkles" class="gold" style="width:14px"></i><span class="text-sec font-ar">خدمات كونسيرج متكاملة</span></div>
+        </div>
+      </div>
+
+      <div class="card p-10">
+        <div class="flex items-start justify-between mb-6">
+          <div class="icon-circle"><i data-lucide="bar-chart-3" style="width:22px;height:22px"></i></div>
+          <span class="badge">مرحلة لاحقة</span>
+        </div>
+        <h3 class="h-ar text-2xl mb-3 gold-light">بيانات وتحليلات</h3>
+        <div class="gold-line my-5" style="width:40px"></div>
+        <p class="font-ar text-sec mb-4 leading-relaxed">تقارير ورؤى سوقية عالية القيمة للمستثمرين والشركات الكبرى — هامش ربح مرتفع.</p>
+        <div class="space-y-3 text-sm">
+          <div class="flex items-center gap-3 py-2 border-b border-[var(--border)]"><i data-lucide="line-chart" class="gold" style="width:14px"></i><span class="text-sec font-ar">تقارير أداء السوق للمشغلين</span></div>
+          <div class="flex items-center gap-3 py-2 border-b border-[var(--border)]"><i data-lucide="briefcase" class="gold" style="width:14px"></i><span class="text-sec font-ar">رؤى استراتيجية للمستثمرين</span></div>
+          <div class="flex items-center gap-3 py-2"><i data-lucide="database" class="gold" style="width:14px"></i><span class="text-sec font-ar">تحليلات اتجاهات الطلب</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unit economics -->
+    <div class="mt-20 fade-up">
+      <div class="card p-10 md:p-14 relative">
+        <div class="corner-ornament tl"></div>
+        <div class="corner-ornament br"></div>
+        <div class="text-center mb-10">
+          <span class="section-tag">UNIT ECONOMICS</span>
+          <h3 class="h-ar text-2xl md:text-3xl gold-light mt-5">مثال توضيحي على اقتصاديات الرحلة</h3>
+          <p class="text-mut text-sm mt-3 font-ar">رحلة افتراضية بقيمة 100,000 ريال سعودي</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+          <div class="text-center py-8 px-4 bg-tert rounded-sm border border-[var(--border)]">
+            <p class="font-ar text-sm text-mut mb-3">إيراد المنصة</p>
+            <p class="font-display text-4xl gold mb-1">8,000</p>
+            <p class="text-xs text-sec font-ar">ريال · عمولة 8%</p>
+          </div>
+          <div class="text-center py-8 px-4 bg-tert rounded-sm border border-[var(--border)]">
+            <p class="font-ar text-sm text-mut mb-3">التكلفة التشغيلية</p>
+            <p class="font-display text-4xl text-sec mb-1">200</p>
+            <p class="text-xs text-sec font-ar">ريال للرحلة</p>
+          </div>
+          <div class="text-center py-8 px-4 rounded-sm" style="background:linear-gradient(135deg,rgba(201,169,97,0.12),rgba(201,169,97,0.04));border:1px solid var(--border-strong)">
+            <p class="font-ar text-sm text-mut mb-3">الهامش الصافي</p>
+            <p class="font-display text-4xl gold-light mb-1">~7,800</p>
+            <p class="text-xs gold font-ar">ريال · هامش 97.5%</p>
+          </div>
+        </div>
+        <p class="text-center text-xs text-mut mt-10 font-ar italic">* هذه أرقام افتراضية للتوضيح، تخضع للنقاش والتعديل</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 5: THREE STAKEHOLDERS -->
+<section id="s5" class="section-pad relative" style="z-index:2;background:linear-gradient(180deg,transparent,rgba(5,11,20,0.6),transparent)">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">04 · THE ECOSYSTEM</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">المنظومة</h2>
+      <p class="text-sec mt-4 font-ar">ثلاثة أدوار، منصة واحدة، تكامل تام</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="grid md:grid-cols-3 gap-6 stagger">
+      <div class="card p-10 text-center relative overflow-hidden" style="min-height:380px">
+        <div class="absolute inset-0 opacity-20" style="background:radial-gradient(circle at 50% 0%,rgba(201,169,97,0.3),transparent 60%)"></div>
+        <div class="relative z-10">
+          <span class="badge mb-6 inline-block">B2C</span>
+          <div class="mx-auto mb-6 flex justify-center">
+            <div class="icon-circle" style="width:80px;height:80px"><i data-lucide="briefcase" style="width:32px;height:32px"></i></div>
+          </div>
+          <h3 class="font-display text-3xl gold-light mb-2">Client</h3>
+          <p class="h-ar text-xl gold mb-4">العميل</p>
+          <div class="gold-line mx-auto my-5" style="width:40px"></div>
+          <p class="font-ar text-sec leading-relaxed">رجل الأعمال، صاحب القرار، المسافر المميز — يبحث عن الكفاءة والخصوصية والتجربة الراقية.</p>
+        </div>
+      </div>
+
+      <div class="card p-10 text-center relative overflow-hidden" style="min-height:380px">
+        <div class="absolute inset-0 opacity-20" style="background:radial-gradient(circle at 50% 0%,rgba(201,169,97,0.3),transparent 60%)"></div>
+        <div class="relative z-10">
+          <span class="badge mb-6 inline-block">B2B</span>
+          <div class="mx-auto mb-6 flex justify-center">
+            <div class="icon-circle" style="width:80px;height:80px"><i data-lucide="plane" style="width:32px;height:32px"></i></div>
+          </div>
+          <h3 class="font-display text-3xl gold-light mb-2">Operator</h3>
+          <p class="h-ar text-xl gold mb-4">مشغل الطائرة</p>
+          <div class="gold-line mx-auto my-5" style="width:40px"></div>
+          <p class="font-ar text-sec leading-relaxed">ملاك الطائرات وشركات التشغيل المعتمدة — يبحثون عن تدفق طلبات مستمر وأدوات إدارة احترافية.</p>
+        </div>
+      </div>
+
+      <div class="card p-10 text-center relative overflow-hidden" style="min-height:380px">
+        <div class="absolute inset-0 opacity-20" style="background:radial-gradient(circle at 50% 0%,rgba(201,169,97,0.3),transparent 60%)"></div>
+        <div class="relative z-10">
+          <span class="badge mb-6 inline-block">PLATFORM</span>
+          <div class="mx-auto mb-6 flex justify-center">
+            <div class="icon-circle" style="width:80px;height:80px"><i data-lucide="network" style="width:32px;height:32px"></i></div>
+          </div>
+          <h3 class="font-display text-3xl gold-light mb-2">Aeris</h3>
+          <p class="h-ar text-xl gold mb-4">الوسيط الذكي</p>
+          <div class="gold-line mx-auto my-5" style="width:40px"></div>
+          <p class="font-ar text-sec leading-relaxed">المنصة كجسر ذكي — تشرف، تنظم، تضمن الجودة، وتحافظ على معايير الخدمة.</p>
+        </div>
+      </div>
+    </div>
+
+    <p class="text-center text-mut mt-12 font-ar fade-up">كل دور له رحلة محددة بدقة — فيما يلي استعراض كامل لكل منها</p>
+  </div>
+</section>
+
+<!-- SECTION 6: CLIENT JOURNEY -->
+<section id="s6" class="section-pad relative" style="z-index:2">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">05 · الدور الأول</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">رحلة العميل</h2>
+      <p class="text-sec mt-4 font-ar">تجربة بمستوى توقعاته</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="timeline space-y-24">
+
+      <!-- Stage 1 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">01</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">الاكتشاف والتسجيل</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">حساب آمن بتسجيل OTP عبر رقم الجوال. ملف شخصي بالمعلومات الأساسية، دون تعقيد. الوصول الفوري للمنصة بهوية محمية.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تسجيل OTP</span>
+              <span class="ui-pill">ملف شخصي</span>
+              <span class="ui-pill">بوابة آمنة</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <div class="text-center mt-4 mb-6">
+                  <p class="font-display text-xl gold">AERIS</p>
+                  <div class="gold-line mx-auto mt-2" style="width:30px"></div>
+                </div>
+                <p class="font-ar text-xs gold-light text-center mb-2">مرحباً بك</p>
+                <p class="font-ar text-[10px] text-mut text-center mb-6">أدخل رقم جوالك للمتابعة</p>
+                <div class="ui-row gold" style="justify-content:center"><span>+966 5X XXX XXXX</span></div>
+                <div class="ui-row gold" style="background:var(--gold);color:#0A1628;justify-content:center;font-weight:600;margin-top:12px">إرسال الرمز</div>
+                <div class="mt-auto text-center">
+                  <p class="text-[9px] text-mut font-ar">بالمتابعة توافق على شروط الاستخدام</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 2 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">02</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">طلب الرحلة</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">نموذج ذكي مختصر — وجهة، توقيت، عدد الركاب، مفضلات. يفهم سياق المسافر الدائم ويوفر اقتراحات سريعة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">نموذج ذكي</span>
+              <span class="ui-pill">توقيت مرن</span>
+              <span class="ui-pill">تفضيلات محفوظة</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <p class="font-ar text-xs gold-light mb-4">طلب رحلة جديدة</p>
+                <div class="ui-row"><span>من</span><span class="gold-light">الرياض</span></div>
+                <div class="ui-row"><span>إلى</span><span class="gold-light">دبي</span></div>
+                <div class="ui-row"><span>التاريخ</span><span class="gold-light">15 مايو</span></div>
+                <div class="ui-row"><span>الركاب</span><span class="gold-light">4</span></div>
+                <div class="ui-row"><span>الفئة</span><span class="gold-light">متوسطة</span></div>
+                <div class="mt-4 ui-row gold" style="background:var(--gold);color:#0A1628;justify-content:center;font-weight:600">إرسال الطلب</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 3 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">03</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">استقبال العروض</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">خلال دقائق، تظهر عروض متعددة من مشغلين مؤهلين. مقارنة سهلة بين الأسعار، الطائرات، ومستوى الخدمة في واجهة واحدة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">مقارنة فورية</span>
+              <span class="ui-pill">تقييمات موثقة</span>
+              <span class="ui-pill">شفافية كاملة</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <p class="font-ar text-xs gold-light mb-3">العروض المستلمة · 4</p>
+                <div class="ui-row gold">
+                  <div><div style="font-weight:600" class="gold-light">Legacy 500</div><div class="text-[8px] text-mut">4.9 ★ · 8 ركاب</div></div>
+                  <div class="gold font-display">85K</div>
+                </div>
+                <div class="ui-row">
+                  <div><div>Citation XLS</div><div class="text-[8px] text-mut">4.7 ★ · 7 ركاب</div></div>
+                  <div class="gold">72K</div>
+                </div>
+                <div class="ui-row">
+                  <div><div>Hawker 900XP</div><div class="text-[8px] text-mut">4.8 ★ · 8 ركاب</div></div>
+                  <div class="gold">79K</div>
+                </div>
+                <div class="ui-row">
+                  <div><div>Phenom 300</div><div class="text-[8px] text-mut">4.9 ★ · 6 ركاب</div></div>
+                  <div class="gold">68K</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 4 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">04</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">اختيار العرض</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">صفحة تفاصيل غنية للطائرة المختارة — صور، مواصفات، صور المقصورة، سياسة الإلغاء. كل المعلومات لاتخاذ قرار واثق.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">مواصفات كاملة</span>
+              <span class="ui-pill">صور داخلية</span>
+              <span class="ui-pill">شروط شفافة</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <div style="height:70px;background:linear-gradient(135deg,rgba(201,169,97,0.2),rgba(201,169,97,0.05));border-radius:4px;margin-bottom:8px;display:flex;align-items:center;justify-content:center"><i data-lucide="plane" class="gold" style="width:28px"></i></div>
+                <p class="font-ar text-xs gold-light mb-1">Legacy 500</p>
+                <p class="text-[9px] text-mut mb-3 font-ar">Embraer · 8 مقاعد · مدى 5,600 كم</p>
+                <div class="ui-row"><span>مدة الرحلة</span><span class="gold-light">1س 45د</span></div>
+                <div class="ui-row"><span>المقصورة</span><span class="gold-light">حجرة نوم</span></div>
+                <div class="ui-row"><span>المضيف</span><span class="gold-light">متوفر</span></div>
+                <div class="mt-3 ui-row gold" style="background:var(--gold);color:#0A1628;justify-content:center;font-weight:600">قبول العرض · 85,000</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 5 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">05</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">الدفع الآمن</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">بوابة دفع محلية معتمدة — Apple Pay، مدى، Visa، Mastercard. معاملة مشفرة، إيصال ضريبي متوافق مع ZATCA فور الإتمام.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">Apple Pay</span>
+              <span class="ui-pill">مدى</span>
+              <span class="ui-pill">ZATCA متوافق</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <p class="font-ar text-xs gold-light mb-4">إتمام الدفع</p>
+                <div class="ui-row"><span>الرحلة</span><span>RUH → DXB</span></div>
+                <div class="ui-row"><span>القيمة</span><span class="gold-light">85,000</span></div>
+                <div class="ui-row"><span>ضريبة 15%</span><span>12,750</span></div>
+                <div class="ui-row gold"><span>الإجمالي</span><span class="gold font-display">97,750</span></div>
+                <p class="text-[10px] gold-light mt-3 mb-2 font-ar">طرق الدفع</p>
+                <div class="ui-row" style="justify-content:center">Apple Pay</div>
+                <div class="ui-row" style="justify-content:center">مدى · •••• 4521</div>
+                <div class="mt-2 ui-row gold" style="background:var(--gold);color:#0A1628;justify-content:center;font-weight:600">تأكيد الدفع</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 6 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">06</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">التأكيد والتجهيز</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">تأكيد فوري عبر البريد والواتساب. تذكيرات ذكية قبل الموعد، تعليمات الوصول للطائرة، وقناة تواصل مباشرة مع المشغل.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تأكيدات لحظية</span>
+              <span class="ui-pill">تذكيرات ذكية</span>
+              <span class="ui-pill">تواصل مباشر</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <div style="text-align:center;margin-bottom:12px"><i data-lucide="check-circle-2" class="gold" style="width:36px;height:36px;margin:0 auto"></i></div>
+                <p class="font-ar text-xs gold-light text-center mb-1">تم تأكيد رحلتك</p>
+                <p class="text-[9px] text-mut text-center font-ar mb-5">رقم الحجز · AER-2451</p>
+                <div class="ui-row"><span>الإقلاع</span><span class="gold-light">15 مايو · 14:30</span></div>
+                <div class="ui-row"><span>المطار</span><span>RUH · T.A</span></div>
+                <div class="ui-row"><span>الوصول للمطار</span><span class="gold-light">قبل 45 دقيقة</span></div>
+                <div class="ui-row"><span>الكابتن</span><span>خالد. ن</span></div>
+                <div class="mt-3 ui-row" style="justify-content:center"><i data-lucide="message-circle" class="gold" style="width:12px"></i><span class="mr-2">تواصل مع المشغل</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 7 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">07</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">يوم الرحلة</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">تجربة سلسة من الوصول إلى الإقلاع. معلومات الموقع اللحظية، حالة الطائرة، ومستوى خدمة استثنائي — بدون مفاجآت.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تتبع لحظي</span>
+              <span class="ui-pill">حالة الطائرة</span>
+              <span class="ui-pill">خدمة أرضية</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <p class="font-ar text-xs gold-light mb-4">يوم الرحلة · اليوم</p>
+                <div class="ui-row gold">
+                  <span class="font-ar">الإقلاع بعد</span>
+                  <span class="gold font-display text-base">02 : 15</span>
+                </div>
+                <div style="height:90px;background:linear-gradient(180deg,rgba(201,169,97,0.1),transparent);border-radius:4px;margin:8px 0;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--gold-light)" class="font-ar">خريطة المسار المتوقع</div>
+                <div class="ui-row"><span>الطائرة</span><span class="gold-light">جاهزة · جار التجهيز</span></div>
+                <div class="ui-row"><span>الطقس</span><span class="gold-light">مثالي</span></div>
+                <div class="ui-row"><span>بوابة الصعود</span><span class="gold-light">VIP · T.A</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 8 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-3">
+            <p class="timeline-num mb-3">08</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">ما بعد الرحلة</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">تقييم سريع للتجربة، فاتورة ضريبية رسمية، وإمكانية إعادة الحجز بنقرة واحدة. تاريخ رحلاتك محفوظ، ومفضلاتك جاهزة للمرة القادمة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تقييم الرحلة</span>
+              <span class="ui-pill">فاتورة رسمية</span>
+              <span class="ui-pill">إعادة حجز سريع</span>
+            </div>
+          </div>
+          <div class="md:col-span-2 flex justify-center">
+            <div class="mockup-phone">
+              <div class="mockup-screen">
+                <p class="font-ar text-xs gold-light mb-3">كيف كانت الرحلة؟</p>
+                <div style="display:flex;justify-content:center;gap:6px;margin:10px 0">
+                  <i data-lucide="star" class="gold" style="width:18px;fill:currentColor"></i>
+                  <i data-lucide="star" class="gold" style="width:18px;fill:currentColor"></i>
+                  <i data-lucide="star" class="gold" style="width:18px;fill:currentColor"></i>
+                  <i data-lucide="star" class="gold" style="width:18px;fill:currentColor"></i>
+                  <i data-lucide="star" class="gold" style="width:18px;fill:currentColor"></i>
+                </div>
+                <p class="text-[9px] gold-light text-center mb-4 font-ar">ممتاز</p>
+                <div class="ui-row"><span>المستندات</span><span class="gold-light">3</span></div>
+                <div class="ui-row"><span>الفاتورة الضريبية</span><span class="gold">PDF ↓</span></div>
+                <div class="ui-row"><span>إيصال الدفع</span><span class="gold">PDF ↓</span></div>
+                <div class="mt-3 ui-row gold" style="background:var(--gold);color:#0A1628;justify-content:center;font-weight:600">احجز رحلة مشابهة</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="max-w-3xl mx-auto mt-24 fade-up">
+      <p class="quote-block text-right">خلاصة: العميل يحصل على تجربة عالمية بطعم محلي — سرعة، خصوصية، احترافية</p>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 7: OPERATOR JOURNEY -->
+<section id="s7" class="section-pad relative" style="z-index:2;background:linear-gradient(180deg,transparent,rgba(5,11,20,0.6),transparent)">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">06 · الدور الثاني</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">رحلة مشغل الطائرات</h2>
+      <p class="text-sec mt-4 font-ar">أداة تشغيل تضاعف القدرة، وتفتح أسواقاً جديدة</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="timeline space-y-24">
+
+      <!-- OP 1 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">01</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">التسجيل والاعتماد</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">مراجعة دقيقة للوثائق والتراخيص — شهادة التشغيل، تسجيل الطائرة، التأمين، السجل التجاري. اعتماد المشغل فقط بعد التحقق.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تحقق متعدد</span>
+              <span class="ui-pill">وثائق رسمية</span>
+              <span class="ui-pill">معايير صارمة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">طلب اعتماد مشغل جديد</p>
+                <div class="ui-row"><span>اسم الشركة</span><span class="gold-light">الريان للطيران</span></div>
+                <div class="ui-row"><span>السجل التجاري</span><span class="gold">✓ محقق</span></div>
+                <div class="ui-row"><span>شهادة التشغيل AOC</span><span class="gold">✓ سارية</span></div>
+                <div class="ui-row"><span>التأمين</span><span class="gold">✓ 100م ريال</span></div>
+                <div class="ui-row"><span>عدد الطائرات المسجلة</span><span class="gold-light">7</span></div>
+                <div class="ui-row gold"><span>حالة الطلب</span><span class="gold">قيد المراجعة النهائية</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OP 2 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">02</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">بناء ملف الأسطول</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">كل طائرة تعرض بمواصفاتها، صورها الداخلية والخارجية، مدى طيرانها، عدد ركابها، وخدماتها. ملف احترافي يبني الثقة قبل أي عرض.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">معرض صور</span>
+              <span class="ui-pill">مواصفات تقنية</span>
+              <span class="ui-pill">خدمات متوفرة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">الأسطول · 7 طائرات</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+                  <div class="ui-row" style="display:block;text-align:center;padding:8px">
+                    <div style="height:40px;background:rgba(201,169,97,0.1);border-radius:3px;margin-bottom:4px;display:flex;align-items:center;justify-content:center"><i data-lucide="plane" class="gold" style="width:18px"></i></div>
+                    <div class="gold-light" style="font-weight:600">Legacy 500</div>
+                    <div class="text-mut" style="font-size:8px">8 مقاعد</div>
+                  </div>
+                  <div class="ui-row" style="display:block;text-align:center;padding:8px">
+                    <div style="height:40px;background:rgba(201,169,97,0.1);border-radius:3px;margin-bottom:4px;display:flex;align-items:center;justify-content:center"><i data-lucide="plane" class="gold" style="width:18px"></i></div>
+                    <div class="gold-light" style="font-weight:600">Citation X</div>
+                    <div class="text-mut" style="font-size:8px">9 مقاعد</div>
+                  </div>
+                  <div class="ui-row" style="display:block;text-align:center;padding:8px">
+                    <div style="height:40px;background:rgba(201,169,97,0.1);border-radius:3px;margin-bottom:4px;display:flex;align-items:center;justify-content:center"><i data-lucide="plane" class="gold" style="width:18px"></i></div>
+                    <div class="gold-light" style="font-weight:600">Hawker 900</div>
+                    <div class="text-mut" style="font-size:8px">8 مقاعد</div>
+                  </div>
+                </div>
+                <div class="ui-row gold mt-3" style="justify-content:center"><i data-lucide="plus" class="gold" style="width:10px"></i><span class="mr-2">إضافة طائرة جديدة</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OP 3 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">03</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">إدارة التوفر</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">تقويم تفاعلي لكل طائرة — مواعيد الصيانة، الرحلات المؤكدة، الفترات المتاحة. النظام يحترم التوفر ولا يعرض الطائرة إلا حين تكون متاحة فعلياً.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تقويم لكل طائرة</span>
+              <span class="ui-pill">صيانة مجدولة</span>
+              <span class="ui-pill">منع التعارض</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">تقويم Legacy 500 · مايو 2026</p>
+                <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;font-size:8px">
+                  <div class="text-mut text-center font-ar">سبت</div><div class="text-mut text-center font-ar">أحد</div><div class="text-mut text-center font-ar">إثنين</div><div class="text-mut text-center font-ar">ثلاثاء</div><div class="text-mut text-center font-ar">أربعاء</div><div class="text-mut text-center font-ar">خميس</div><div class="text-mut text-center font-ar">جمعة</div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:4px">
+                  <div style="padding:6px 4px;background:rgba(155,200,143,0.12);border-radius:2px;text-align:center;font-size:8px" class="gold-light">1</div>
+                  <div style="padding:6px 4px;background:rgba(201,169,97,0.2);border-radius:2px;text-align:center;font-size:8px" class="gold">2</div>
+                  <div style="padding:6px 4px;background:rgba(155,200,143,0.12);border-radius:2px;text-align:center;font-size:8px" class="gold-light">3</div>
+                  <div style="padding:6px 4px;background:rgba(200,143,143,0.15);border-radius:2px;text-align:center;font-size:8px" class="gold-light">4</div>
+                  <div style="padding:6px 4px;background:rgba(155,200,143,0.12);border-radius:2px;text-align:center;font-size:8px" class="gold-light">5</div>
+                  <div style="padding:6px 4px;background:rgba(201,169,97,0.2);border-radius:2px;text-align:center;font-size:8px" class="gold">6</div>
+                  <div style="padding:6px 4px;background:rgba(155,200,143,0.12);border-radius:2px;text-align:center;font-size:8px" class="gold-light">7</div>
+                </div>
+                <div class="mt-4" style="display:flex;gap:10px;font-size:8px">
+                  <div style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:rgba(155,200,143,0.5);border-radius:2px"></span><span class="text-mut">متاحة</span></div>
+                  <div style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:var(--gold);border-radius:2px"></span><span class="text-mut">محجوزة</span></div>
+                  <div style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:rgba(200,143,143,0.5);border-radius:2px"></span><span class="text-mut">صيانة</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OP 4 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">04</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">استقبال الطلبات</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">إشعارات لحظية بالطلبات المتوافقة مع الأسطول — الوجهة، التوقيت، عدد الركاب. مؤشر التوافق يساعد على الاستجابة السريعة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">إشعارات فورية</span>
+              <span class="ui-pill">توافق ذكي</span>
+              <span class="ui-pill">استجابة سريعة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">طلبات جديدة · 3</p>
+                <div class="ui-row gold">
+                  <div><div class="gold-light" style="font-weight:600">RUH → DXB · 15 مايو</div><div class="text-mut" style="font-size:8px">4 ركاب · ذهاب فقط · متوسطة</div></div>
+                  <div><span class="ui-pill">92% توافق</span></div>
+                </div>
+                <div class="ui-row">
+                  <div><div>JED → CAI · 22 مايو</div><div class="text-mut" style="font-size:8px">6 ركاب · ذهاب وعودة</div></div>
+                  <div><span class="ui-pill">78%</span></div>
+                </div>
+                <div class="ui-row">
+                  <div><div>DMM → BAH · 8 مايو</div><div class="text-mut" style="font-size:8px">3 ركاب · رحلة قصيرة</div></div>
+                  <div><span class="ui-pill">85%</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OP 5 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">05</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">إنشاء العروض</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">محرر عروض احترافي — اختيار الطائرة، تحديد السعر، شروط الإلغاء، الخدمات الإضافية. معاينة فورية لما سيراه العميل.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">محرر احترافي</span>
+              <span class="ui-pill">معاينة فورية</span>
+              <span class="ui-pill">شروط قابلة للتخصيص</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">إنشاء عرض · طلب #AER-2451</p>
+                <div class="ui-row"><span>الطائرة</span><span class="gold-light">Legacy 500</span></div>
+                <div class="ui-row"><span>السعر الأساسي</span><span class="gold">85,000 ريال</span></div>
+                <div class="ui-row"><span>مضيف طيران</span><span class="gold-light">✓ متضمن</span></div>
+                <div class="ui-row"><span>تموين خاص</span><span class="gold-light">✓ فاخر</span></div>
+                <div class="ui-row"><span>مدة صلاحية العرض</span><span class="gold-light">6 ساعات</span></div>
+                <div class="ui-row"><span>شروط الإلغاء</span><span class="gold-light">حتى 24س · 20%</span></div>
+                <div class="ui-row gold mt-2" style="background:var(--gold);color:#0A1628;justify-content:center;font-weight:600">إرسال العرض</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OP 6 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">06</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">متابعة الحجوزات</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">لوحة متابعة تظهر كل حجز من لحظة القبول حتى التنفيذ — تأكيدات، تغييرات، ملاحظات العميل، تواصل مباشر عند الحاجة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">لوحة حية</span>
+              <span class="ui-pill">تواصل مباشر</span>
+              <span class="ui-pill">تاريخ كامل</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <div style="display:flex;gap:8px;margin-bottom:8px">
+                  <span class="ui-pill">نشطة · 4</span>
+                  <span class="ui-pill" style="background:rgba(168,178,193,0.08);color:var(--text-mut)">مكتملة · 28</span>
+                  <span class="ui-pill" style="background:rgba(168,178,193,0.08);color:var(--text-mut)">ملغاة · 2</span>
+                </div>
+                <div class="ui-row gold"><div><div class="gold-light" style="font-weight:600">AER-2451 · RUH→DXB</div><div class="text-mut" style="font-size:8px">15 مايو 14:30 · أحمد. ع</div></div><span class="ui-pill">قيد التنفيذ</span></div>
+                <div class="ui-row"><div><div>AER-2438 · JED→BEY</div><div class="text-mut" style="font-size:8px">18 مايو</div></div><span class="ui-pill">مؤكدة</span></div>
+                <div class="ui-row"><div><div>AER-2429 · RUH→CDG</div><div class="text-mut" style="font-size:8px">22 مايو</div></div><span class="ui-pill">مؤكدة</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OP 7 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">07</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">تنفيذ الرحلة</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">تحديث حالات الرحلة — تجهيز، جاهزة، أقلعت، هبطت. الحالة تنعكس لحظياً على العميل وعلى لوحة الإدارة — شفافية كاملة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">حالات لحظية</span>
+              <span class="ui-pill">تحديث بزر واحد</span>
+              <span class="ui-pill">سجل موثق</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">تحديث حالة AER-2451</p>
+                <div class="ui-row" style="background:rgba(155,200,143,0.12)"><span class="gold-light">✓ تم القبول</span><span class="text-mut" style="font-size:8px">14 مايو 09:22</span></div>
+                <div class="ui-row" style="background:rgba(155,200,143,0.12)"><span class="gold-light">✓ الطائرة جاهزة</span><span class="text-mut" style="font-size:8px">15 مايو 13:00</span></div>
+                <div class="ui-row gold"><span class="gold">◐ الإقلاع</span><span class="text-mut" style="font-size:8px">بعد 00:45</span></div>
+                <div class="ui-row" style="opacity:0.5"><span>الهبوط</span><span class="text-mut" style="font-size:8px">—</span></div>
+                <div class="ui-row" style="opacity:0.5"><span>إكمال</span><span class="text-mut" style="font-size:8px">—</span></div>
+                <div class="ui-row gold mt-2" style="background:var(--gold);color:#0A1628;justify-content:center;font-weight:600">تحديث: الإقلاع ✓</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OP 8 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">08</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">الإدارة المالية</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">أرباح شفافة، كشوف حساب مفصلة، مدفوعات منتظمة. كل رحلة موثقة بقيمتها وعمولتها ومدفوعاتها — بدون غموض.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">شفافية مالية</span>
+              <span class="ui-pill">دفعات منتظمة</span>
+              <span class="ui-pill">كشوف مفصلة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">الملخص المالي · مايو 2026</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+                  <div style="padding:8px;background:rgba(201,169,97,0.08);border-radius:3px;text-align:center"><div class="text-mut" style="font-size:8px" class="font-ar">الإيرادات</div><div class="gold font-display" style="font-size:14px">485K</div></div>
+                  <div style="padding:8px;background:rgba(201,169,97,0.08);border-radius:3px;text-align:center"><div class="text-mut" style="font-size:8px" class="font-ar">العمولات</div><div class="gold font-display" style="font-size:14px">38K</div></div>
+                  <div style="padding:8px;background:rgba(201,169,97,0.15);border-radius:3px;text-align:center"><div class="text-mut" style="font-size:8px" class="font-ar">صافي</div><div class="gold-light font-display" style="font-size:14px">447K</div></div>
+                </div>
+                <div class="ui-row"><span>الدفعة القادمة</span><span class="gold-light">30 مايو</span></div>
+                <div class="ui-row"><span>آخر تحويل</span><span class="gold-light">15 مايو · 195K</span></div>
+                <div class="ui-row gold" style="justify-content:center"><span class="font-ar">تحميل كشف الحساب · PDF</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="max-w-3xl mx-auto mt-24 fade-up">
+      <p class="quote-block text-right">خلاصة: المشغل يصل لعملاء جدد، يدير عملياته بكفاءة، ويبني سمعة موثقة</p>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 8: ADMIN JOURNEY -->
+<section id="s8" class="section-pad relative" style="z-index:2">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">07 · الدور الثالث</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">إدارة المنصة</h2>
+      <p class="text-sec mt-4 font-ar">العقل المُشرف على المنظومة بأكملها</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="timeline space-y-24">
+
+      <!-- ADM 1 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">01</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">لوحة المعلومات الرئيسية</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">مؤشرات حية لصحة المنصة — الرحلات النشطة، الإيرادات، التنبيهات، حالة الأنظمة. لمحة كاملة في 10 ثوانٍ.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">مؤشرات لحظية</span>
+              <span class="ui-pill">تنبيهات ذكية</span>
+              <span class="ui-pill">رؤية 360°</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:10px">
+                  <div style="padding:8px;background:rgba(201,169,97,0.08);border-radius:3px"><div class="text-mut" style="font-size:8px">رحلات نشطة</div><div class="gold font-display" style="font-size:16px">14</div></div>
+                  <div style="padding:8px;background:rgba(201,169,97,0.08);border-radius:3px"><div class="text-mut" style="font-size:8px">هذا الشهر</div><div class="gold font-display" style="font-size:16px">82</div></div>
+                  <div style="padding:8px;background:rgba(201,169,97,0.08);border-radius:3px"><div class="text-mut" style="font-size:8px">الإيرادات</div><div class="gold font-display" style="font-size:16px">4.2M</div></div>
+                  <div style="padding:8px;background:rgba(201,169,97,0.15);border-radius:3px"><div class="text-mut" style="font-size:8px">العمولات</div><div class="gold-light font-display" style="font-size:16px">336K</div></div>
+                </div>
+                <p class="text-mut font-ar mb-2" style="font-size:9px">أداء الأسبوع</p>
+                <div style="display:flex;align-items:flex-end;gap:4px;height:50px">
+                  <div style="flex:1;background:linear-gradient(180deg,var(--gold),var(--gold-dark));height:40%;border-radius:2px 2px 0 0"></div>
+                  <div style="flex:1;background:linear-gradient(180deg,var(--gold),var(--gold-dark));height:55%;border-radius:2px 2px 0 0"></div>
+                  <div style="flex:1;background:linear-gradient(180deg,var(--gold),var(--gold-dark));height:70%;border-radius:2px 2px 0 0"></div>
+                  <div style="flex:1;background:linear-gradient(180deg,var(--gold),var(--gold-dark));height:45%;border-radius:2px 2px 0 0"></div>
+                  <div style="flex:1;background:linear-gradient(180deg,var(--gold),var(--gold-dark));height:85%;border-radius:2px 2px 0 0"></div>
+                  <div style="flex:1;background:linear-gradient(180deg,var(--gold),var(--gold-dark));height:90%;border-radius:2px 2px 0 0"></div>
+                  <div style="flex:1;background:linear-gradient(180deg,var(--gold-light),var(--gold));height:100%;border-radius:2px 2px 0 0"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 2 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">02</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">اعتماد المشغلين</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">مراجعة طلبات الانضمام والوثائق الرسمية قبل الاعتماد. التحقق من الشهادات، التأمين، والتراخيص — بوابة جودة حقيقية.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تحقق مركزي</span>
+              <span class="ui-pill">معايير موحدة</span>
+              <span class="ui-pill">ضمان الجودة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">طلبات الاعتماد · قيد المراجعة</p>
+                <div class="ui-row gold"><div><div class="gold-light" style="font-weight:600">الريان للطيران</div><div class="text-mut" style="font-size:8px">7 طائرات · 3 وثائق</div></div><span class="ui-pill">جديد</span></div>
+                <div class="ui-row"><div><div>الخليج الذهبي</div><div class="text-mut" style="font-size:8px">4 طائرات · اكتملت الوثائق</div></div><span class="ui-pill">للاعتماد</span></div>
+                <div class="ui-row"><div><div>طيران النخبة</div><div class="text-mut" style="font-size:8px">تحديث التأمين مطلوب</div></div><span class="ui-pill" style="color:#C88F8F">معلق</span></div>
+                <div class="ui-row"><div><div>أجنحة الشرق</div><div class="text-mut" style="font-size:8px">12 طائرة · سجل ممتاز</div></div><span class="ui-pill" style="color:#9BC88F">معتمد</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 3 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">03</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">إدارة العملاء</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">قاعدة بيانات كاملة لكل عميل — سجل الرحلات، التفضيلات، القيمة المالية الإجمالية، مستوى النشاط. فهم عميق لقاعدة العملاء.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">ملفات تفصيلية</span>
+              <span class="ui-pill">تجزئة ذكية</span>
+              <span class="ui-pill">CLV تحليل</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">العملاء · 284 نشط</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px">
+                  <div style="padding:6px;background:rgba(201,169,97,0.08);border-radius:3px;text-align:center"><div class="text-mut" style="font-size:8px" class="font-ar">VIP</div><div class="gold-light" style="font-size:14px">42</div></div>
+                  <div style="padding:6px;background:rgba(201,169,97,0.05);border-radius:3px;text-align:center"><div class="text-mut" style="font-size:8px" class="font-ar">عادي</div><div class="gold-light" style="font-size:14px">198</div></div>
+                  <div style="padding:6px;background:rgba(201,169,97,0.03);border-radius:3px;text-align:center"><div class="text-mut" style="font-size:8px" class="font-ar">جديد</div><div class="gold-light" style="font-size:14px">44</div></div>
+                </div>
+                <div class="ui-row"><div>أحمد. ع · 18 رحلة</div><span class="ui-pill">VIP</span></div>
+                <div class="ui-row"><div>فهد. ل · 12 رحلة</div><span class="ui-pill">VIP</span></div>
+                <div class="ui-row"><div>سلطان. ن · 9 رحلات</div><span class="ui-pill" style="color:#9BC88F">مميز</span></div>
+                <div class="ui-row"><div>خالد. م · 6 رحلات</div><span class="ui-pill" style="color:#9BC88F">مميز</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 4 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">04</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">متابعة الطلبات والعروض</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">رؤية شاملة لكل الطلبات والعروض عبر المنصة — من الإنشاء حتى القبول. قياس سرعة الاستجابة، معدلات التحويل، والعروض المفقودة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">رؤية شاملة</span>
+              <span class="ui-pill">قياس الأداء</span>
+              <span class="ui-pill">تحليل التحويل</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">مسار التحويل · هذا الشهر</p>
+                <div class="ui-row"><span class="font-ar">طلبات</span><span class="gold-light font-display" style="font-size:13px">142</span></div>
+                <div class="ui-line"></div>
+                <div class="ui-row"><span class="font-ar">استلمت عروض</span><span class="gold-light font-display" style="font-size:13px">131</span></div>
+                <div class="ui-line m"></div>
+                <div class="ui-row"><span class="font-ar">قبلت عرضاً</span><span class="gold-light font-display" style="font-size:13px">94</span></div>
+                <div class="ui-line s"></div>
+                <div class="ui-row gold"><span class="font-ar">اكتملت</span><span class="gold font-display" style="font-size:13px">88</span></div>
+                <p class="text-mut font-ar mt-3" style="font-size:9px">معدل التحويل الإجمالي · <span class="gold">62%</span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 5 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">05</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">إدارة الحجوزات</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">تدخل عند الحاجة — حل النزاعات، تعديل الحجوزات، التنسيق بين العميل والمشغل. دور توفيقي فقط عند الضرورة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">تدخل انتقائي</span>
+              <span class="ui-pill">حل نزاعات</span>
+              <span class="ui-pill">تنسيق ذكي</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">تنبيهات تتطلب تدخلاً</p>
+                <div class="ui-row gold"><div><div class="gold-light">AER-2431 · طلب تعديل موعد</div><div class="text-mut" style="font-size:8px">العميل: أحمد. ع · منذ 12 دقيقة</div></div><span class="ui-pill">عاجل</span></div>
+                <div class="ui-row"><div><div>AER-2418 · تأخير إقلاع</div><div class="text-mut" style="font-size:8px">المشغل: الخليج الذهبي</div></div><span class="ui-pill">متابعة</span></div>
+                <div class="ui-row"><div><div>AER-2402 · استفسار فني</div><div class="text-mut" style="font-size:8px">ملف مرفق</div></div><span class="ui-pill">للمراجعة</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 6 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">06</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">الإدارة المالية</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">متابعة كل العمولات المستحقة، المدفوعات الصادرة، الفواتير الضريبية ZATCA. تكامل مصرفي آمن ومطابق للمتطلبات التنظيمية.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">ZATCA متكامل</span>
+              <span class="ui-pill">تسويات تلقائية</span>
+              <span class="ui-pill">تقارير جاهزة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">الملخص المالي · مايو 2026</p>
+                <div class="ui-row"><span class="font-ar">إجمالي الإيرادات</span><span class="gold-light font-display" style="font-size:13px">4,285,000</span></div>
+                <div class="ui-row"><span class="font-ar">عمولات المنصة</span><span class="gold font-display" style="font-size:13px">342,800</span></div>
+                <div class="ui-row"><span class="font-ar">مدفوعات للمشغلين</span><span class="gold-light">3,942,200</span></div>
+                <div class="ui-row"><span class="font-ar">فواتير ZATCA الصادرة</span><span class="gold-light">82</span></div>
+                <div class="ui-row gold"><span class="font-ar">الدفعات التالية</span><span class="gold">30 مايو</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 7 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">07</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">الدعم والشكاوى</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">نظام تذاكر منظم — من الفتح حتى الإغلاق. قياس زمن الاستجابة، تصنيف المشكلات، بناء قاعدة معرفة من الحالات المتكررة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">نظام تذاكر</span>
+              <span class="ui-pill">SLA واضح</span>
+              <span class="ui-pill">قاعدة معرفة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <div style="display:flex;gap:8px;margin-bottom:8px">
+                  <span class="ui-pill">مفتوحة · 7</span>
+                  <span class="ui-pill" style="background:rgba(168,178,193,0.08);color:var(--text-mut)">قيد المعالجة · 3</span>
+                  <span class="ui-pill" style="background:rgba(168,178,193,0.08);color:var(--text-mut)">مغلقة · 156</span>
+                </div>
+                <div class="ui-row gold"><div><div class="gold-light">#T-0421 · استفسار فوترة</div><div class="text-mut" style="font-size:8px">عالية · منذ 8 دقائق</div></div><span class="ui-pill">جديدة</span></div>
+                <div class="ui-row"><div><div>#T-0418 · تأخير رد</div><div class="text-mut" style="font-size:8px">متوسطة · منذ 45د</div></div><span class="ui-pill">تم الإسناد</span></div>
+                <div class="ui-row"><div><div>#T-0415 · طلب تعديل</div><div class="text-mut" style="font-size:8px">منخفضة · 2 ساعة</div></div><span class="ui-pill">بانتظار الرد</span></div>
+                <p class="text-mut font-ar mt-3" style="font-size:9px">متوسط زمن الإغلاق · <span class="gold">3.2 ساعة</span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 8 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">08</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">التقارير والتحليلات</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">قرارات مبنية على بيانات — أداء المشغلين، سلوك العملاء، الوجهات الأكثر طلباً، اتجاهات السوق. تقارير قابلة للتصدير والمشاركة.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">BI متقدم</span>
+              <span class="ui-pill">تقارير مخصصة</span>
+              <span class="ui-pill">تصدير Excel/PDF</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">الوجهات الأكثر طلباً · Q2</p>
+                <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span class="gold-light">RUH → DXB</span><span class="gold">38%</span></div><div class="ui-line gold" style="width:95%"></div></div>
+                <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span class="gold-light">JED → CAI</span><span class="gold">22%</span></div><div class="ui-line gold" style="width:55%"></div></div>
+                <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span class="gold-light">RUH → LHR</span><span class="gold">14%</span></div><div class="ui-line gold" style="width:35%"></div></div>
+                <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span class="gold-light">DMM → BAH</span><span class="gold">11%</span></div><div class="ui-line gold" style="width:28%"></div></div>
+                <div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span class="gold-light">JED → BEY</span><span class="gold">8%</span></div><div class="ui-line gold" style="width:20%"></div></div>
+                <div class="ui-row gold mt-3" style="justify-content:center"><span class="font-ar">تحميل التقرير الكامل</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADM 9 -->
+      <div class="relative pr-24 fade-up">
+        <div class="timeline-node"></div>
+        <div class="grid md:grid-cols-5 gap-8 items-center">
+          <div class="md:col-span-2">
+            <p class="timeline-num mb-3">09</p>
+            <h3 class="h-ar text-2xl gold-light mb-3">إعدادات المنصة</h3>
+            <p class="font-ar text-sec leading-relaxed mb-5">تحكم كامل — معدلات العمولة، الصلاحيات، إعدادات الإشعارات، التكاملات الخارجية. مرونة تشغيلية دون التضحية بالاستقرار.</p>
+            <div class="flex flex-wrap gap-2">
+              <span class="ui-pill">صلاحيات دقيقة</span>
+              <span class="ui-pill">تكاملات API</span>
+              <span class="ui-pill">إعدادات متقدمة</span>
+            </div>
+          </div>
+          <div class="md:col-span-3">
+            <div class="mockup-desktop mx-auto">
+              <div class="mockup-desktop-bar"><span></span><span></span><span></span></div>
+              <div class="mockup-desktop-screen">
+                <p class="gold-light font-ar mb-3" style="font-size:11px">الإعدادات العامة</p>
+                <div class="ui-row"><span class="font-ar">معدل العمولة الافتراضي</span><span class="gold-light">8%</span></div>
+                <div class="ui-row"><span class="font-ar">مدة صلاحية العرض</span><span class="gold-light">6 ساعات</span></div>
+                <div class="ui-row"><span class="font-ar">إشعارات الواتساب</span><span class="gold">● مفعل</span></div>
+                <div class="ui-row"><span class="font-ar">تكامل ZATCA</span><span class="gold">● متصل</span></div>
+                <div class="ui-row"><span class="font-ar">بوابة الدفع</span><span class="gold">● HyperPay</span></div>
+                <div class="ui-row"><span class="font-ar">النسخ الاحتياطي</span><span class="gold">● تلقائي يومياً</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="max-w-3xl mx-auto mt-24 fade-up">
+      <p class="quote-block text-right">خلاصة: الإدارة لديها رؤية كاملة وتحكم دقيق دون إغراق في التفاصيل اليومية</p>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 9: COMPETITIVE POSITIONING -->
+<section id="s9" class="section-pad relative" style="z-index:2;background:linear-gradient(180deg,transparent,rgba(5,11,20,0.6),transparent)">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">08 · POSITIONING</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">موقعنا التنافسي</h2>
+      <p class="text-sec mt-4 font-ar">لماذا نفوز في هذا السوق</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="card overflow-x-auto fade-up">
+      <table class="comp-table">
+        <thead>
+          <tr>
+            <th style="width:30%">المعيار</th>
+            <th class="text-center"><div class="flex flex-col items-center gap-1"><span class="gold-light">Aeris</span><span class="text-xs text-mut" style="font-size:10px;font-weight:400;font-family:'Inter'">OUR PLATFORM</span></div></th>
+            <th class="text-center"><div class="flex flex-col items-center gap-1"><span>الحلول العالمية</span><span class="text-xs text-mut" style="font-size:10px;font-weight:400;font-family:'Inter'">GLOBAL</span></div></th>
+            <th class="text-center"><div class="flex flex-col items-center gap-1"><span>الأسلوب التقليدي</span><span class="text-xs text-mut" style="font-size:10px;font-weight:400;font-family:'Inter'">TRADITIONAL</span></div></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>فهم السوق المحلي</td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">كامل</span></td>
+            <td class="text-center"><span class="comp-x">✗</span> <span class="font-ar text-sm">محدود</span></td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">كامل</span></td>
+          </tr>
+          <tr>
+            <td>التجربة الرقمية</td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">متقدمة</span></td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">متقدمة</span></td>
+            <td class="text-center"><span class="comp-x">✗</span> <span class="font-ar text-sm">معدومة</span></td>
+          </tr>
+          <tr>
+            <td>المرونة والتخصيص</td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">عالية</span></td>
+            <td class="text-center"><span class="comp-x">✗</span> <span class="font-ar text-sm">منخفضة</span></td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">عالية</span></td>
+          </tr>
+          <tr>
+            <td>التوافق التنظيمي (ZATCA)</td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">أصلي</span></td>
+            <td class="text-center"><span class="comp-x">✗</span> <span class="font-ar text-sm">غير متوفر</span></td>
+            <td class="text-center"><span class="comp-warn">⚠</span> <span class="font-ar text-sm">يدوي</span></td>
+          </tr>
+          <tr>
+            <td>السرعة والكفاءة</td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">ممتازة</span></td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">ممتازة</span></td>
+            <td class="text-center"><span class="comp-x">✗</span> <span class="font-ar text-sm">ضعيفة</span></td>
+          </tr>
+          <tr>
+            <td>التواصل بالعربية</td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">أصلي</span></td>
+            <td class="text-center"><span class="comp-warn">⚠</span> <span class="font-ar text-sm">ترجمة</span></td>
+            <td class="text-center"><span class="comp-check">✓</span> <span class="font-ar text-sm">طبيعي</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="max-w-4xl mx-auto mt-16 fade-up">
+      <p class="quote-block text-right">Aeris يجمع بين عمق فهم السوق المحلي وحداثة التجربة الرقمية العالمية — وهذا ما لا يقدمه أي حل آخر اليوم</p>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 10: ROADMAP -->
+<section id="s10" class="section-pad relative" style="z-index:2">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">09 · ROADMAP</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">خارطة الطريق</h2>
+      <p class="text-sec mt-4 font-ar">من الفكرة إلى السوق، خطوة بخطوة</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="roadmap-track grid grid-cols-1 md:grid-cols-2 gap-6 fade-up">
+      <!-- Phase 1: Merged (الأساس + التحسين + الذكاء) -->
+      <div class="text-center">
+        <div class="roadmap-dot filled"></div>
+        <div class="card p-8 mt-8 text-right">
+          <p class="badge mb-4">شهرين أو أقل</p>
+          <h3 class="h-ar text-2xl gold-light mb-2">البناء والإطلاق الكامل</h3>
+          <div class="gold-line mb-6" style="width:40px"></div>
+
+          <div class="mb-6">
+            <p class="font-ar gold text-sm font-medium mb-3" style="letter-spacing:0.05em">· الأساس</p>
+            <ul class="space-y-2 text-sm font-ar text-sec pr-2">
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>منصة الويب الكاملة (3 بوابات)</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>نظام الدفع والإشعارات</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>بنية بيانات آمنة</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>جاهزية للإطلاق التجريبي</li>
+            </ul>
+          </div>
+
+          <div class="mb-6">
+            <p class="font-ar gold text-sm font-medium mb-3" style="letter-spacing:0.05em">· التحسين</p>
+            <ul class="space-y-2 text-sm font-ar text-sec pr-2">
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تجربة PWA متقدمة (تشبه التطبيق)</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تكامل واتساب للإشعارات</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تكامل ZATCA الكامل</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تقارير وتحليلات</li>
+            </ul>
+          </div>
+
+          <div>
+            <p class="font-ar gold text-sm font-medium mb-3" style="letter-spacing:0.05em">· الذكاء</p>
+            <ul class="space-y-2 text-sm font-ar text-sec pr-2">
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>مساعد AI لاستقبال الطلبات</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>توصيات ذكية للعروض</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تحليلات متقدمة</li>
+              <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تحسين مستمر للنموذج</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 2: التوسع -->
+      <div class="text-center">
+        <div class="roadmap-dot"></div>
+        <div class="card p-8 mt-8 text-right">
+          <p class="badge mb-4">شهر 3+</p>
+          <h3 class="h-ar text-2xl gold-light mb-2">التوسع</h3>
+          <div class="gold-line mb-6" style="width:40px"></div>
+
+          <ul class="space-y-3 text-sm font-ar text-sec">
+            <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تطبيق جوال (Flutter)</li>
+            <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>ميزات الكونسيرج</li>
+            <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>تكاملات إضافية</li>
+            <li class="flex gap-2"><i data-lucide="dot" class="gold flex-shrink-0" style="width:16px"></i>توسع جغرافي (خليجي)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <p class="text-center text-mut mt-10 font-ar italic fade-up">هذه الخطة قابلة للتعديل بناءً على أولويات العمل والميزانية</p>
+  </div>
+</section>
+
+<!-- SECTION 11: RESOURCES -->
+<section id="s11" class="section-pad relative" style="z-index:2;background:linear-gradient(180deg,transparent,rgba(5,11,20,0.6),transparent)">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">10 · RESOURCES</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">الموارد المطلوبة</h2>
+      <p class="text-sec mt-4 font-ar">ما يحتاجه المشروع لينطلق بقوة</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="grid md:grid-cols-3 gap-6 stagger">
+      <div class="card p-10 relative">
+        <div class="corner-ornament tl"></div>
+        <div class="icon-circle mb-6"><i data-lucide="code-2" style="width:22px;height:22px"></i></div>
+        <h3 class="h-ar text-2xl gold-light mb-5">التطوير التقني</h3>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <ul class="space-y-4 font-ar text-sec">
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>مطور رئيسي (BLTech)</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>بنية تحتية سحابية</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>اشتراكات أدوات تطوير</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>دعم تقني مستمر</span></li>
+        </ul>
+      </div>
+
+      <div class="card p-10 relative">
+        <div class="corner-ornament tl"></div>
+        <div class="icon-circle mb-6"><i data-lucide="users" style="width:22px;height:22px"></i></div>
+        <h3 class="h-ar text-2xl gold-light mb-5">العمليات والتشغيل</h3>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <ul class="space-y-4 font-ar text-sec">
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>فريق دعم عملاء (مرحلة لاحقة)</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>مدير عمليات</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>محتوى تسويقي</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>متابعة جودة مستمرة</span></li>
+        </ul>
+      </div>
+
+      <div class="card p-10 relative">
+        <div class="corner-ornament tl"></div>
+        <div class="icon-circle mb-6"><i data-lucide="megaphone" style="width:22px;height:22px"></i></div>
+        <h3 class="h-ar text-2xl gold-light mb-5">التسويق والنمو</h3>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <ul class="space-y-4 font-ar text-sec">
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>هوية بصرية كاملة</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>موقع تعريفي</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>حملات تسويقية مستهدفة</span></li>
+          <li class="flex gap-3"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:16px"></i><span>علاقات عامة إقليمية</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="text-center text-mut mt-12 font-ar italic fade-up">التفاصيل المالية الدقيقة تخضع للنقاش والتفصيل في المرحلة التالية</p>
+  </div>
+</section>
+
+<!-- SECTION 12: RISK ASSESSMENT -->
+<section id="s12" class="section-pad relative" style="z-index:2">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">11 · RISK</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">تقييم المخاطر</h2>
+      <p class="text-sec mt-4 font-ar">نتعامل مع المخاطر بشفافية وخطط واضحة</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="grid md:grid-cols-3 gap-6 stagger">
+      <div class="card p-10">
+        <div class="flex items-center gap-4 mb-6">
+          <div class="icon-circle"><i data-lucide="users-round" style="width:22px;height:22px"></i></div>
+          <div><p class="text-xs text-mut font-inter" style="letter-spacing:0.2em">01</p><h3 class="h-ar text-xl gold-light">مخاطر تشغيلية</h3></div>
+        </div>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <div class="space-y-5">
+          <div>
+            <p class="text-xs gold font-inter mb-2" style="letter-spacing:0.18em;text-transform:uppercase">RISK</p>
+            <p class="font-ar text-sec leading-relaxed">بطء استجابة المشغلين للطلبات، مما يؤثر على تجربة العميل ومعدل التحويل.</p>
+          </div>
+          <div>
+            <p class="text-xs gold-light font-inter mb-2" style="letter-spacing:0.18em;text-transform:uppercase">MITIGATION</p>
+            <p class="font-ar text-sec leading-relaxed">نظام تنبيهات متعدد القنوات، معايير أداء واضحة لكل مشغل، وحوافز للاستجابة السريعة.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-10">
+        <div class="flex items-center gap-4 mb-6">
+          <div class="icon-circle"><i data-lucide="server-crash" style="width:22px;height:22px"></i></div>
+          <div><p class="text-xs text-mut font-inter" style="letter-spacing:0.2em">02</p><h3 class="h-ar text-xl gold-light">مخاطر تقنية</h3></div>
+        </div>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <div class="space-y-5">
+          <div>
+            <p class="text-xs gold font-inter mb-2" style="letter-spacing:0.18em;text-transform:uppercase">RISK</p>
+            <p class="font-ar text-sec leading-relaxed">انقطاع النظام، هجمات أمنية، أو فقدان البيانات خلال العمليات الحيوية.</p>
+          </div>
+          <div>
+            <p class="text-xs gold-light font-inter mb-2" style="letter-spacing:0.18em;text-transform:uppercase">MITIGATION</p>
+            <p class="font-ar text-sec leading-relaxed">بنية سحابية متعددة المناطق، نسخ احتياطية يومية، وخطة استمرارية أعمال موثقة.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-10">
+        <div class="flex items-center gap-4 mb-6">
+          <div class="icon-circle"><i data-lucide="trending-down" style="width:22px;height:22px"></i></div>
+          <div><p class="text-xs text-mut font-inter" style="letter-spacing:0.2em">03</p><h3 class="h-ar text-xl gold-light">مخاطر السوق</h3></div>
+        </div>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <div class="space-y-5">
+          <div>
+            <p class="text-xs gold font-inter mb-2" style="letter-spacing:0.18em;text-transform:uppercase">RISK</p>
+            <p class="font-ar text-sec leading-relaxed">بطء تبني المنصة من قبل العملاء أو المشغلين في المرحلة الأولى.</p>
+          </div>
+          <div>
+            <p class="text-xs gold-light font-inter mb-2" style="letter-spacing:0.18em;text-transform:uppercase">MITIGATION</p>
+            <p class="font-ar text-sec leading-relaxed">بدء بشركاء موجودين وعملاء حاليين للشركاء، ونمو تدريجي مدروس بدلاً من التوسع السريع.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 13: SUCCESS METRICS -->
+<section id="s13" class="section-pad relative" style="z-index:2;background:linear-gradient(180deg,transparent,rgba(5,11,20,0.6),transparent)">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">12 · METRICS</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">مؤشرات النجاح</h2>
+      <p class="text-sec mt-4 font-ar">كيف نقيس أننا على الطريق الصحيح</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-8">
+      <div class="card p-10 fade-up">
+        <div class="flex items-center gap-4 mb-8">
+          <div class="icon-circle"><i data-lucide="calendar" style="width:22px;height:22px"></i></div>
+          <div>
+            <p class="text-xs gold font-inter" style="letter-spacing:0.2em">YEAR 01</p>
+            <h3 class="h-ar text-2xl gold-light">أهداف السنة الأولى</h3>
+          </div>
+        </div>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <div class="space-y-4">
+          <div class="flex justify-between items-center py-4 border-b border-[var(--border)]">
+            <span class="font-ar text-sec">المشغلون المعتمدون</span>
+            <span class="font-display text-2xl gold">10 – 15</span>
+          </div>
+          <div class="flex justify-between items-center py-4 border-b border-[var(--border)]">
+            <span class="font-ar text-sec">الحجوزات الشهرية</span>
+            <span class="font-display text-2xl gold">30 – 50</span>
+          </div>
+          <div class="flex justify-between items-center py-4 border-b border-[var(--border)]">
+            <span class="font-ar text-sec">معدل تحويل الطلبات</span>
+            <span class="font-display text-2xl gold">25%+</span>
+          </div>
+          <div class="flex justify-between items-center py-4">
+            <span class="font-ar text-sec">رضا العملاء</span>
+            <span class="font-display text-2xl gold">4.5 / 5</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-10 fade-up">
+        <div class="flex items-center gap-4 mb-8">
+          <div class="icon-circle"><i data-lucide="rocket" style="width:22px;height:22px"></i></div>
+          <div>
+            <p class="text-xs gold font-inter" style="letter-spacing:0.2em">YEAR 02</p>
+            <h3 class="h-ar text-2xl gold-light">أهداف السنة الثانية</h3>
+          </div>
+        </div>
+        <div class="gold-line mb-6" style="width:40px"></div>
+        <ul class="space-y-5">
+          <li class="flex gap-4 py-2"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><div><p class="gold-light font-ar font-medium">توسعة خليجية</p><p class="font-ar text-sec text-sm mt-1">الإمارات، الكويت، البحرين</p></div></li>
+          <li class="flex gap-4 py-2"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><div><p class="gold-light font-ar font-medium">مضاعفة قاعدة المشغلين</p><p class="font-ar text-sec text-sm mt-1">زيادة الشبكة للوصول إلى 25+ مشغل</p></div></li>
+          <li class="flex gap-4 py-2"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><div><p class="gold-light font-ar font-medium">إطلاق التطبيق الجوال</p><p class="font-ar text-sec text-sm mt-1">تجربة أصلية على iOS و Android</p></div></li>
+          <li class="flex gap-4 py-2"><i data-lucide="chevron-left" class="gold mt-1 flex-shrink-0" style="width:18px"></i><div><p class="gold-light font-ar font-medium">إيرادات تشغيلية مستدامة</p><p class="font-ar text-sec text-sm mt-1">الوصول لنقطة التعادل والنمو الذاتي</p></div></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 14: NEXT STEPS -->
+<section id="s14" class="section-pad relative" style="z-index:2">
+  <div class="container-x">
+    <div class="text-center mb-20 fade-up">
+      <span class="section-tag">13 · NEXT</span>
+      <h2 class="h-ar text-4xl md:text-5xl mt-6 mb-3 gold-light">الخطوات التالية</h2>
+      <p class="text-sec mt-4 font-ar">من هذا العرض إلى البدء الفعلي</p>
+      <div class="gold-line mx-auto mt-6" style="width:80px"></div>
+    </div>
+
+    <div class="max-w-3xl mx-auto space-y-8 stagger">
+      <div class="card p-8 flex items-start gap-6">
+        <div class="step-num">01</div>
+        <div class="flex-1">
+          <h3 class="h-ar text-xl gold-light mb-2">مناقشة هذا العرض</h3>
+          <div class="gold-line mb-4" style="width:30px"></div>
+          <p class="font-ar text-sec leading-relaxed">مراجعة النموذج بالكامل، الاتفاق على الرؤية، وتحديد نقاط التعديل أو التطوير — هذا اللقاء نقطة الانطلاق.</p>
+        </div>
+      </div>
+
+      <div class="card p-8 flex items-start gap-6">
+        <div class="step-num">02</div>
+        <div class="flex-1">
+          <h3 class="h-ar text-xl gold-light mb-2">توثيق المتطلبات التفصيلية</h3>
+          <div class="gold-line mb-4" style="width:30px"></div>
+          <p class="font-ar text-sec leading-relaxed">وثيقة مشروع رسمية تحدد كل التفاصيل — الميزات، المراحل، المعايير، المخرجات، والجداول الزمنية الدقيقة.</p>
+        </div>
+      </div>
+
+      <div class="card p-8 flex items-start gap-6">
+        <div class="step-num">03</div>
+        <div class="flex-1">
+          <h3 class="h-ar text-xl gold-light mb-2">الاتفاق التجاري والقانوني</h3>
+          <div class="gold-line mb-4" style="width:30px"></div>
+          <p class="font-ar text-sec leading-relaxed">هيكل الشراكة، الحوكمة، توزيع الأدوار والعوائد، والمسؤوليات — أساس تجاري متين لعلاقة طويلة الأمد.</p>
+        </div>
+      </div>
+
+      <div class="card p-8 flex items-start gap-6">
+        <div class="step-num">04</div>
+        <div class="flex-1">
+          <h3 class="h-ar text-xl gold-light mb-2">بدء التنفيذ</h3>
+          <div class="gold-line mb-4" style="width:30px"></div>
+          <p class="font-ar text-sec leading-relaxed">انطلاق المرحلة الأولى — بناء الأساس التقني، تجهيز الهوية البصرية، وإعداد البنية التحتية للإطلاق التجريبي.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="max-w-3xl mx-auto mt-24 fade-up">
+      <div class="card p-12 text-center relative">
+        <div class="corner-ornament tl"></div>
+        <div class="corner-ornament br"></div>
+        <div class="mb-6 flex justify-center"><div class="gold-line-draw visible" style="width:80px"></div></div>
+        <p class="font-ar text-xl md:text-2xl gold-light leading-relaxed" style="font-weight:300">
+          <span class="gold font-display">Aeris</span> ليس فكرة تقنية — هو نموذج عمل متكامل ينتظر التنفيذ.
+          <br><br>
+          <span class="gold">الفرصة الآن لبناء الريادة الإقليمية في قطاع الطيران الخاص الرقمي</span>
+        </p>
+        <div class="mt-8 flex justify-center"><div class="gold-line-draw visible" style="width:80px"></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="relative py-20 text-center border-t border-[var(--border)]" style="z-index:2;background:var(--bg-secondary)">
+  <div class="container-x">
+    <h3 class="hero-title text-4xl md:text-5xl mb-4">AERIS</h3>
+    <p class="font-ar gold-light text-sm mb-12" style="letter-spacing:0.08em">الفضاء يبدأ من هنا</p>
+
+    <div class="gold-line mx-auto mb-10" style="width:60px"></div>
+
+    <p class="text-sec text-sm font-ar mb-2">عرض مُعد بواسطة</p>
+    <p class="font-display text-xl gold mb-6">BLTech Solutions</p>
+
+    <div class="flex items-center justify-center gap-6 text-xs text-mut font-inter mb-10" style="letter-spacing:0.1em">
+      <a href="mailto:basem902@gmail.com" class="hover:text-[var(--gold)] transition-colors">basem902@gmail.com</a>
+      <span>·</span>
+      <span>APRIL 2026</span>
+    </div>
+
+    <p class="text-[11px] text-mut font-ar italic" style="letter-spacing:0.05em">هذا العرض سري ومخصص للمستلم فقط — جميع الحقوق محفوظة</p>
+  </div>
+</footer>
+
+<script>
+// Lucide icons
+if (window.lucide) lucide.createIcons();
+
+// Reading progress bar
+const progressBar = document.getElementById('progressBar');
+function updateProgress(){
+  const h = document.documentElement;
+  const scrolled = (h.scrollTop)/(h.scrollHeight - h.clientHeight);
+  progressBar.style.setProperty('--progress', Math.min(100, scrolled * 100) + '%');
+}
+window.addEventListener('scroll', updateProgress, { passive:true });
+updateProgress();
+
+// Section nav dots active state
+const sections = document.querySelectorAll('section[id]');
+const dots = document.querySelectorAll('.nav-dot');
+
+const dotObs = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const id = entry.target.id;
+      dots.forEach(d => d.classList.toggle('active', d.dataset.section === id));
+    }
+  });
+}, { threshold: 0.35, rootMargin: '-20% 0px -40% 0px' });
+
+sections.forEach(s => dotObs.observe(s));
+
+// Fade-up / scale-in / stagger animations
+const animObs = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+      animObs.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.15, rootMargin: '0px 0px -80px 0px' });
+
+document.querySelectorAll('.fade-up, .fade-in, .scale-in, .stagger').forEach(el => animObs.observe(el));
+
+// Counter animations
+const counterObs = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const el = entry.target;
+      const target = parseFloat(el.dataset.target);
+      const prefix = el.dataset.prefix || '';
+      const suffix = el.dataset.suffix || '';
+      const duration = 1800;
+      const start = performance.now();
+      function tick(now){
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - t, 3);
+        const val = Math.floor(target * eased);
+        el.textContent = prefix + val + suffix;
+        if (t < 1) requestAnimationFrame(tick);
+        else el.textContent = prefix + target + suffix;
+      }
+      requestAnimationFrame(tick);
+      counterObs.unobserve(el);
+    }
+  });
+}, { threshold: 0.5 });
+
+document.querySelectorAll('[data-target]').forEach(el => counterObs.observe(el));
+
+// Gold line draw on scroll
+const lineObs = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+      lineObs.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.5 });
+document.querySelectorAll('.gold-line-draw:not(.visible)').forEach(el => lineObs.observe(el));
+
+// Parallax on hero
+const hero = document.querySelector('.hero-jet');
+if (hero) {
+  window.addEventListener('scroll', () => {
+    const y = window.pageYOffset;
+    if (y < window.innerHeight) {
+      hero.style.transform = `translateY(${y * 0.3}px)`;
+    }
+  }, { passive:true });
+}
+
+// Smooth scroll for nav dots
+document.querySelectorAll('.nav-dot').forEach(dot => {
+  dot.addEventListener('click', (e) => {
+    e.preventDefault();
+    const target = document.querySelector(dot.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+</script>
+
+</body>
+</html>
