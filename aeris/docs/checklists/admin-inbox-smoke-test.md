@@ -118,6 +118,30 @@ You need:
 - The Arabic copy renders RTL with no layout breakage at 375 px
   (mobile viewport).
 
+## Promote to trip request (Phase 4)
+
+A small extension to the admin inbox flow: every lead detail page
+now has a "تحويل إلى طلب رحلة" form. The end-to-end of dispatch
++ offer + accept lives in
+[`operator-flow-smoke-test.md`](operator-flow-smoke-test.md); only
+the inbox-side button is checked here.
+
+19. [ ] On a lead in `new` / `contacted` / `quoted` status, the
+        right-hand sidebar shows a "تحويل إلى طلب رحلة" panel with
+        a cabin-class dropdown and a "متطلبات خاصة" textarea.
+20. [ ] Submitting the form with a valid cabin class redirects to
+        `/admin/trips/<id>` of a brand-new trip request whose
+        status is "بانتظار الإرسال".
+21. [ ] The originating lead's status is now "تحوّل لحجز" and a
+        `converted_at` timestamp is visible in Supabase
+        (`SELECT status, converted_at FROM lead_inquiries WHERE id = '<lead_id>';`).
+22. [ ] Re-opening the same lead detail shows the promote panel
+        replaced by an emerald confirmation banner ("تم تحويل هذا
+        الطلب إلى طلب رحلة بالفعل."). The form does not reappear.
+23. [ ] On a lead whose `trip_type = 'multi_city'`, the form shows
+        the amber warning that legs must be edited manually before
+        dispatch (Phase 4.1 will add the leg editor).
+
 ## If it fails
 
 - **Login fails with the right password:**

@@ -44,6 +44,11 @@ sub-list because "nothing changed there" — environment drift is real.
        every item passes against the staging DB *and* production DB.
 8. [ ] [admin-inbox-smoke-test.md](admin-inbox-smoke-test.md) —
        run on the preview deploy that will be promoted to production.
+8a. [ ] [operator-flow-smoke-test.md](operator-flow-smoke-test.md) —
+        run on the preview deploy. Required once Phase 4 ships. If
+        the deploy does not touch Phase 4 surfaces and the previous
+        run is < 7 days old, the spot-checks at steps 1-17 (promote
+        + dispatch + submit + accept happy path) are sufficient.
 9. [ ] [resend-email-test.md](resend-email-test.md) — at least the
        valid-key path verified after this build is on preview.
 10. [ ] [env-vars-vercel-supabase.md](env-vars-vercel-supabase.md) —

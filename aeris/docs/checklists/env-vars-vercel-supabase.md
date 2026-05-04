@@ -24,7 +24,7 @@ right server-only vs client-public split, in every environment
 **Rule of thumb:** if you would not screenshot the value into Slack,
 it does not get a `NEXT_PUBLIC_` prefix.
 
-## Required matrix (Phase 1 + Phase 2)
+## Required matrix (Phase 1 + Phase 2 + Phase 4)
 
 | Variable | Scope | Required in dev? | Required in preview? | Required in prod? | Notes |
 |---|---|---|---|---|---|
@@ -38,12 +38,13 @@ it does not get a `NEXT_PUBLIC_` prefix.
 | `RESEND_API_KEY` | server | optional | optional | recommended | Without it, founder email is a silent no-op (form still works). |
 | `RESEND_FROM_EMAIL` | server | optional | optional | required-if-RESEND | Verified Resend sender on the verified domain. |
 | `LEAD_NOTIFICATION_TO` | server | optional | optional | optional | Defaults to `RESEND_FROM_EMAIL` if unset. |
+| `OPERATOR_TOKEN_SECRET` | server | **yes** for the operator offer URL to work | **yes** | **yes** | 32-byte hex (`openssl rand -hex 32`). **Different secret from `ADMIN_AUTH_SECRET`** — different lifecycle and blast radius. Required for `/admin/trips` dispatch to issue tokens, and for `/operator/offer/[token]` to verify them. |
 
 Other variables in `.env.example` (`ANTHROPIC_API_KEY`, `HYPERPAY_*`,
 `ZATCA_*`, `INNGEST_*`, `SENTRY_*`, `UNIFONIC_*`, `MAPBOX`, `POSTHOG`,
 `FLIGHTRADAR24_API_KEY`, `ACCUWEATHER_API_KEY`) are **not required**
-by Phase 1 + Phase 2 and may be left unset until the corresponding
-phase ships.
+by Phase 1 + Phase 2 + Phase 4 and may be left unset until the
+corresponding phase ships.
 
 ## Steps
 
@@ -69,9 +70,10 @@ phase ships.
        ```
        → No `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`,
        `ADMIN_INBOX_PASSWORD`, `ADMIN_AUTH_SECRET`,
-       `ANTHROPIC_API_KEY`, `HYPERPAY_*`, `INNGEST_SIGNING_KEY`, or
-       `SENTRY_AUTH_TOKEN` appears in this list. **Any of those in
-       the public list is a P1 incident — rotate immediately.**
+       `OPERATOR_TOKEN_SECRET`, `ANTHROPIC_API_KEY`, `HYPERPAY_*`,
+       `INNGEST_SIGNING_KEY`, or `SENTRY_AUTH_TOKEN` appears in
+       this list. **Any of those in the public list is a P1
+       incident — rotate immediately.**
 4. [ ] `SUPABASE_SERVICE_ROLE_KEY` exists in **server** scope only,
        never in `NEXT_PUBLIC_`.
 5. [ ] `ADMIN_INBOX_PASSWORD` and `ADMIN_AUTH_SECRET` both present

@@ -173,7 +173,8 @@ follows the same shape (Purpose → When to run → Steps → Pass criteria
 
 - [`production-readiness.md`](docs/checklists/production-readiness.md) — master pre-deploy gate; aggregates the others.
 - [`ci-pipeline.md`](docs/checklists/ci-pipeline.md) — GitHub Actions workflow shape (triggers, Node 20, `npm ci`, type-check, build, `lint:strict`), no-secrets discipline, branch protection, and a green `main`.
-- [`admin-inbox-smoke-test.md`](docs/checklists/admin-inbox-smoke-test.md) — login, list, detail, status, notes, sign-out, cookie-tamper UI check.
+- [`admin-inbox-smoke-test.md`](docs/checklists/admin-inbox-smoke-test.md) — login, list, detail, status, notes, sign-out, cookie-tamper UI check, Phase 4 promote button.
+- [`operator-flow-smoke-test.md`](docs/checklists/operator-flow-smoke-test.md) — Phase 4 end-to-end (promote → dispatch → operator submits → admin accepts), with race-guard / expired-offer / tampered-token probes.
 - [`supabase-migration-verification.md`](docs/checklists/supabase-migration-verification.md) — enums, columns, indexes, trigger, RLS on, zero policies on `lead_inquiries`, anon REST probes denied.
 - [`resend-email-test.md`](docs/checklists/resend-email-test.md) — founder notification email: valid key, missing key (silent no-op), invalid key (controlled failure).
 - [`env-vars-vercel-supabase.md`](docs/checklists/env-vars-vercel-supabase.md) — required/optional matrix per environment + Vercel & Supabase scopes.

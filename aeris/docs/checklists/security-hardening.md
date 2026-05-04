@@ -108,18 +108,31 @@ section 4.
        - **Rotated** if it ever left a trusted machine, was pasted
          into a screenshare, or appears in any external system.
 
-### 4. Admin route discipline
+8a. [ ] `OPERATOR_TOKEN_SECRET` (production env in Vercel — Phase 4):
+       - Generated freshly with `openssl rand -hex 32` (64 hex chars).
+       - **Distinct from `ADMIN_AUTH_SECRET`** — different
+         lifecycle, different blast radius. Reusing one as the
+         other defeats the separation of admin sessions from
+         per-trip dispatch links.
+       - Rotated under the same triggers as `ADMIN_AUTH_SECRET`.
+         Rotation invalidates every outstanding operator dispatch
+         link; founder must re-dispatch active trips.
 
-9. [ ] `npm run build` output: every admin route is `ƒ Dynamic`,
-        none are `○ Static`:
+### 4. Admin + operator route discipline
+
+9. [ ] `npm run build` output: every admin route plus the operator
+        offer route is `ƒ Dynamic`, none are `○ Static`:
         ```
         ƒ /admin/leads
         ƒ /admin/leads/[id]
         ƒ /admin/login
+        ƒ /admin/trips
+        ƒ /admin/trips/[id]
+        ƒ /operator/offer/[token]
         ```
-        → Matches Phase 2 acceptance criterion #7. If any admin
-        route is `○ Static`, PII would be cached at the edge —
-        treat as a P1 finding.
+        → If any of these is `○ Static`, PII or token-validated
+        content would be cached at the edge — treat as a P1
+        finding.
 
 ### 5. No public PII leakage
 
