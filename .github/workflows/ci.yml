@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: aeris
+
+jobs:
+  quality-gates:
+    name: Type-check, build, lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Public placeholders only. Real secrets must NEVER be added here.
+      # next build needs these to resolve at compile time without
+      # connecting to anything.
+      NEXT_PUBLIC_SITE_URL: https://aeris.sa
+      NEXT_PUBLIC_WHATSAPP_NUMBER: "966558048004"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: aeris/package-lock.json
+
+      - name: Install dependencies (clean)
+        run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint (strict)
+        run: npm run lint:strict

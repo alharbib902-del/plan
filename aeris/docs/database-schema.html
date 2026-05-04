@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aeris — تخطيط قاعدة البيانات</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0A1628;
+  --bg-secondary: #050B14;
+  --bg-card: #0D1B30;
+  --gold: #C9A961;
+  --gold-light: #E8D4A8;
+  --gold-dark: #8B7339;
+  --ink: #FAFAFA;
+  --ink-sec: #A8B2C1;
+  --ink-muted: #6B7A8F;
+  --border: rgba(201,169,97,0.15);
+  --border-strong: rgba(201,169,97,0.35);
+}
+* { -webkit-font-smoothing: antialiased }
+body {
+  background: var(--bg-primary);
+  color: var(--ink);
+  font-family: 'IBM Plex Sans Arabic', sans-serif;
+  min-height: 100vh;
+}
+.font-display { font-family: 'Playfair Display', serif }
+.font-mono { font-family: 'JetBrains Mono', monospace }
+.gold { color: var(--gold) }
+.gold-light { color: var(--gold-light) }
+.text-sec { color: var(--ink-sec) }
+.text-muted { color: var(--ink-muted) }
+
+.gold-text {
+  background: linear-gradient(180deg, var(--gold-light) 0%, var(--gold) 50%, var(--gold-dark) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.domain-card {
+  background: linear-gradient(180deg, rgba(15,31,53,0.75), rgba(10,22,40,0.65));
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+.domain-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-4px);
+  box-shadow: 0 20px 60px -20px rgba(201,169,97,0.18);
+}
+
+.table-card {
+  background: rgba(15,31,53,0.6);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+.table-card:hover {
+  border-color: var(--gold);
+  background: rgba(201,169,97,0.05);
+  transform: translateX(-4px);
+}
+
+.field-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(201,169,97,0.08);
+  font-size: 12px;
+}
+.field-row:last-child { border-bottom: none }
+.field-row.pk { background: rgba(201,169,97,0.1); border-radius: 3px }
+.field-row.fk { color: var(--gold-light) }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+}
+.badge-pk { background: rgba(201,169,97,0.2); color: var(--gold-light) }
+.badge-fk { background: rgba(59,130,246,0.2); color: #93C5FD }
+.badge-enum { background: rgba(168,85,247,0.2); color: #D8B4FE }
+.badge-idx { background: rgba(34,197,94,0.2); color: #86EFAC }
+.badge-uniq { background: rgba(239,68,68,0.2); color: #FCA5A5 }
+.badge-rls { background: rgba(245,158,11,0.2); color: #FCD34D }
+
+.section-tag {
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--gold);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.section-tag::before {
+  content: "";
+  width: 32px;
+  height: 1px;
+  background: var(--gold);
+  display: block;
+}
+
+.glass {
+  background: rgba(15,31,53,0.4);
+  backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--border);
+}
+
+.mermaid {
+  background: #0D1B30 !important;
+  padding: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+code {
+  background: rgba(201,169,97,0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
+  color: var(--gold-light);
+}
+
+.domain-users { border-left: 3px solid #3B82F6 }
+.domain-operators { border-left: 3px solid #C9A961 }
+.domain-booking { border-left: 3px solid #10B981 }
+.domain-specialized { border-left: 3px solid #EF4444 }
+.domain-loyalty { border-left: 3px solid #A855F7 }
+.domain-support { border-left: 3px solid #F59E0B }
+.domain-reference { border-left: 3px solid #6B7280 }
+
+.table-domain-label {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="sticky top-0 z-50 glass border-b border-[var(--border)]">
+  <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div>
+      <div class="font-display text-2xl gold-text font-bold tracking-[0.2em]">AERIS</div>
+      <p class="text-xs text-sec mt-1">تخطيط قاعدة البيانات · Database Schema</p>
+    </div>
+    <div class="flex gap-6 text-xs">
+      <a href="#overview" class="gold hover:text-[var(--gold-light)]">نظرة عامة</a>
+      <a href="#diagram" class="gold hover:text-[var(--gold-light)]">المخطط</a>
+      <a href="#tables" class="gold hover:text-[var(--gold-light)]">الجداول</a>
+      <a href="#flows" class="gold hover:text-[var(--gold-light)]">التدفقات</a>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-6 py-16">
+
+  <!-- Overview -->
+  <section id="overview" class="mb-20">
+    <div class="text-center mb-12">
+      <span class="section-tag">01 · OVERVIEW</span>
+      <h1 class="font-display text-5xl md:text-6xl mt-4 mb-4 gold-text">قاعدة البيانات</h1>
+      <p class="text-sec max-w-2xl mx-auto">
+        19 جدول · 22 Enum · Row Level Security · PostGIS · Audit Logs · مصممة لتدعم 5 وحدات أعمال متكاملة
+      </p>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
+      <div class="domain-card p-6 text-center">
+        <div class="font-display text-4xl gold-text mb-2">19</div>
+        <div class="text-xs text-sec">جدول</div>
+      </div>
+      <div class="domain-card p-6 text-center">
+        <div class="font-display text-4xl gold-text mb-2">22</div>
+        <div class="text-xs text-sec">Enum Type</div>
+      </div>
+      <div class="domain-card p-6 text-center">
+        <div class="font-display text-4xl gold-text mb-2">30+</div>
+        <div class="text-xs text-sec">Index</div>
+      </div>
+      <div class="domain-card p-6 text-center">
+        <div class="font-display text-4xl gold-text mb-2">100%</div>
+        <div class="text-xs text-sec">RLS مُفعَّل</div>
+      </div>
+    </div>
+
+    <!-- Domains Summary -->
+    <div class="domain-card p-8">
+      <h3 class="text-xl gold-light mb-6">📊 توزيع الجداول على المجالات</h3>
+      <div class="grid md:grid-cols-2 gap-6">
+
+        <div class="flex items-start gap-4">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(59,130,246,0.15);border:1px solid #3B82F6">
+            <span class="text-xl">👤</span>
+          </div>
+          <div class="flex-1">
+            <h4 class="gold-light mb-1">Users & Auth (2)</h4>
+            <p class="text-xs text-sec">users, audit_logs</p>
+          </div>
+        </div>
+
+        <div class="flex items-start gap-4">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(201,169,97,0.15);border:1px solid #C9A961">
+            <span class="text-xl">✈️</span>
+          </div>
+          <div class="flex-1">
+            <h4 class="gold-light mb-1">Operators & Fleet (3)</h4>
+            <p class="text-xs text-sec">operators, aircraft, crew_members</p>
+          </div>
+        </div>
+
+        <div class="flex items-start gap-4">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(16,185,129,0.15);border:1px solid #10B981">
+            <span class="text-xl">💰</span>
+          </div>
+          <div class="flex-1">
+            <h4 class="gold-light mb-1">Booking Flow (6)</h4>
+            <p class="text-xs text-sec">trip_requests, offers, bookings, booking_addons, empty_legs, payments</p>
+          </div>
+        </div>
+
+        <div class="flex items-start gap-4">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(239,68,68,0.15);border:1px solid #EF4444">
+            <span class="text-xl">🚁</span>
+          </div>
+          <div class="flex-1">
+            <h4 class="gold-light mb-1">Specialized Services (3)</h4>
+            <p class="text-xs text-sec">medevac_requests, medevac_subscriptions, cargo_requests</p>
+          </div>
+        </div>
+
+        <div class="flex items-start gap-4">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(168,85,247,0.15);border:1px solid #A855F7">
+            <span class="text-xl">🏆</span>
+          </div>
+          <div class="flex-1">
+            <h4 class="gold-light mb-1">Loyalty & Engagement (3)</h4>
+            <p class="text-xs text-sec">loyalty_transactions, reviews, notifications</p>
+          </div>
+        </div>
+
+        <div class="flex items-start gap-4">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(245,158,11,0.15);border:1px solid #F59E0B">
+            <span class="text-xl">🎫</span>
+          </div>
+          <div class="flex-1">
+            <h4 class="gold-light mb-1">Support & Reference (2)</h4>
+            <p class="text-xs text-sec">support_tickets, airports</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ER Diagram -->
+  <section id="diagram" class="mb-20">
+    <div class="text-center mb-12">
+      <span class="section-tag">02 · ER DIAGRAM</span>
+      <h2 class="font-display text-4xl mt-4 mb-4 gold-text">المخطط الترابطي</h2>
+    </div>
+
+    <div class="mermaid">
+erDiagram
+    USERS ||--o{ BOOKINGS : "حجوزات"
+    USERS ||--o{ TRIP_REQUESTS : "طلبات"
+    USERS ||--o{ OPERATORS : "يملك"
+    USERS ||--o{ LOYALTY_TRANSACTIONS : "نقاط"
+    USERS ||--o{ NOTIFICATIONS : "إشعارات"
+    USERS ||--o{ REVIEWS : "تقييمات"
+    USERS ||--o{ MEDEVAC_REQUESTS : "طلبات طبية"
+    USERS ||--o{ MEDEVAC_SUBSCRIPTIONS : "اشتراكات Shield"
+    USERS ||--o{ CARGO_REQUESTS : "طلبات شحن"
+    USERS ||--o{ SUPPORT_TICKETS : "تذاكر دعم"
+    USERS ||--o{ AUDIT_LOGS : "سجل"
+
+    OPERATORS ||--o{ AIRCRAFT : "أسطول"
+    OPERATORS ||--o{ CREW_MEMBERS : "طاقم"
+    OPERATORS ||--o{ OFFERS : "عروض"
+    OPERATORS ||--o{ BOOKINGS : "تشغيل"
+    OPERATORS ||--o{ EMPTY_LEGS : "رحلات فارغة"
+    OPERATORS ||--o{ REVIEWS : "تقييمات"
+
+    AIRCRAFT ||--o{ OFFERS : "مقترح"
+    AIRCRAFT ||--o{ BOOKINGS : "مستخدم"
+    AIRCRAFT ||--o{ EMPTY_LEGS : "للطائرة"
+
+    AIRPORTS ||--o{ OPERATORS : "مطار رئيسي"
+    AIRPORTS ||--o{ TRIP_REQUESTS : "المغادرة"
+    AIRPORTS ||--o{ EMPTY_LEGS : "مسار"
+
+    TRIP_REQUESTS ||--o{ OFFERS : "يتلقى"
+    OFFERS ||--|| BOOKINGS : "عند القبول"
+
+    BOOKINGS ||--o{ BOOKING_ADDONS : "إضافات"
+    BOOKINGS ||--|| PAYMENTS : "دفع"
+    BOOKINGS ||--|| REVIEWS : "تقييم"
+    BOOKINGS ||--o{ EMPTY_LEGS : "يولّد"
+    BOOKINGS ||--o{ SUPPORT_TICKETS : "متعلق"
+
+    MEDEVAC_SUBSCRIPTIONS ||--o{ MEDEVAC_REQUESTS : "تغطي"
+
+    USERS {
+        uuid id PK
+        string email UK
+        string phone UK
+        string full_name
+        enum role "client/operator/admin"
+        enum loyalty_tier "silver/gold/platinum/diamond"
+        int loyalty_points
+        decimal total_spent_yearly
+        jsonb preferences
+        string referral_code UK
+    }
+
+    OPERATORS {
+        uuid id PK
+        uuid user_id FK
+        string company_name
+        string gaca_license
+        decimal commission_rate
+        decimal rating
+        enum status "pending/approved/suspended"
+    }
+
+    AIRCRAFT {
+        uuid id PK
+        uuid operator_id FK
+        string registration UK
+        enum category "light/mid/super_mid/heavy/long_range"
+        int max_passengers
+        decimal base_hourly_rate
+        bool is_cargo_capable
+        bool is_medevac_capable
+    }
+
+    TRIP_REQUESTS {
+        uuid id PK
+        string request_number UK
+        uuid client_id FK
+        enum trip_type
+        jsonb legs
+        timestamptz departure_date
+        int passengers_count
+        enum status
+    }
+
+    OFFERS {
+        uuid id PK
+        uuid trip_request_id FK
+        uuid operator_id FK
+        uuid aircraft_id FK
+        decimal total_price
+        int match_score
+        enum status
+    }
+
+    BOOKINGS {
+        uuid id PK
+        string booking_number UK
+        uuid offer_id FK
+        uuid client_id FK
+        uuid operator_id FK
+        decimal total_amount
+        decimal commission_amount
+        decimal operator_payout
+        enum payment_status
+        enum flight_status
+        string zatca_invoice_url
+    }
+
+    EMPTY_LEGS {
+        uuid id PK
+        string leg_number UK
+        uuid operator_id FK
+        decimal original_price
+        decimal current_price
+        decimal current_discount_pct
+        enum status "available/reserved/sold/expired"
+    }
+    </div>
+
+    <p class="text-center text-xs text-muted mt-6 italic">
+      💡 المخطط يبين العلاقات الرئيسية فقط — التفاصيل الكاملة في قسم الجداول أدناه
+    </p>
+  </section>
+
+  <!-- Tables by Domain -->
+  <section id="tables" class="mb-20">
+    <div class="text-center mb-12">
+      <span class="section-tag">03 · TABLES</span>
+      <h2 class="font-display text-4xl mt-4 mb-4 gold-text">الجداول التفصيلية</h2>
+    </div>
+
+    <!-- DOMAIN 1: Users & Auth -->
+    <div class="mb-16">
+      <div class="flex items-center gap-4 mb-6">
+        <div class="w-1 h-12 bg-blue-500"></div>
+        <div>
+          <h3 class="font-display text-2xl text-blue-300">👤 Users & Auth</h3>
+          <p class="text-xs text-sec">المستخدمون والصلاحيات</p>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <!-- users -->
+        <div class="table-card domain-users">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">users</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">كل المستخدمين (عملاء + مشغلين + أدمن)</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>email</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row"><span>phone</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row"><span>full_name</span><span class="text-muted">VARCHAR(200)</span></div>
+            <div class="field-row"><span>role</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>loyalty_tier</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>loyalty_points</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>total_spent_yearly</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>preferences</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> referred_by</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>referral_code</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+
+        <!-- audit_logs -->
+        <div class="table-card domain-users">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">audit_logs</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">سجل العمليات الحساسة</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> user_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>action</span><span class="text-muted">VARCHAR(100)</span></div>
+            <div class="field-row"><span>entity_type</span><span class="text-muted">VARCHAR(50)</span></div>
+            <div class="field-row"><span>entity_id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>old_value</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>new_value</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>ip_address</span><span class="text-muted">INET</span></div>
+            <div class="field-row"><span>user_agent</span><span class="text-muted">TEXT</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DOMAIN 2: Operators & Fleet -->
+    <div class="mb-16">
+      <div class="flex items-center gap-4 mb-6">
+        <div class="w-1 h-12" style="background:#C9A961"></div>
+        <div>
+          <h3 class="font-display text-2xl" style="color:#E8D4A8">✈️ Operators & Fleet</h3>
+          <p class="text-xs text-sec">المشغلون والأسطول</p>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-4">
+        <!-- operators -->
+        <div class="table-card domain-operators">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">operators</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">شركات الطيران</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> user_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>company_name</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>commercial_registration</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>gaca_license</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> base_airport</span><span class="text-muted">→ airports</span></div>
+            <div class="field-row"><span>commission_rate</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>rating</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+
+        <!-- aircraft -->
+        <div class="table-card domain-operators">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">aircraft</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">الطائرات</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> operator_id</span><span class="text-muted">→ operators</span></div>
+            <div class="field-row"><span>registration</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row"><span>manufacturer</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>model</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>category</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>max_passengers</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>max_range_km</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>base_hourly_rate</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>is_cargo_capable</span><span class="text-muted">BOOLEAN</span></div>
+            <div class="field-row"><span>is_medevac_capable</span><span class="text-muted">BOOLEAN</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+
+        <!-- crew_members -->
+        <div class="table-card domain-operators">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">crew_members</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">الطاقم (طيارين + مضيفات)</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> operator_id</span><span class="text-muted">→ operators</span></div>
+            <div class="field-row"><span>full_name</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>role</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>nationality</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>languages</span><span class="text-muted">TEXT[]</span></div>
+            <div class="field-row"><span>specializations</span><span class="text-muted">TEXT[]</span></div>
+            <div class="field-row"><span>experience_hours</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>is_available</span><span class="text-muted">BOOLEAN</span></div>
+            <div class="field-row"><span>extra_fee</span><span class="text-muted">DECIMAL</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DOMAIN 3: Booking Flow -->
+    <div class="mb-16">
+      <div class="flex items-center gap-4 mb-6">
+        <div class="w-1 h-12 bg-green-500"></div>
+        <div>
+          <h3 class="font-display text-2xl text-green-300">💰 Booking Flow</h3>
+          <p class="text-xs text-sec">تدفق الحجز الكامل — القلب النابض للمنصة</p>
+        </div>
+      </div>
+
+      <!-- Flow diagram -->
+      <div class="glass p-6 rounded-lg mb-6">
+        <div class="flex items-center justify-between flex-wrap gap-3 text-xs">
+          <div class="px-4 py-2 rounded border border-[var(--border)] bg-green-500/5">
+            <div class="gold-light font-mono">trip_requests</div>
+            <div class="text-muted mt-1">طلب رحلة</div>
+          </div>
+          <div class="gold">→</div>
+          <div class="px-4 py-2 rounded border border-[var(--border)] bg-green-500/5">
+            <div class="gold-light font-mono">offers</div>
+            <div class="text-muted mt-1">عروض المشغلين</div>
+          </div>
+          <div class="gold">→</div>
+          <div class="px-4 py-2 rounded border border-[var(--border)] bg-green-500/10">
+            <div class="gold-light font-mono">bookings</div>
+            <div class="text-muted mt-1">الحجز</div>
+          </div>
+          <div class="gold">→</div>
+          <div class="px-4 py-2 rounded border border-[var(--border)] bg-green-500/5">
+            <div class="gold-light font-mono">booking_addons</div>
+            <div class="text-muted mt-1">إضافات</div>
+          </div>
+          <div class="gold">→</div>
+          <div class="px-4 py-2 rounded border border-[var(--border)] bg-green-500/5">
+            <div class="gold-light font-mono">payments</div>
+            <div class="text-muted mt-1">الدفع</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <!-- trip_requests -->
+        <div class="table-card domain-booking">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">trip_requests</h4>
+            <div class="flex gap-1">
+              <span class="badge badge-rls">RLS</span>
+              <span class="badge badge-idx">5 IDX</span>
+            </div>
+          </div>
+          <p class="text-xs text-muted mb-3">طلبات الرحلات من العملاء</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>request_number</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> client_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>trip_type</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>legs</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> departure_airport</span><span class="text-muted">→ airports</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> arrival_airport</span><span class="text-muted">→ airports</span></div>
+            <div class="field-row"><span>departure_date</span><span class="text-muted">TIMESTAMPTZ</span></div>
+            <div class="field-row"><span>passengers_count</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>preferences</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>distributed_to</span><span class="text-muted">UUID[]</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+
+        <!-- offers -->
+        <div class="table-card domain-booking">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">offers</h4>
+            <div class="flex gap-1">
+              <span class="badge badge-rls">RLS</span>
+              <span class="badge badge-idx">4 IDX</span>
+            </div>
+          </div>
+          <p class="text-xs text-muted mb-3">عروض المشغلين على الطلبات</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> trip_request_id</span><span class="text-muted">→ trip_requests</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> operator_id</span><span class="text-muted">→ operators</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> aircraft_id</span><span class="text-muted">→ aircraft</span></div>
+            <div class="field-row"><span>crew_ids</span><span class="text-muted">UUID[]</span></div>
+            <div class="field-row"><span>base_price</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>vat_amount</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>total_price</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>match_score</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>cancellation_policy</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>validity_minutes</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+
+        <!-- bookings -->
+        <div class="table-card domain-booking" style="border-color: #10B981">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">bookings ⭐</h4>
+            <div class="flex gap-1">
+              <span class="badge badge-rls">RLS</span>
+              <span class="badge badge-idx">5 IDX</span>
+            </div>
+          </div>
+          <p class="text-xs text-muted mb-3">الحجوزات المؤكدة — الجدول المركزي</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>booking_number</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> offer_id</span><span class="text-muted">→ offers</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> client_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> operator_id</span><span class="text-muted">→ operators</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> aircraft_id</span><span class="text-muted">→ aircraft</span></div>
+            <div class="field-row"><span>base_amount</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>addons_amount</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>vat_amount</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>total_amount</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>commission_amount</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>operator_payout</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>payment_status</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>flight_status</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>zatca_invoice_url</span><span class="text-muted">TEXT</span></div>
+            <div class="field-row"><span>zatca_qr_code</span><span class="text-muted">TEXT</span></div>
+            <div class="field-row"><span>loyalty_points_earned</span><span class="text-muted">INTEGER</span></div>
+          </div>
+        </div>
+
+        <!-- booking_addons -->
+        <div class="table-card domain-booking">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">booking_addons</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">الإضافات (ليموزين، مضيفات، وجبات، خدمات خاصة)</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> booking_id</span><span class="text-muted">→ bookings</span></div>
+            <div class="field-row"><span>addon_type</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>addon_subtype</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>details</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>quantity</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>unit_price</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>total_price</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>commission_rate</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>supplier_id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+
+        <!-- empty_legs -->
+        <div class="table-card domain-booking">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">empty_legs ⭐</h4>
+            <div class="flex gap-1">
+              <span class="badge badge-rls">RLS</span>
+              <span class="badge badge-idx">3 IDX</span>
+            </div>
+          </div>
+          <p class="text-xs text-muted mb-3">الرحلات الفارغة بأسعار مخفضة</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>leg_number</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> parent_booking_id</span><span class="text-muted">→ bookings</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> operator_id</span><span class="text-muted">→ operators</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> aircraft_id</span><span class="text-muted">→ aircraft</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> departure_airport</span><span class="text-muted">→ airports</span></div>
+            <div class="field-row"><span>departure_window_start</span><span class="text-muted">TIMESTAMPTZ</span></div>
+            <div class="field-row"><span>departure_window_end</span><span class="text-muted">TIMESTAMPTZ</span></div>
+            <div class="field-row"><span>original_price</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>current_discount_pct</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>current_price</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>views_count</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>notifications_sent</span><span class="text-muted">INTEGER</span></div>
+          </div>
+        </div>
+
+        <!-- payments -->
+        <div class="table-card domain-booking">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">payments</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">معاملات الدفع (HyperPay)</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> booking_id</span><span class="text-muted">→ bookings</span></div>
+            <div class="field-row"><span>amount</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>currency</span><span class="text-muted">VARCHAR(3)</span></div>
+            <div class="field-row"><span>payment_method</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>gateway</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>gateway_transaction_id</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>gateway_response</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>refund_amount</span><span class="text-muted">DECIMAL</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DOMAIN 4: Specialized Services -->
+    <div class="mb-16">
+      <div class="flex items-center gap-4 mb-6">
+        <div class="w-1 h-12 bg-red-500"></div>
+        <div>
+          <h3 class="font-display text-2xl text-red-300">🚁 Specialized Services</h3>
+          <p class="text-xs text-sec">MedEvac + Cargo</p>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-4">
+        <!-- medevac_requests -->
+        <div class="table-card domain-specialized">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">medevac_requests</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">طلبات الإخلاء الطبي</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>request_number</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> client_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> subscription_id</span><span class="text-muted">→ subscriptions</span></div>
+            <div class="field-row"><span>patient_name</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>condition_severity</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>service_level</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>from_location</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>to_hospital</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>insurance_provider</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>estimated_cost</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>response_time_minutes</span><span class="text-muted">INTEGER</span></div>
+          </div>
+        </div>
+
+        <!-- medevac_subscriptions -->
+        <div class="table-card domain-specialized">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">medevac_subscriptions</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">اشتراكات Aeris Shield</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>subscription_number</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> client_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>plan</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>covered_members</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>annual_fee</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>covered_events</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>used_events</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>start_date</span><span class="text-muted">DATE</span></div>
+            <div class="field-row"><span>end_date</span><span class="text-muted">DATE</span></div>
+            <div class="field-row"><span>auto_renew</span><span class="text-muted">BOOLEAN</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+
+        <!-- cargo_requests -->
+        <div class="table-card domain-specialized">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">cargo_requests</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">طلبات الشحن المتخصص</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>request_number</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> client_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>cargo_type</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>cargo_subtype</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>estimated_value</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>weight_kg</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>dimensions</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>pickup_location</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>delivery_location</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>insurance_required</span><span class="text-muted">BOOLEAN</span></div>
+            <div class="field-row"><span>photos_urls</span><span class="text-muted">TEXT[]</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DOMAIN 5: Loyalty -->
+    <div class="mb-16">
+      <div class="flex items-center gap-4 mb-6">
+        <div class="w-1 h-12 bg-purple-500"></div>
+        <div>
+          <h3 class="font-display text-2xl text-purple-300">🏆 Loyalty & Engagement</h3>
+          <p class="text-xs text-sec">نظام الولاء والتفاعل مع العملاء</p>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-4">
+        <!-- loyalty_transactions -->
+        <div class="table-card domain-loyalty">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">loyalty_transactions</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">معاملات النقاط (Aeris Miles)</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> user_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>transaction_type</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>points</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>source_type</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>source_id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>description</span><span class="text-muted">TEXT</span></div>
+            <div class="field-row"><span>multiplier</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>balance_after</span><span class="text-muted">INTEGER</span></div>
+            <div class="field-row"><span>expires_at</span><span class="text-muted">TIMESTAMPTZ</span></div>
+          </div>
+        </div>
+
+        <!-- reviews -->
+        <div class="table-card domain-loyalty">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">reviews</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">التقييمات الثلاثية</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> booking_id</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> client_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> operator_id</span><span class="text-muted">→ operators</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> aircraft_id</span><span class="text-muted">→ aircraft</span></div>
+            <div class="field-row"><span>overall_rating</span><span class="text-muted">INT 1-5</span></div>
+            <div class="field-row"><span>aircraft_rating</span><span class="text-muted">INT 1-5</span></div>
+            <div class="field-row"><span>crew_rating</span><span class="text-muted">INT 1-5</span></div>
+            <div class="field-row"><span>service_rating</span><span class="text-muted">INT 1-5</span></div>
+            <div class="field-row"><span>comment</span><span class="text-muted">TEXT</span></div>
+            <div class="field-row"><span>response</span><span class="text-muted">TEXT</span></div>
+            <div class="field-row"><span>is_verified</span><span class="text-muted">BOOLEAN</span></div>
+          </div>
+        </div>
+
+        <!-- notifications -->
+        <div class="table-card domain-loyalty">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">notifications</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">الإشعارات متعددة القنوات</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> user_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>type</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>channel</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>title</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>body</span><span class="text-muted">TEXT</span></div>
+            <div class="field-row"><span>data</span><span class="text-muted">JSONB</span></div>
+            <div class="field-row"><span>is_read</span><span class="text-muted">BOOLEAN</span></div>
+            <div class="field-row"><span>sent_at</span><span class="text-muted">TIMESTAMPTZ</span></div>
+            <div class="field-row"><span>read_at</span><span class="text-muted">TIMESTAMPTZ</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DOMAIN 6: Support & Reference -->
+    <div class="mb-16">
+      <div class="flex items-center gap-4 mb-6">
+        <div class="w-1 h-12" style="background:#F59E0B"></div>
+        <div>
+          <h3 class="font-display text-2xl" style="color:#FCD34D">🎫 Support & Reference</h3>
+          <p class="text-xs text-sec">الدعم والبيانات المرجعية</p>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <!-- support_tickets -->
+        <div class="table-card domain-support">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">support_tickets</h4>
+            <span class="badge badge-rls">RLS ✓</span>
+          </div>
+          <p class="text-xs text-muted mb-3">تذاكر الدعم والشكاوى</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> id</span><span class="text-muted">UUID</span></div>
+            <div class="field-row"><span>ticket_number</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> user_id</span><span class="text-muted">→ users</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> booking_id</span><span class="text-muted">→ bookings</span></div>
+            <div class="field-row"><span>category</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>priority</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row"><span>subject</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>description</span><span class="text-muted">TEXT</span></div>
+            <div class="field-row"><span>status</span><span class="badge badge-enum">ENUM</span></div>
+            <div class="field-row fk"><span><span class="badge badge-fk">FK</span> assigned_to</span><span class="text-muted">→ users</span></div>
+            <div class="field-row"><span>resolution</span><span class="text-muted">TEXT</span></div>
+          </div>
+        </div>
+
+        <!-- airports -->
+        <div class="table-card domain-reference">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="gold-light font-mono">airports</h4>
+            <span class="badge badge-rls" style="background:rgba(107,114,128,0.2);color:#D1D5DB">Public Read</span>
+          </div>
+          <p class="text-xs text-muted mb-3">قاعدة بيانات المطارات (IATA/ICAO)</p>
+          <div class="space-y-0">
+            <div class="field-row pk"><span><span class="badge badge-pk">PK</span> iata_code</span><span class="text-muted">VARCHAR(3)</span></div>
+            <div class="field-row"><span>icao_code</span><span class="badge badge-uniq">UNIQUE</span></div>
+            <div class="field-row"><span>name</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>name_ar</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>city / city_ar</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>country / country_ar</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>latitude</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>longitude</span><span class="text-muted">DECIMAL</span></div>
+            <div class="field-row"><span>timezone</span><span class="text-muted">VARCHAR</span></div>
+            <div class="field-row"><span>is_private_capable</span><span class="text-muted">BOOLEAN</span></div>
+          </div>
+          <p class="text-xs text-muted mt-3 italic">Seed data: 12 مطار (6 سعودي + 6 خليجي)</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Critical Flows -->
+  <section id="flows" class="mb-20">
+    <div class="text-center mb-12">
+      <span class="section-tag">04 · CRITICAL FLOWS</span>
+      <h2 class="font-display text-4xl mt-4 mb-4 gold-text">التدفقات الحرجة</h2>
+    </div>
+
+    <!-- Flow 1: Charter Booking -->
+    <div class="domain-card p-8 mb-8">
+      <h3 class="gold-light text-xl mb-6 flex items-center gap-3">
+        <span class="text-2xl">✈️</span> تدفق حجز Charter
+      </h3>
+      <div class="font-mono text-xs space-y-2 text-sec bg-black/30 p-6 rounded">
+        <div>1️⃣  Client fills /charter/new form</div>
+        <div class="gold-light">    → INSERT INTO trip_requests (status='pending')</div>
+        <div>2️⃣  Auto-distribution engine runs</div>
+        <div class="gold-light">    → UPDATE trip_requests SET distributed_to = [operator_ids], status='distributed'</div>
+        <div class="gold-light">    → INSERT INTO notifications (×5 operators, channel='email')</div>
+        <div>3️⃣  Operators submit offers</div>
+        <div class="gold-light">    → INSERT INTO offers (status='pending', match_score)</div>
+        <div>4️⃣  Client selects offer</div>
+        <div class="gold-light">    → UPDATE offers SET status='accepted'</div>
+        <div class="gold-light">    → INSERT INTO bookings (payment_status='pending')</div>
+        <div>5️⃣  Client picks add-ons</div>
+        <div class="gold-light">    → INSERT INTO booking_addons (×N)</div>
+        <div class="gold-light">    → UPDATE bookings SET addons_amount, total_amount</div>
+        <div>6️⃣  Payment via HyperPay</div>
+        <div class="gold-light">    → INSERT INTO payments (status='initiated')</div>
+        <div class="gold-light">    → Webhook: UPDATE payments SET status='success'</div>
+        <div class="gold-light">    → UPDATE bookings SET payment_status='paid'</div>
+        <div>7️⃣  Post-payment automation</div>
+        <div class="gold-light">    → INSERT INTO loyalty_transactions (points earned)</div>
+        <div class="gold-light">    → UPDATE users SET loyalty_points += X, total_spent_yearly += amount</div>
+        <div class="gold-light">    → Generate ZATCA invoice → UPDATE bookings SET zatca_*</div>
+        <div class="gold-light">    → INSERT INTO notifications (email + sms + whatsapp link)</div>
+        <div>8️⃣  Post-flight</div>
+        <div class="gold-light">    → UPDATE bookings SET flight_status='completed', arrival_actual</div>
+        <div class="gold-light">    → INSERT INTO reviews</div>
+        <div class="gold-light">    → Trigger operator payout (+48h)</div>
+      </div>
+    </div>
+
+    <!-- Flow 2: Empty Legs -->
+    <div class="domain-card p-8 mb-8">
+      <h3 class="gold-light text-xl mb-6 flex items-center gap-3">
+        <span class="text-2xl">💡</span> تدفق Empty Leg
+      </h3>
+      <div class="font-mono text-xs space-y-2 text-sec bg-black/30 p-6 rounded">
+        <div>1️⃣  Operator/System detects empty return</div>
+        <div class="gold-light">    → INSERT INTO empty_legs (status='available', discount=40%)</div>
+        <div>2️⃣  AI matching finds eligible customers</div>
+        <div class="gold-light">    → Query users WHERE (location, history, preferences)</div>
+        <div class="gold-light">    → Calculate match_score for top 50</div>
+        <div class="gold-light">    → INSERT INTO notifications (×50)</div>
+        <div>3️⃣  Dutch auction (cron every 6h)</div>
+        <div class="gold-light">    → UPDATE empty_legs SET current_discount_pct += 10</div>
+        <div class="gold-light">    → Re-notify top matches</div>
+        <div>4️⃣  Customer books</div>
+        <div class="gold-light">    → UPDATE empty_legs SET status='sold'</div>
+        <div class="gold-light">    → INSERT INTO bookings (from empty_leg)</div>
+        <div class="gold-light">    → Fast payment flow</div>
+      </div>
+    </div>
+
+    <!-- Flow 3: Loyalty -->
+    <div class="domain-card p-8 mb-8">
+      <h3 class="gold-light text-xl mb-6 flex items-center gap-3">
+        <span class="text-2xl">🏆</span> تدفق نظام الولاء
+      </h3>
+      <div class="font-mono text-xs space-y-2 text-sec bg-black/30 p-6 rounded">
+        <div>1️⃣  Booking paid</div>
+        <div class="gold-light">    → points = (total / 100) × multiplier</div>
+        <div class="gold-light">    → INSERT INTO loyalty_transactions (type='earn', points, multiplier)</div>
+        <div class="gold-light">    → UPDATE users SET loyalty_points += points, total_spent_yearly += amount</div>
+        <div>2️⃣  Tier upgrade check</div>
+        <div class="gold-light">    → IF total_spent_yearly crosses threshold:</div>
+        <div class="gold-light">      UPDATE users SET loyalty_tier = new_tier</div>
+        <div class="gold-light">      INSERT INTO notifications (type='loyalty')</div>
+        <div>3️⃣  Referral earn</div>
+        <div class="gold-light">    → Referred user completes first booking</div>
+        <div class="gold-light">    → INSERT INTO loyalty_transactions (user=referrer, type='referral', points=5000)</div>
+        <div>4️⃣  Points redemption</div>
+        <div class="gold-light">    → User redeems: 1000 points → 50 SAR credit</div>
+        <div class="gold-light">    → INSERT INTO loyalty_transactions (type='redeem', points=-1000)</div>
+      </div>
+    </div>
+
+    <!-- Flow 4: MedEvac -->
+    <div class="domain-card p-8">
+      <h3 class="gold-light text-xl mb-6 flex items-center gap-3">
+        <span class="text-2xl">🚁</span> تدفق MedEvac
+      </h3>
+      <div class="font-mono text-xs space-y-2 text-sec bg-black/30 p-6 rounded">
+        <div>1️⃣  Emergency request</div>
+        <div class="gold-light">    → INSERT INTO medevac_requests (status='received', severity)</div>
+        <div class="gold-light">    → Check subscription_id: IF valid, use covered_events</div>
+        <div>2️⃣  Dispatch (AI routing)</div>
+        <div class="gold-light">    → Find nearest aircraft WHERE is_medevac_capable = true</div>
+        <div class="gold-light">    → UPDATE medevac_requests SET status='dispatched'</div>
+        <div>3️⃣  In-transit tracking</div>
+        <div class="gold-light">    → UPDATE status='in_transit'</div>
+        <div>4️⃣  Delivery</div>
+        <div class="gold-light">    → UPDATE status='delivered', response_time_minutes, final_cost</div>
+        <div class="gold-light">    → IF subscription: UPDATE used_events += 1</div>
+        <div class="gold-light">    → ELSE: INSERT INTO bookings + payments</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Enums Reference -->
+  <section id="enums" class="mb-20">
+    <div class="text-center mb-12">
+      <span class="section-tag">05 · ENUMS</span>
+      <h2 class="font-display text-4xl mt-4 mb-4 gold-text">الأنواع التعدادية</h2>
+    </div>
+
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">user_role</h4>
+        <p class="text-xs text-muted">client · operator · admin · support</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">loyalty_tier</h4>
+        <p class="text-xs text-muted">silver · gold · platinum · diamond</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">trip_type</h4>
+        <p class="text-xs text-muted">charter · empty_leg · medevac · cargo</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">aircraft_category</h4>
+        <p class="text-xs text-muted">light · mid · super_mid · heavy · long_range</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">booking_payment_status</h4>
+        <p class="text-xs text-muted">pending · paid · refunded</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">booking_flight_status</h4>
+        <p class="text-xs text-muted">confirmed · boarding · in_flight · completed · cancelled</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">empty_leg_status</h4>
+        <p class="text-xs text-muted">available · reserved · sold · expired</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">addon_type</h4>
+        <p class="text-xs text-muted">ground_transfer · crew · catering · special</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">medevac_service_level</h4>
+        <p class="text-xs text-muted">BMT · ALS · CCT · repatriation</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">medevac_severity</h4>
+        <p class="text-xs text-muted">stable · moderate · critical</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">cargo_type</h4>
+        <p class="text-xs text-muted">equine · automotive · high_value · time_critical</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">subscription_plan</h4>
+        <p class="text-xs text-muted">individual · family · vip_family · diamond</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">notification_channel</h4>
+        <p class="text-xs text-muted">in_app · email · sms · whatsapp</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">payment_method</h4>
+        <p class="text-xs text-muted">apple_pay · mada · visa · mastercard · stc_pay</p>
+      </div>
+      <div class="glass p-4 rounded">
+        <h4 class="gold-light font-mono text-sm mb-2">loyalty_transaction_type</h4>
+        <p class="text-xs text-muted">earn · redeem · bonus · referral · expire</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Legend -->
+  <section class="mb-16">
+    <div class="glass p-6 rounded">
+      <h3 class="gold-light mb-4">🔑 مفاتيح الأيقونات</h3>
+      <div class="flex flex-wrap gap-4 text-xs">
+        <div class="flex items-center gap-2"><span class="badge badge-pk">PK</span> Primary Key</div>
+        <div class="flex items-center gap-2"><span class="badge badge-fk">FK</span> Foreign Key</div>
+        <div class="flex items-center gap-2"><span class="badge badge-uniq">UNIQUE</span> Unique Constraint</div>
+        <div class="flex items-center gap-2"><span class="badge badge-enum">ENUM</span> Enumerated Type</div>
+        <div class="flex items-center gap-2"><span class="badge badge-idx">IDX</span> Indexed</div>
+        <div class="flex items-center gap-2"><span class="badge badge-rls">RLS</span> Row Level Security</div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="border-t border-[var(--border)] py-8 text-center">
+  <p class="text-xs text-muted font-mono">
+    AERIS · Database Schema v1.0 · 19 Tables · 22 Enums · PostgreSQL 15 · Supabase
+  </p>
+</footer>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#C9A961',
+    primaryTextColor: '#FAFAFA',
+    primaryBorderColor: '#8B7339',
+    lineColor: '#C9A961',
+    background: '#0D1B30',
+    mainBkg: '#0F1F35',
+    secondBkg: '#0A1628',
+    tertiaryColor: '#0D1B30'
+  }
+});
+</script>
+
+</body>
+</html>
