@@ -183,9 +183,14 @@ BEGIN
 END;
 $$;
 
+-- Supabase grants EXECUTE on every public function to anon and
+-- authenticated by default; REVOKE FROM PUBLIC is not enough on
+-- Supabase. We must REVOKE the named roles explicitly so the only
+-- caller is the service role used by the Server Actions.
+-- (Codex PR #2 verification round, P1 finding 2026-05-04.)
 REVOKE ALL ON FUNCTION promote_lead_to_trip_request(
   UUID, JSONB, aircraft_category, TEXT, TEXT
-) FROM PUBLIC;
+) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION promote_lead_to_trip_request(
   UUID, JSONB, aircraft_category, TEXT, TEXT
@@ -294,7 +299,11 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION accept_phase4_offer(UUID) FROM PUBLIC;
+-- See note above promote_lead_to_trip_request's REVOKE block:
+-- REVOKE FROM PUBLIC alone leaves anon + authenticated with EXECUTE
+-- on Supabase. Both must be revoked explicitly.
+REVOKE ALL ON FUNCTION accept_phase4_offer(UUID)
+  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION accept_phase4_offer(UUID) TO service_role;
 
 
@@ -378,11 +387,14 @@ BEGIN
 END;
 $$;
 
+-- See note above promote_lead_to_trip_request's REVOKE block:
+-- REVOKE FROM PUBLIC alone leaves anon + authenticated with EXECUTE
+-- on Supabase. Both must be revoked explicitly.
 REVOKE ALL ON FUNCTION submit_phase4_operator_offer(
   UUID, TEXT, TEXT, TEXT, TEXT,
   aircraft_category, TEXT, TEXT,
   DECIMAL, TIMESTAMPTZ, INTEGER, TEXT
-) FROM PUBLIC;
+) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION submit_phase4_operator_offer(
   UUID, TEXT, TEXT, TEXT, TEXT,

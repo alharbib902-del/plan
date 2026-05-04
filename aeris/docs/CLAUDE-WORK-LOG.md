@@ -1110,3 +1110,181 @@ Stopped after the iteration-2 fix. Did not touch CLAUDE-TASK.md,
 the smoke test, or any other out-of-scope file. Did not start
 Phase 4.1, Phase 3.6, or Phase 5.
 
+---
+
+## Phase 4 — Live verification round 1 (2026-05-04)
+
+### Status
+
+Founder ran the manual verification runbook against a real
+Supabase project (Option C — no Docker, no shared service-role
+key). Step 3.2 (RPC privilege probe) **failed**: a P1 security
+finding that was not catchable by static review alone.
+Verification paused at Step 3.2; this commit fixes the migration
+and waits for the founder to re-run Step 3.2 against the patched
+DB.
+
+### Verification progress before the finding
+
+- ✅ Step A — Phase 1 initial schema migration applied.
+- ✅ Step B — Phase 2 lead inquiries migration applied.
+- ✅ Step 0 (re-check) — `lead_inquiries` and `trip_requests`
+  both present.
+- ✅ Step 1 — Phase 4 migration applied (`Success. No rows
+  returned`).
+- ✅ Step 2 — Schema probes (8 trip_requests columns, identity
+  check constraint, `lead_inquiries.converted_at`, 18-column
+  `phase4_operator_offers`, 3 indexes, `rls_enabled = true`,
+  `policy_count = 0`, updated_at trigger). All 7 probes match
+  the expected shapes.
+- ✅ Step 3.1 — RPC metadata: 3 functions present, all
+  `security_definer = true`, all pin
+  `search_path=public, pg_temp`.
+- ❌ Step 3.2 — **RPC EXECUTE grants — FAILED.**
+- ⏸️ Step 4 — paused pending fix.
+
+### The finding (P1, blocking)
+
+The `routine_privileges` probe returned EXECUTE grants for
+`anon`, `authenticated`, `postgres`, **and** `service_role` on
+all three Phase 4 RPCs. The Phase 4 spec acceptance criterion #2
+requires "executable only by `service_role`" (plus `postgres` as
+the owner). The actual state allowed any caller holding the
+project's anon key to invoke the three functions directly,
+bypassing the Server Action's auth gates.
+
+### Root cause
+
+Supabase grants EXECUTE on every function in `public` to the
+`anon` and `authenticated` roles by default. The `REVOKE ALL ON
+FUNCTION ... FROM PUBLIC` clause in the migration removes the
+PUBLIC pseudo-role's privilege but does NOT touch the named
+roles. The migration was written against a generic Postgres
+mental model; on Supabase the named-role REVOKE is required
+explicitly.
+
+### Why iteration 2 (Codex) did not catch this
+
+Codex's PR #2 review iterations 1 and 2 inspected the SQL text
+itself, not the *runtime* privilege state of a live database.
+The migration's REVOKE/GRANT lines look correct in isolation —
+they only reveal the gap when probed against a real Supabase
+project where the default named-role grants are in effect. This
+is the first finding from running the verification on real
+infrastructure rather than against the spec; it validates the
+"don't merge before live verification" rule the founder set.
+
+### The fix in this commit
+
+`supabase/migrations/20260504000003_phase_4_operator_portal.sql`
+— each of the three REVOKE statements now explicitly names the
+Supabase roles:
+
+```diff
+-REVOKE ALL ON FUNCTION promote_lead_to_trip_request(...)
+-  FROM PUBLIC;
++REVOKE ALL ON FUNCTION promote_lead_to_trip_request(...)
++  FROM PUBLIC, anon, authenticated;
+```
+
+Same shape applied to `accept_phase4_offer(UUID)` and
+`submit_phase4_operator_offer(...)`. A short comment block
+above each REVOKE documents the Supabase-default-grants
+rationale so a future reader doesn't drop the named-role
+revocations under the "REVOKE FROM PUBLIC is enough" instinct.
+
+### Migration edited in place (not new migration)
+
+PR #2 has not been merged. Migration `20260504000003` is the
+"single migration, reviewable as one unit" per the spec, and is
+not yet applied to any production DB. Editing it in place keeps
+the PR as one coherent unit. The DB the founder is verifying
+against will have its function privileges corrected by a
+one-shot `REVOKE EXECUTE ... FROM anon, authenticated;` block
+the founder runs in SQL Editor; once Step 3.2 confirms the DB
+state matches the patched migration, verification resumes at
+Step 4.
+
+### Files changed in this round
+
+| File | Change |
+|---|---|
+| `aeris/supabase/migrations/20260504000003_phase_4_operator_portal.sql` | Three REVOKE statements now revoke `FROM PUBLIC, anon, authenticated`. Added short rationale comment above each. |
+| `aeris/docs/CLAUDE-WORK-LOG.md` | This section. |
+
+### Files NOT changed
+
+- `aeris/docs/CLAUDE-TASK.md` — spec is the contract; the fix
+  is *stricter* than the spec required (spec said "executable
+  only by service_role" — implementation now actually delivers
+  that on Supabase). No spec patch needed.
+- `aeris/docs/checklists/operator-flow-smoke-test.md` — frozen
+  per Codex's iteration-2 instruction. (A future Codex pass may
+  decide to add a recurring privilege probe to
+  `supabase-migration-verification.md`; out of scope here.)
+- `aeris/docs/checklists/supabase-migration-verification.md` —
+  frozen for now; the privilege probe is documented in this
+  work-log entry, but adding it to the recurring checklist is
+  Codex's call.
+- `.github/workflows/ci.yml`, `package.json`, `package-lock.json`,
+  `types/database.ts`, `lib/operator/token.ts`, all admin /
+  operator pages, components, validators, Server Actions,
+  `accept_phase4_offer` and `submit_phase4_operator_offer`
+  function bodies — all frozen.
+- The other two Phase 4 SQL functions' bodies — frozen; only
+  their REVOKE/GRANT footers changed.
+
+### Quality gates after the fix
+
+- `npm run type-check` → exit 0.
+- `npm run build` → exit 0; route table identical to prior push
+  (no app-code change).
+- `npm run lint:strict` → exit 0.
+- `npm audit` → unchanged from Phase 3.5 baseline; lockfile
+  byte-identical.
+
+CI on the new commit will be linked once it runs.
+
+### Founder action after this commit lands
+
+1. In Supabase SQL Editor, run a one-shot REVOKE block to bring
+   the existing DB into line with the patched migration:
+   ```sql
+   REVOKE EXECUTE ON FUNCTION promote_lead_to_trip_request(
+     UUID, JSONB, aircraft_category, TEXT, TEXT
+   ) FROM anon, authenticated;
+   REVOKE EXECUTE ON FUNCTION accept_phase4_offer(UUID)
+     FROM anon, authenticated;
+   REVOKE EXECUTE ON FUNCTION submit_phase4_operator_offer(
+     UUID, TEXT, TEXT, TEXT, TEXT,
+     aircraft_category, TEXT, TEXT,
+     DECIMAL, TIMESTAMPTZ, INTEGER, TEXT
+   ) FROM anon, authenticated;
+   ```
+2. Re-run Step 3.2 from the runbook. Expected: only `postgres`
+   and `service_role` appear in the result table for each
+   function.
+3. If clean, proceed to Step 4 (the DO-block functional smoke).
+4. If not clean, stop and ping Claude.
+
+### Questions For Codex
+
+1. **Should `supabase-migration-verification.md` get a recurring
+   "RPC EXECUTE grants" probe?** The current Phase 2 checklist
+   covers RLS and table policies but not function privileges.
+   Recommendation: yes, in a small follow-up commit on this
+   same PR if you want, OR as a Phase 3.7 hardening micro-task.
+
+2. **Should the spec text in `CLAUDE-TASK.md` iteration 4 §1e
+   call out the Supabase-named-role revocation explicitly?** The
+   spec said "executable only by service_role" which is
+   semantically correct, but doesn't warn the implementer about
+   the Supabase REVOKE-FROM-PUBLIC trap. A footnote could save
+   future RPC migrations from re-introducing the same finding.
+
+3. **Phase 5 / 4.1 / 3.6 readiness.** Carries over; nothing
+   changed.
+
+Stopped after the round-1 fix. Awaiting the founder's re-run of
+Step 3.2 against the patched DB. Did not run Step 4 yet.
+
