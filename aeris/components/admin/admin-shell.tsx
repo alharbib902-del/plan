@@ -6,19 +6,35 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-navy">
       <header className="sticky top-0 z-40 border-b border-border bg-navy-secondary/85 backdrop-blur-luxury">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-          <Link
-            href="/admin/leads"
-            className="flex items-center gap-3"
-            aria-label="Aeris Admin"
-          >
-            <span className="font-display text-xl tracking-[0.28em] text-gold-light">
-              AERIS
-            </span>
-            <span className="font-ar rounded-full border border-border px-2.5 py-0.5 text-xs uppercase tracking-tagged text-ink-muted">
-              لوحة الفريق
-            </span>
-          </Link>
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-6">
+            <Link
+              href="/admin/leads"
+              className="flex items-center gap-3"
+              aria-label="Aeris Admin"
+            >
+              <span className="font-display text-xl tracking-[0.28em] text-gold-light">
+                AERIS
+              </span>
+              <span className="font-ar rounded-full border border-border px-2.5 py-0.5 text-xs uppercase tracking-tagged text-ink-muted">
+                لوحة الفريق
+              </span>
+            </Link>
+            <nav className="hidden items-center gap-1 sm:flex">
+              <Link
+                href="/admin/leads"
+                className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+              >
+                الطلبات
+              </Link>
+              <Link
+                href="/admin/trips"
+                className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+              >
+                الرحلات
+              </Link>
+            </nav>
+          </div>
 
           <form action={signOut}>
             <button

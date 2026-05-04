@@ -10,6 +10,7 @@ import {
   leadStatusLabel,
 } from '@/components/admin/lead-status-badge';
 import { LeadStatusSelect } from '@/components/admin/lead-status-select';
+import { PromoteLeadForm } from '@/components/admin/promote-lead-form';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -66,6 +67,23 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
             leadId={lead.id}
             existingNotes={lead.internal_notes}
           />
+
+          <div className="rounded-xl border border-border bg-navy-card/40 p-5">
+            <h3 className="font-ar text-base font-medium text-ink">
+              تحويل إلى طلب رحلة
+            </h3>
+            <p className="font-ar mt-1 text-xs text-ink-muted">
+              عند التأكيد، يتم إنشاء طلب رحلة بحالة &quot;بانتظار الإرسال&quot;
+              وتحديث هذا الطلب إلى &quot;تحوّل لحجز&quot;.
+            </p>
+            <div className="mt-4">
+              <PromoteLeadForm
+                leadId={lead.id}
+                leadTripType={lead.trip_type}
+                alreadyConverted={lead.status === 'converted'}
+              />
+            </div>
+          </div>
         </aside>
       </div>
     </section>

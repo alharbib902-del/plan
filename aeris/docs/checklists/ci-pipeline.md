@@ -313,9 +313,31 @@ right after creating the rule.
 > auditor reads this to confirm when CI became load-bearing.
 
 ```
-Activated on:        ____________________  (YYYY-MM-DD)
-Activated by:        ____________________
+Activated on:        2026-05-04
+Activated by:        alharbib902-del  (founder, via gh CLI)
 Status check name:   Type-check, build, lint
-Setup method:        [ ] GitHub UI    [ ] gh CLI
-Verification PR URL: ____________________  (closed without merging)
+Setup method:        [ ] GitHub UI    [x] gh CLI
+Verification PR URL: https://github.com/alharbib902-del/plan/pull/1  (closed without merging)
 ```
+
+#### Empirical evidence captured at activation
+
+- **Verification PR**: [#1](https://github.com/alharbib902-del/plan/pull/1)
+  — `verify: Phase 3.5.1 protection-rule check (DO NOT MERGE)`,
+  closed without merging.
+- **Failing CI run**:
+  https://github.com/alharbib902-del/plan/actions/runs/25302544403
+  — job `Type-check, build, lint` exited with `conclusion: FAILURE`
+  on the `Type-check` step (`Type 'string' is not assignable to
+  type 'number'.`, exit code 2). Build and Lint steps were skipped.
+- **GitHub `gh pr view --json mergeStateStatus`** at the moment CI
+  reported failure: `"BLOCKED"`. The PR's `mergeable` field showed
+  `"MERGEABLE"` (the merge could mechanically apply), but
+  `mergeStateStatus = BLOCKED` is GitHub's signal that the required
+  status check is gating the merge button. This is the empirical
+  proof that branch protection blocks merge on red CI.
+- **Cleanup confirmed**: branch `verify/protection-rule` deleted
+  from both `origin` and the local repo (`git branch -a` shows only
+  `main` and `remotes/origin/main`). The throwaway file
+  `aeris/lib/_verify-protection-rule.ts` no longer exists in the
+  working tree.
