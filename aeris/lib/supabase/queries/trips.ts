@@ -135,7 +135,25 @@ export async function promoteLeadToTripRequest(
  * Called from the dispatchTripRequest Server Action AFTER the token
  * has been issued. The token's nonce must equal the persisted nonce
  * for /operator/offer/<token> to validate.
+ *
+ * Codex PR #2 fix #1 (P1, blocking): the predicate
+ * `.in('status', ['pending', 'distributed'])` ensures dispatch is
+ * a no-op when the trip is `'booked'` or `'cancelled'` — without it,
+ * a stale admin tab could rewrite a booked trip back to `distributed`
+ * and persist a fresh nonce that an operator could submit against.
+ * The `.select('id')` returns the affected rows so the caller can
+ * distinguish `trip_closed` from `trip_not_found` via a follow-up
+ * SELECT, and surface a clean error to the UI.
  */
+export class DispatchStateError extends Error {
+  readonly code: 'trip_closed' | 'trip_not_found';
+  constructor(code: 'trip_closed' | 'trip_not_found') {
+    super(`Dispatch state error: ${code}`);
+    this.name = 'DispatchStateError';
+    this.code = code;
+  }
+}
+
 export async function persistDispatchState(args: {
   tripRequestId: string;
   nonce: string;
@@ -146,7 +164,7 @@ export async function persistDispatchState(args: {
   const client = createAdminClient();
   const now = new Date().toISOString();
 
-  const { error } = await client
+  const { data, error } = await client
     .from(TABLE)
     .update({
       status: 'distributed',
@@ -156,11 +174,46 @@ export async function persistDispatchState(args: {
       dispatched_at: now,
       distributed_at: now,
     })
-    .eq('id', args.tripRequestId);
+    .eq('id', args.tripRequestId)
+    .in('status', ['pending', 'distributed'])
+    .select('id');
 
   if (error) {
     console.error('[trips] persistDispatchState failed', error);
     throw new Error(`persistDispatchState failed: ${error.message}`);
+  }
+
+  if (!data || data.length === 0) {
+    // Predicate matched nothing. Either the trip does not exist or
+    // its status is no longer in ('pending', 'distributed'). A
+    // follow-up SELECT disambiguates so the UI can show a useful
+    // Arabic-RTL error.
+    const { data: existing, error: lookupErr } = await client
+      .from(TABLE)
+      .select('status')
+      .eq('id', args.tripRequestId)
+      .maybeSingle();
+
+    if (lookupErr) {
+      console.error(
+        '[trips] persistDispatchState disambiguation lookup failed',
+        lookupErr
+      );
+      throw new Error(`persistDispatchState lookup failed: ${lookupErr.message}`);
+    }
+
+    if (!existing) {
+      throw new DispatchStateError('trip_not_found');
+    }
+    throw new DispatchStateError('trip_closed');
+  }
+
+  if (data.length > 1) {
+    // id is the primary key; affected count > 1 is impossible. Guard
+    // against a future migration that broke that invariant.
+    throw new Error(
+      `persistDispatchState: unexpected affected row count ${data.length}`
+    );
   }
 }
 

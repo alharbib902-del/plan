@@ -925,3 +925,188 @@ None of these are blockers for accepting Phase 4:
 Stopped after Phase 4. Did not start Phase 4.1, Phase 3.6, or
 Phase 5.
 
+---
+
+## Phase 4 — Codex PR #2 review iteration 2 (2026-05-04)
+
+### Status
+
+Codex iteration 1 review of PR #2 scored **91/100, not accepted
+yet**, with one P1 blocker and one P2 finding. Both addressed in
+this follow-on commit on the same feature branch. Awaiting CI
+green and Codex iteration 2 review.
+
+### Findings + fixes
+
+#### P1 (blocking) — Dispatch could reopen booked / cancelled trips
+
+**Finding.** `persistDispatchState` in
+`aeris/lib/supabase/queries/trips.ts` updated `status='distributed'`
+unconditionally on the trip id. A stale admin tab could dispatch
+after an offer was accepted, rewriting a `'booked'` trip back to
+`'distributed'`, persisting a fresh `dispatch_nonce`, and
+producing a valid operator URL — bypassing the spec's explicit
+booked/cancelled abort.
+
+**Fix.**
+- Added `.in('status', ['pending', 'distributed'])` predicate to
+  the UPDATE so a `'booked'` / `'cancelled'` row matches zero
+  rows and the dispatch becomes a no-op.
+- Added `.select('id')` to read the affected rows; on
+  `data.length === 0` the function performs a follow-up SELECT to
+  disambiguate `trip_closed` from `trip_not_found` and throws a
+  new typed `DispatchStateError` carrying the code.
+- Added a defensive `data.length > 1` guard against future
+  schema changes that would break the primary-key invariant.
+- Updated `dispatchTrip` Server Action in
+  `app/(admin)/admin/actions/trips.ts` to catch
+  `DispatchStateError` and map its `code` to the existing
+  result-union shape; the union now includes `'trip_closed'` and
+  `'trip_not_found'`.
+- The token issued before the persist call is harmless on
+  failure: it is never persisted to the DB, so it cannot validate
+  against `trip_requests.dispatch_nonce`.
+- Updated `components/admin/dispatch-form.tsx` `translateError`
+  to render Arabic-RTL messages for both new codes.
+
+The trip detail page already conditionally hides the dispatch
+form when `trip.status === 'booked' || trip.status === 'cancelled'`
+(`isClosed`), so this fix is the **server-side defense in depth**
+that catches the stale-tab case the UI gate cannot.
+
+#### P2 (non-blocking) — Lock-order deadlock in accept_phase4_offer
+
+**Finding.** The function locked the chosen offer first, then the
+parent trip, then sibling offers. Two admins accepting different
+pending offers on the same trip simultaneously could deadlock —
+transaction A holds offer A and waits on the trip locked by B,
+while B holds offer B and waits on the trip locked by A.
+PostgreSQL aborts one transaction with `ERROR: deadlock detected`,
+surfacing as a generic failure instead of `offer_not_pending` /
+`trip_not_open`.
+
+**Fix.** Reordered the function in
+`supabase/migrations/20260504000003_phase_4_operator_portal.sql`
+to lock the **parent trip first**, then the chosen offer:
+
+1. Read the offer's `trip_request_id` (no lock; column is
+   immutable post-INSERT).
+2. `PERFORM 1 FROM trip_requests ... FOR UPDATE` — the
+   serialization point. Concurrent accepts on the same trip
+   serialize here; they cannot proceed to step 3 until the holder
+   commits or aborts.
+3. `SELECT status, expires_at ... FROM phase4_operator_offers
+   FOR UPDATE` — re-validate under the lock acquired in step 2.
+   Sibling accept that already won will have flipped this row to
+   `'rejected'`, so the predicate will return
+   `offer_not_pending`.
+4. UPDATE chosen offer to `'accepted'`.
+5. UPDATE all other pending siblings to `'rejected'`.
+6. UPDATE trip to `'booked'`.
+
+`submit_phase4_operator_offer` already locks the trip first, so
+both functions now share a consistent lock order; the cross-RPC
+deadlock between submit and accept is also impossible.
+
+**Decision: edit the existing migration in place, not add a new
+one.** Migration `20260504000003` is part of the same un-merged
+PR; it has not been applied to any production DB. Editing it
+keeps the spec's "single migration, reviewable as one unit"
+guidance intact. The work log records the in-place edit so a
+future reader knows the migration's `accept_phase4_offer` body
+changed between PR open and PR merge.
+
+### Files changed in this round
+
+| File | Change |
+|---|---|
+| `aeris/lib/supabase/queries/trips.ts` | New `DispatchStateError` class; `persistDispatchState` adds the status predicate, affected-rows check, disambiguating SELECT, and defensive >1-rows guard. |
+| `aeris/app/(admin)/admin/actions/trips.ts` | Import `DispatchStateError`; widen `DispatchResult` to include `'trip_closed' \| 'trip_not_found'`; map `DispatchStateError.code` into the result. |
+| `aeris/components/admin/dispatch-form.tsx` | Two new Arabic-RTL error strings in `translateError`. |
+| `aeris/supabase/migrations/20260504000003_phase_4_operator_portal.sql` | `accept_phase4_offer` reordered: lock trip first, then offer. Function header comment documents the lock order. |
+
+### Files NOT changed (scope discipline)
+
+- `.github/workflows/ci.yml` — frozen.
+- `aeris/package.json` / `aeris/package-lock.json` — no
+  dependency changes.
+- `aeris/docs/CLAUDE-TASK.md` — iteration 4 spec is the contract,
+  not the implementation. The text describing accept's lock order
+  is now slightly out of step with the implementation (spec said
+  "lock offer first"; we now lock trip first). The fix is
+  *stricter* than the spec required, so this is an
+  implementation-detail improvement, not a scope drift. **A note
+  has been added to "Questions For Codex" below asking whether
+  the spec should be patched in a follow-up to reflect the new
+  lock order.**
+- `aeris/scripts/preflight.ps1`, `aeris/.eslintrc.json`,
+  `aeris/types/database.ts` — frozen.
+- `submit_phase4_operator_offer` and
+  `promote_lead_to_trip_request` SQL functions — frozen.
+- All admin / operator pages, components, validators, and other
+  Server Actions — frozen.
+
+### Quality gates after the fix
+
+Run from `aeris/` on the feature branch immediately before push:
+
+- `npm run type-check` → exit 0.
+- `npm run build` → exit 0; route table identical to the previous
+  push (`/admin/trips`, `/admin/trips/[id]`, `/operator/offer/[token]`
+  all `ƒ Dynamic`); admin/trips/[id] grew from 3.44 kB to
+  3.54 kB (the new error-translation strings).
+- `npm run lint:strict` → exit 0, no warnings.
+- `npm audit --json` → unchanged from Phase 3.5 baseline; lockfile
+  byte-identical.
+
+CI on GitHub Actions for the new commit will be linked once it
+runs.
+
+### Updated acceptance criteria coverage
+
+PR #2 review iteration 1 implicitly extends Phase 4's acceptance
+criterion #14 (security) and the operator-flow-smoke-test:
+
+- **Stale-tab dispatch probe (new):** open `/admin/trips/<id>`
+  for a trip you are about to book. Accept an offer. From the
+  stale tab (still showing the old dispatch form), submit a new
+  dispatch. Expect the inline Arabic-RTL error mapped from
+  `trip_closed` and zero change to `trip_requests.dispatch_*`
+  columns and zero change to `trip_requests.status`. The smoke
+  test will be amended in a follow-up; this commit does not
+  rewrite the smoke test for the additional probe.
+- **Concurrent accept probe (new):** with two admin sessions,
+  accept two different pending offers on the same trip
+  simultaneously. Expect one `accepted` + others `rejected`
+  exactly, no deadlock-detected error from Postgres, and the
+  losing transaction returns `offer_not_pending` cleanly.
+
+Both probes are documented here so Codex can ask for them to be
+added to the smoke test in a small follow-up if desired.
+
+### Questions For Codex
+
+None of these are blockers for accepting the iteration-2 fix:
+
+1. **Should `aeris/docs/CLAUDE-TASK.md` iteration 4 §1e-2 be
+   patched** to reflect the trip-first lock order? The spec
+   currently says "Lock the offer row" first; the implementation
+   is stricter (locks the trip first, eliminating the deadlock).
+   Recommendation: yes, document as a Codex-iteration-2 fix in
+   the audit-trail tables at the bottom of the spec, but defer
+   to Codex's call.
+
+2. **Should `operator-flow-smoke-test.md` add the two new probes
+   above (stale-tab dispatch + concurrent accept)?**
+   Recommendation: yes, in a follow-up tiny commit on this same
+   PR — but only after Codex confirms the desired probe shape so
+   we don't bloat the smoke test with checks Codex didn't ask
+   for.
+
+3. **Phase 5 / 4.1 / 3.6 readiness.** Carries over from the
+   prior round; nothing changed.
+
+Stopped after the iteration-2 fix. Did not touch CLAUDE-TASK.md,
+the smoke test, or any other out-of-scope file. Did not start
+Phase 4.1, Phase 3.6, or Phase 5.
+
