@@ -205,6 +205,10 @@ function translateError(code: string): string {
       return 'صيغة الرقم غير صحيحة. أدخل رقمًا دوليًا يبدأ بـ + .';
     case 'env_missing':
       return 'إعدادات الخادم ناقصة. تواصل مع مسؤول النظام.';
+    case 'trip_closed':
+      return 'هذه الرحلة لم تعد قابلة للإرسال (محجوزة أو ملغاة). حدّث الصفحة لمراجعة الحالة الحالية.';
+    case 'trip_not_found':
+      return 'تعذّر العثور على هذه الرحلة. ربما حُذفت — حدّث الصفحة.';
     case 'failed':
     default:
       return 'تعذّر إرسال الرحلة الآن. حاول مرة أخرى.';

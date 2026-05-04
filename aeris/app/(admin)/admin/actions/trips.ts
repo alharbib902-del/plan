@@ -10,6 +10,7 @@ import { dispatchTripSchema } from '@/lib/validators/dispatch';
 import { getLeadById } from '@/lib/supabase/queries/leads';
 import {
   acceptOperatorOffer,
+  DispatchStateError,
   persistDispatchState,
   promoteLeadToTripRequest,
 } from '@/lib/supabase/queries/trips';
@@ -114,6 +115,8 @@ export type DispatchResult =
       error:
         | 'invalid_input'
         | 'env_missing'
+        | 'trip_closed'
+        | 'trip_not_found'
         | 'failed';
     };
 
@@ -148,6 +151,11 @@ export async function dispatchTrip(formData: FormData): Promise<DispatchResult> 
       targetPhone: parsed.data.operator_phone,
     });
   } catch (err) {
+    // The token issued above was never persisted, so it cannot
+    // validate against the DB nonce — no leak.
+    if (err instanceof DispatchStateError) {
+      return { ok: false, error: err.code };
+    }
     console.error('[trips-action] persistDispatchState failed', err);
     return { ok: false, error: 'failed' };
   }

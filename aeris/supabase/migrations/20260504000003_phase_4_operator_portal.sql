@@ -195,6 +195,16 @@ GRANT EXECUTE ON FUNCTION promote_lead_to_trip_request(
 -- ============================================
 -- 1e-2. accept_phase4_offer — accept with expiry guard
 -- ============================================
+--
+-- Lock order: parent trip → chosen offer → sibling offers.
+--
+-- Locking the parent trip FIRST serializes concurrent accepts on
+-- the same trip — every accept transaction must serialize behind the
+-- trip-row lock before it can touch any offer row, so the
+-- offer-then-trip lock-order deadlock that two concurrent admins
+-- could otherwise trigger (each holding their chosen offer, each
+-- waiting for the trip + the other's offer) is impossible.
+-- (Codex PR #2 fix #2.)
 
 CREATE OR REPLACE FUNCTION accept_phase4_offer(
   p_offer_id UUID
@@ -204,35 +214,29 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_trip_id UUID;
-  v_now     TIMESTAMPTZ := NOW();
+  v_trip_id          UUID;
+  v_offer_status     offer_status;
+  v_offer_expires_at TIMESTAMPTZ;
+  v_now              TIMESTAMPTZ := NOW();
 BEGIN
-  -- Lock the offer row AND require it still be valid.
-  -- Phase 4 has no background job that flips expired offers to
-  -- 'expired' on a schedule, so the guard MUST live here.
+  -- Step 1: discover trip_id from the offer (no lock yet).
+  -- trip_request_id on phase4_operator_offers is set on INSERT and
+  -- never updated, so reading it before the row lock is safe.
   SELECT trip_request_id INTO v_trip_id
     FROM phase4_operator_offers
-    WHERE id = p_offer_id
-      AND status = 'pending'
-      AND expires_at > v_now
-    FOR UPDATE;
+    WHERE id = p_offer_id;
 
   IF v_trip_id IS NULL THEN
-    PERFORM 1
-      FROM phase4_operator_offers
-      WHERE id = p_offer_id
-        AND status = 'pending'
-        AND expires_at <= v_now
-      FOR UPDATE;
-    IF FOUND THEN
-      UPDATE phase4_operator_offers
-        SET status = 'expired', decided_at = v_now
-        WHERE id = p_offer_id AND status = 'pending';
-      RETURN json_build_object('ok', false, 'error', 'offer_expired');
-    END IF;
+    -- Offer does not exist (or was hard-deleted). Treat as
+    -- not-pending for the UI's purposes.
     RETURN json_build_object('ok', false, 'error', 'offer_not_pending');
   END IF;
 
+  -- Step 2: lock the parent trip FIRST. This serializes concurrent
+  -- accepts on the same trip; without it, two transactions could
+  -- each hold their chosen offer's lock while waiting for each
+  -- other's, triggering a Postgres deadlock instead of returning a
+  -- clean offer_not_pending / trip_not_open path.
   PERFORM 1 FROM trip_requests
     WHERE id = v_trip_id
       AND status IN ('pending', 'distributed', 'offered')
@@ -241,16 +245,47 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'trip_not_open');
   END IF;
 
+  -- Step 3: lock + validate the chosen offer. Because the trip
+  -- lock is already held, sibling-accept transactions are blocked
+  -- here, so re-reading status under FOR UPDATE will see the final
+  -- state of any preceding sibling accept.
+  SELECT status, expires_at
+    INTO v_offer_status, v_offer_expires_at
+    FROM phase4_operator_offers
+    WHERE id = p_offer_id
+    FOR UPDATE;
+
+  IF v_offer_status <> 'pending' THEN
+    RETURN json_build_object('ok', false, 'error', 'offer_not_pending');
+  END IF;
+
+  IF v_offer_expires_at <= v_now THEN
+    -- Auto-flip the row to 'expired' so it no longer surfaces as
+    -- pending in the UI. The Server Action surfaces a distinct
+    -- offer_expired Arabic-RTL error.
+    UPDATE phase4_operator_offers
+      SET status = 'expired', decided_at = v_now
+      WHERE id = p_offer_id AND status = 'pending';
+    RETURN json_build_object('ok', false, 'error', 'offer_expired');
+  END IF;
+
+  -- Step 4: flip the chosen offer to accepted.
   UPDATE phase4_operator_offers
     SET status = 'accepted', decided_at = v_now
     WHERE id = p_offer_id;
 
+  -- Step 5: reject every other pending sibling on this trip.
+  -- The trip lock held since step 2 means no concurrent submit /
+  -- accept on this trip can be racing us; sibling row locks are
+  -- acquired here with no contention beyond inserts that already
+  -- waited for the trip lock in submit_phase4_operator_offer.
   UPDATE phase4_operator_offers
     SET status = 'rejected', decided_at = v_now
     WHERE trip_request_id = v_trip_id
       AND id <> p_offer_id
       AND status = 'pending';
 
+  -- Step 6: book the trip.
   UPDATE trip_requests
     SET status = 'booked'
     WHERE id = v_trip_id;
