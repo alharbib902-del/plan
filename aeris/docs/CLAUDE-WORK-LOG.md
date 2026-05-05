@@ -1303,10 +1303,22 @@ merge** — see "Interactive verification gap" below.
 - Branch: `feature/phase-4-2-pwa-foundation`.
 - PR: [#4](https://github.com/alharbib902-del/plan/pull/4)
   — *Phase 4.2: PWA Foundation*.
-- HEAD commit: `f021124`.
-- CI run: [25356924957](https://github.com/alharbib902-del/plan/actions/runs/25356924957) — SUCCESS in ~63 s.
-- Vercel preview: SUCCESS at
-  https://aeris-osos9r8to-earis-projects-620f37e5.vercel.app
+- HEAD commit: `59113f6` (docs-only fix on top of the
+  implementation commit `f021124`; the implementation itself
+  is unchanged).
+- Latest CI run: [25357429887](https://github.com/alharbib902-del/plan/actions/runs/25357429887)
+  — SUCCESS. (The first CI run for the implementation commit was
+  [25356924957](https://github.com/alharbib902-del/plan/actions/runs/25356924957) — also SUCCESS.)
+- Vercel preview (latest, for HEAD `59113f6`):
+  - SHA URL: https://aeris-cwnh41j5t-earis-projects-620f37e5.vercel.app
+  - Branch alias (auto-tracks newest commit):
+    https://aeris-git-feature-phase-4-2-pwa-3b73d6-earis-projects-620f37e5.vercel.app
+  - **Vercel Preview Authentication is on**: visiting these URLs
+    without a Vercel login returns 401. The founder either logs
+    into Vercel first, disables Deployment Protection
+    temporarily, or uses `localhost:3060` running
+    `npm run start` (Option C in
+    `docs/PWA-INTERACTIVE-VERIFY.md`).
 - `mergeStateStatus`: `CLEAN` (all branch-protection checks
   passed).
 - Phase 4 was merged (commit `502de21`) and deployed to Vercel
@@ -1353,8 +1365,12 @@ got back is reserved at the bottom of this section.
 ```
 Run on:                ____________________  (YYYY-MM-DD HH:MM)
 Browser:               ____________________  (Chrome 13x.x / Edge / etc.)
-Target URL:            https://aeris-osos9r8to-earis-projects-620f37e5.vercel.app
-                       (or another preview URL if the PR was rebased)
+Target URL:            ____________________
+                       (one of:
+                        - branch alias https://aeris-git-feature-phase-4-2-pwa-3b73d6-earis-projects-620f37e5.vercel.app
+                        - SHA URL      https://aeris-cwnh41j5t-earis-projects-620f37e5.vercel.app
+                        - http://localhost:3060
+                        if Vercel Preview Auth blocked you)
 
 DevTools console JSON output (paste verbatim):
 

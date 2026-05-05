@@ -20,13 +20,66 @@
 Open the target URL in **Chrome** (Mobile preset in DevTools is
 fine; required only for the install-prompt step).
 
-For Phase 4.2 PR #4 the preview URL is:
-**https://aeris-osos9r8to-earis-projects-620f37e5.vercel.app**
+### Picking the URL
 
-(Replace with the URL of any future PR's Vercel preview when
-re-running.)
+You have three options. Pick whichever loads without
+authentication friction.
 
-Open DevTools (`F12` or `Ctrl+Shift+I`).
+**Option A — Branch-aliased Vercel preview (recommended).**
+Auto-tracks the latest commit on the PR branch:
+
+```
+https://aeris-git-feature-phase-4-2-pwa-3b73d6-earis-projects-620f37e5.vercel.app
+```
+
+**Option B — SHA-specific Vercel preview.** For the exact commit
+under review (HEAD `59113f6` at the time of writing). Find the
+current one in the PR's Vercel bot comment, or via:
+
+```bash
+gh api repos/alharbib902-del/plan/deployments \
+  --jq '.[] | select(.environment=="Preview") | {ref, id}' \
+  | head -1
+gh api repos/alharbib902-del/plan/deployments/<id>/statuses \
+  --jq '.[0].environment_url'
+```
+
+For HEAD `59113f6` the URL is:
+`https://aeris-cwnh41j5t-earis-projects-620f37e5.vercel.app`.
+
+**Option C — Local production build** (no Vercel auth at all).
+From `aeris/`:
+
+```powershell
+$env:PORT = "3060"; npm run start
+```
+
+Then open `http://localhost:3060/`. This is the fallback when
+Vercel preview protection blocks Options A and B.
+
+### If Vercel returns 401 / "Authentication required"
+
+Vercel preview deployments are gated by **Vercel Preview
+Authentication** by default on Hobby plans. The page will return
+`401 Unauthorized` to anyone who isn't logged into the Vercel
+team's dashboard.
+
+Two fixes:
+
+1. **Log in to Vercel** in the same Chrome session, then revisit
+   the preview URL — you'll be allowed through.
+2. **Disable Preview Protection** for testing: Vercel Dashboard →
+   Project Settings → **Deployment Protection** → toggle
+   "Vercel Authentication" off. **Re-enable after testing** if
+   you don't want the previews public.
+3. Or just use **Option C** (localhost). PWA behavior is
+   identical between Vercel preview and local production build —
+   both serve over HTTPS+secure-context (localhost is a
+   secure-context exception).
+
+### Open DevTools
+
+`F12` or `Ctrl+Shift+I`. Switch to the **Console** tab.
 
 ---
 
