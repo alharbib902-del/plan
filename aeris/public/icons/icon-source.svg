@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Aeris PWA placeholder icon.
+    Phase 4.2 source-of-truth. Designer can iterate without touching code;
+    re-run `npm run generate:icons` to regenerate every PNG variant.
+
+    Brand:
+      Navy   #0A1628  (background)
+      Gold   #C9A961  (accent / wordmark)
+  -->
+  <rect width="512" height="512" fill="#0A1628"/>
+  <text
+    x="256"
+    y="380"
+    font-family="'Playfair Display', 'Times New Roman', Georgia, serif"
+    font-size="400"
+    font-weight="600"
+    fill="#C9A961"
+    text-anchor="middle"
+  >A</text>
+</svg>
