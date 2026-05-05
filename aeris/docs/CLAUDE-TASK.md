@@ -595,8 +595,17 @@ Phase 4.2 is acceptable only if every item below is true.
 
 ### Icons
 
-7. All 9 icon files exist under `aeris/public/icons/` and
-   `aeris/public/`.
+7. All **8 icon files** exist under `aeris/public/icons/`
+   (Codex iteration 3 review fix: count corrected from 9 → 8
+   after `favicon.ico` was removed from scope in iteration 2):
+   - `icon-source.svg` (source of truth for the generator)
+   - `icon-192.png`
+   - `icon-512.png`
+   - `icon-maskable-192.png`
+   - `icon-maskable-512.png`
+   - `apple-touch-icon.png`
+   - `favicon-32.png`
+   - `favicon-16.png`
 8. PNGs are real PNGs (not placeholders.txt or 0-byte).
 9. The maskable variants have a 40% safe-area padding so adaptive
    launchers don't crop the wordmark.
