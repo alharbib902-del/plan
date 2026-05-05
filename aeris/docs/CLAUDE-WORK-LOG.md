@@ -2326,3 +2326,169 @@ activated" only after both P0 security items have been
 verified clear and the leaked legacy `service_role` JWT is
 demonstrably no longer accepted by Supabase.
 
+---
+
+## Phase 5 — Trip Distribution Engine code merged (2026-05-05)
+
+### Status
+
+**Code complete on `main`. Activation deferred — gate OFF.**
+
+Phase 5 (multi-operator dispatch) was specced (5 iterations,
+Codex-accepted 100/100, held as a local CLAUDE-TASK.md draft)
+and shipped across 5 PRs ([#7](https://github.com/alharbib902-del/plan/pull/7),
+[#8](https://github.com/alharbib902-del/plan/pull/8),
+[#9](https://github.com/alharbib902-del/plan/pull/9),
+[#10](https://github.com/alharbib902-del/plan/pull/10),
+[#11](https://github.com/alharbib902-del/plan/pull/11)). All
+five are merged into `main`. The current `main` HEAD is
+`de9d638`.
+
+Phase 5 is **NOT activated** in any environment. Specifically:
+
+- The Phase 5 migration `20260505000004_phase_5_distribution.sql`
+  has **NOT been applied** to the production Supabase project.
+  Production DB is still Phase 4-only.
+- The admin UI sits behind the `PHASE5_ADMIN_UI` env-var gate
+  added in PR #10. The gate is **NOT set** in any Vercel
+  environment. Production renders the legacy Phase 4 single-
+  operator dispatch UI.
+- No v=2 operator tokens are being generated (the dispatch
+  path that issues them is gated). The operator portal at
+  `/operator/offer/[token]` carries the v=2 branch from PR #11
+  but never sees a v=2 token in practice.
+
+This entry is the closure record for the **code merge** half of
+Phase 5. Activation is a separate operational session — the
+runbook for it lives in [`docs/checklists/operator-flow-smoke-test.md`](checklists/operator-flow-smoke-test.md)
+under "Phase 5 — Trip Distribution Engine activation runbook".
+
+### What landed on `main`
+
+Six commits across five PRs:
+
+| commit | PR | what |
+|---|---|---|
+| `01d16ec` | #7 | Phase 5 schema + 3 atomic SQL RPCs (`open_phase5_dispatch_round`, `submit_phase5_operator_offer`, `accept_offer`). RLS deny-all on the 3 new tables. REVOKE FROM PUBLIC + anon + authenticated; GRANT EXECUTE TO service_role only |
+| `8c4591e` | #7 | Codex P2 patches: structured `invalid_targets` for malformed `p_targets`; structured `invalid_offer` for invalid Phase 5 offer inputs |
+| `eab76cb` | #8 | `lib/operator/token.ts` v=1 + v=2 issuers, `issueOperatorTokenFromTarget` rebuild helper, single-pass discriminated `verifyOperatorToken`, `scripts/verify-operator-token.mjs` (37/37 algorithm checks) |
+| `78ffa02` | #9 | Phase 5 query layer (`phase5-rounds`, `phase5-targets`, `phase5-offers`, `unified-offers`), Phase 5 types in `types/database.ts`, `dispatchTripV2` + `acceptOfferV2` Server Actions (no UI wiring), `lib/operator/links.ts` extracted |
+| `9243650` + `5b8244e` | #10 | Multi-row dispatch panel, unified comparison view, accept-unified button, page wiring, **`PHASE5_ADMIN_UI` env-var gate** (Codex P1 fix — page defaults to legacy Phase 4 view until gate flipped AND migration applied AND operator portal v=2 ready) |
+| `de9d638` | #11 | Operator portal `/operator/offer/[token]` branches by `verified.version`; v=1 path unchanged; v=2 reads `trip_dispatch_targets`, validates round currency, submits via `submit_phase5_operator_offer` |
+
+### Spec contract
+
+`docs/CLAUDE-TASK.md` carries the Phase 5 spec, iteration 5,
+Codex-accepted 100/100, held as a **local working-tree draft**
+(intentionally NOT committed in any of PR 1-5 per the founder's
+PR-scope instruction). The spec is the canonical contract Codex
+reviewed each PR against. It will be committed (or rotated to
+the next phase's spec) in a separate docs PR by the founder's
+explicit ask.
+
+### Production posture (unchanged from before this entry)
+
+- **Vercel production** serves the latest `main` bundle. With
+  `PHASE5_ADMIN_UI` unset, `/admin/trips/[id]` renders the
+  Phase 4 view — byte-identical (same imports, same renders) to
+  what shipped before [PR #10](https://github.com/alharbib902-del/plan/pull/10)
+  per the gate's default-OFF branch.
+- **Supabase production** is Phase 4 only (`lead_inquiries`,
+  `trip_requests` with Phase 4 dispatch columns,
+  `phase4_operator_offers`, plus the 3 Phase 4 RPCs). The Phase 5
+  tables and RPCs are NOT present.
+- **Operator portal** still effectively v=1 only, because no
+  v=2 tokens are being issued.
+- **Carry-over open from prior phases** (unchanged):
+  rotate `SUPABASE_SERVICE_ROLE_KEY` and revoke legacy HS256
+  JWT key (founder-accepted risk; deferred indefinitely per
+  prior founder decision recorded above), configure DNS for
+  `aeris.sa`, optionally clean up Phase 4 production
+  smoke-test artifacts.
+
+### Activation prerequisites (founder execution)
+
+Before flipping `PHASE5_ADMIN_UI=true`, the founder must do
+all of:
+
+1. **Apply migration `20260505000004_phase_5_distribution.sql`**
+   to the target Supabase project (production OR staging).
+   Use the same paste-into-SQL-Editor flow as the Phase 4
+   migration (see Phase 4 Production Activation entry above).
+2. **Verify the migration** via the 6 SQL probes in
+   `operator-flow-smoke-test.md` step 1-6 of the Phase 5
+   activation runbook. ALL must pass; in particular the EXECUTE
+   privileges check (anon + authenticated denied for all 3 RPCs)
+   is a hard gate — that's the same P1 that bit Phase 4 in the
+   live verification round.
+3. **Confirm the gate-OFF baseline still works** by running
+   steps 7-8 of the activation runbook (a Phase 4 dispatch
+   should still go through end-to-end on the unset-env build).
+4. **Set `PHASE5_ADMIN_UI=true`** in the target Vercel
+   environment and trigger a redeploy.
+5. **Run the e2e flow** (steps 9-28 of the activation
+   runbook): multi-dispatch → refresh-durability probe →
+   v=2 operator submit from two operators in parallel →
+   unified comparison view → accept one → verify siblings
+   rejected + targets cancelled + round closed + trip booked.
+6. **Run re-dispatch + stale-link probes** (steps 29-34) to
+   confirm the iteration-2 P2 fix (re-dispatch closes prior
+   round AND its pending targets in one transaction; stale
+   v=2 URLs render the friendly expired page).
+
+If any step fails, the runbook's "If Phase 5 fails" section
+gives the most-likely-cause diagnoses. Roll back at any time
+by unsetting `PHASE5_ADMIN_UI` and redeploying — no DB
+rollback required, the Phase 5 schema can stay in place
+unused.
+
+### Quality gates (rolling, across the 5 PRs)
+
+Every PR ran the same gates locally and on CI. Final state on
+`de9d638`:
+
+- `npm run type-check` → exit 0
+- `npm run build` → exit 0; route table preserved (no new
+  routes); `/admin/trips/[id]` 3.62 → 5.38 kB across PR #10
+  (both view sub-trees bundled);
+  `/operator/offer/[token]` 2.62 → 2.74 kB across PR #11
+  (v=2 branch + `getTargetById` bundled).
+- `npm run lint:strict` → exit 0
+- `node aeris/scripts/verify-operator-token.mjs` → 37/37 PASS
+  (the algorithm verification script from PR #8; re-run on
+  every subsequent PR with no regression).
+- Lockfile unchanged across all 5 PRs (no new deps added).
+- CI green on every commit; Vercel preview build green on
+  every commit since PR #8 (after the git-author fix).
+
+### Known operational findings (already recorded above)
+
+These pre-date Phase 5 and are unchanged by it:
+
+- `aeris.sa` DNS not configured. Dispatch URLs generated by
+  Phase 4 (and would be by Phase 5 once activated) are
+  prefixed with `https://aeris.sa/` because `NEXT_PUBLIC_SITE_URL`
+  is set to that domain. The host-swap workaround in the
+  activation runbook step 19 is in place until DNS is
+  configured.
+- Vercel collaboration-Hobby restriction: commits authored
+  by `basem902` are blocked from triggering Vercel preview
+  deploys ("Git author basem902 must have access to the
+  project on Vercel"). Mitigated since PR #8 by configuring
+  the local git author to `alharbib902-del`. All Phase 5
+  commits use that author and Vercel deploys cleanly.
+- Founder-accepted security risk: rotate
+  `SUPABASE_SERVICE_ROLE_KEY` + revoke legacy HS256 JWT key.
+  Tracked above under Phase 4 Production Activation P0
+  carry-over. Not re-opened by this entry.
+
+### Closing
+
+Phase 5 is **code-complete on `main`** and **operationally
+deferred behind `PHASE5_ADMIN_UI`**. This entry is the merge-
+half record; the activation-half record will be appended as a
+separate "Phase 5 — Trip Distribution Engine activation
+(date)" entry by Claude when the founder completes the runbook
+and reports back the SQL post-conditions. Do NOT declare
+Phase 5 activated based on this entry alone.
+

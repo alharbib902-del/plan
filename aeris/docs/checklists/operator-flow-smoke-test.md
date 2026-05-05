@@ -242,3 +242,419 @@ Run on a separate trip (not the one you just booked).
   - The HMAC verification in `lib/operator/token.ts` is broken
     or `OPERATOR_TOKEN_SECRET` is unset. Treat as P1; rotate the
     secret before re-deploying.
+
+---
+
+# Phase 5 — Trip Distribution Engine activation runbook
+
+> **Read this whole section before starting.** Phase 5 ships
+> behind the `PHASE5_ADMIN_UI` env-var gate (added in PR #10).
+> Until the gate is flipped, the admin trip detail page renders
+> the legacy Phase 4 view and `/operator/offer/[token]`
+> still accepts only v=1 tokens *in practice*, because no v=2
+> tokens are ever generated. Activation is a sequenced flip:
+>
+>   1. Verify the migration is applied to the target Supabase
+>      project.
+>   2. Confirm the gate-off baseline is healthy (Phase 4 still
+>      works).
+>   3. Set `PHASE5_ADMIN_UI=true` in Vercel for the target
+>      environment and trigger a redeploy.
+>   4. Run the e2e flow on the deployed preview / production.
+>   5. Run the re-dispatch + stale-link probes.
+>
+> **Do NOT skip step 1 or step 2.** Step 1 catches the
+> "merged code, missing schema" failure mode; step 2 catches
+> "the env-var typo silently broke the legacy path".
+
+## Setup
+
+You need:
+
+- The target Vercel deployment URL (`<host>` below). For
+  production this is `https://aeris-flax.vercel.app/` (or
+  the eventual `https://aeris.sa/` once DNS is configured —
+  see the Phase 4 Production Activation entry in
+  [`CLAUDE-WORK-LOG.md`](../CLAUDE-WORK-LOG.md)).
+- Admin login credentials for `<host>/admin/login`.
+- **Three** browser windows: one signed into admin (Window A),
+  two fresh / private Chrome incognito windows (Window B and
+  Window C — two "operators").
+- **Three** test phone numbers you control on WhatsApp (E.164,
+  e.g. `+966500000001`, `+966500000002`, `+966500000003`).
+  Throwaway is fine — the dispatch never actually sends a
+  WhatsApp message; admin copies the link manually.
+- Supabase SQL editor access on the target project.
+
+## Pre-flip — migration verification
+
+Run BEFORE setting `PHASE5_ADMIN_UI=true`. These probes catch
+the "code shipped, schema missing" failure mode.
+
+1. [ ] In Supabase → SQL Editor, run:
+       ```sql
+       SELECT typname FROM pg_type
+        WHERE typname IN ('dispatch_target_status', 'dispatch_round_status');
+       ```
+       → 2 rows. If 0 rows, migration
+       `20260505000004_phase_5_distribution.sql` was not
+       applied to this Supabase project — apply it before
+       continuing.
+2. [ ] Tables exist:
+       ```sql
+       SELECT relname, relrowsecurity FROM pg_class
+        WHERE relname IN (
+          'trip_dispatch_rounds',
+          'trip_dispatch_targets',
+          'phase5_operator_offers'
+        )
+        ORDER BY relname;
+       ```
+       → 3 rows, all with `relrowsecurity = t`.
+3. [ ] **Zero policies** on the three new tables (deny-all,
+       service-role-only):
+       ```sql
+       SELECT tablename, count(*) AS policy_count
+         FROM pg_policies
+        WHERE tablename IN (
+          'trip_dispatch_rounds',
+          'trip_dispatch_targets',
+          'phase5_operator_offers'
+        )
+        GROUP BY tablename;
+       ```
+       → 0 rows (no policies on any of the three).
+4. [ ] `current_dispatch_round_id` column on `trip_requests`:
+       ```sql
+       SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name   = 'trip_requests'
+          AND column_name  = 'current_dispatch_round_id';
+       ```
+       → 1 row, `data_type = uuid`, `is_nullable = YES`.
+5. [ ] All three Phase 5 RPCs have `SECURITY DEFINER` and a
+       pinned `search_path`:
+       ```sql
+       SELECT p.proname, p.prosecdef AS sec_def, p.proconfig AS config
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.proname IN (
+            'open_phase5_dispatch_round',
+            'submit_phase5_operator_offer',
+            'accept_offer'
+          )
+        ORDER BY p.proname;
+       ```
+       → 3 rows, all with `sec_def = t` and
+       `config = ["search_path=public, pg_temp"]`.
+6. [ ] EXECUTE privileges (the P1 fix from Phase 4 round 1
+       must hold for Phase 5 too):
+       ```sql
+       SELECT p.proname AS function_name,
+              r.rolname AS role,
+              has_function_privilege(r.rolname, p.oid, 'EXECUTE') AS can_execute
+         FROM pg_proc p
+        CROSS JOIN (VALUES ('anon'),('authenticated'),('service_role')) AS r(rolname)
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.proname IN (
+            'open_phase5_dispatch_round',
+            'submit_phase5_operator_offer',
+            'accept_offer'
+          )
+        ORDER BY p.proname, r.rolname;
+       ```
+       → 9 rows. For every function: `service_role = true`;
+       `anon = false`; `authenticated = false`. **Any `true`
+       on anon or authenticated is a P1 — STOP and investigate
+       before flipping the gate.**
+
+## Pre-flip — gate-OFF baseline
+
+Run BEFORE setting `PHASE5_ADMIN_UI=true`. These probes catch
+"the env-var typo silently broke the Phase 4 path".
+
+7. [ ] In Window A, sign into `<host>/admin/login`. Open any
+       trip in `pending` / `distributed` state at
+       `<host>/admin/trips/<id>`. The dispatch panel header
+       should read **"إرسال للمشغّل"** (singular — Phase 4
+       layout). The form should be a SINGLE phone field with
+       a "إرسال للمشغّل" button. The offers list, if any
+       offers exist, should render the legacy `Phase4OfferCard`
+       layout (no "قديم" or "جولة حالية" pills — those are
+       Phase 5-only).
+8. [ ] Run a Phase 4 dispatch (single phone, copy the URL).
+       Confirm the existing Phase 4 e2e (sections A–G above,
+       steps 1–33) still works end-to-end.
+
+If steps 7–8 fail, do NOT proceed. The gate is already on, or
+there is a regression in the Phase 4 path. Roll the env back
+or fix the regression first.
+
+## Flip the gate
+
+9. [ ] In Vercel → Project → Settings → Environment Variables,
+       add `PHASE5_ADMIN_UI=true` to the target environment
+       (Production OR Preview, not both unless you intend
+       both). Mark it as a regular (non-secret) value — it's
+       a feature flag, not a credential.
+10. [ ] Trigger a redeploy on the target environment so the
+        env var takes effect. (Vercel does NOT pick up env
+        changes for already-built deployments.)
+11. [ ] After the redeploy completes, hard-refresh
+        `<host>/admin/trips/<id>` in Window A. The dispatch
+        panel header should now read **"إرسال للمشغّلين"**
+        (plural). The form should be a multi-row list of phone
+        inputs with `+`/`–` controls and a counter showing
+        `1/8`. If still showing the singular Phase 4 form, the
+        env var didn't propagate — re-check step 9 + 10.
+
+## Phase 5 e2e — multi-dispatch + parallel submit + accept
+
+12. [ ] In Window A, on a fresh `pending` trip (promote a
+        new lead or use an empty trip), enter **two** test
+        phones into the multi-row form. Click "إرسال إلى
+        المشغّلين".
+13. [ ] The panel reveals **two** copy-able cards, each with:
+        - the operator phone (LTR-formatted),
+        - **رابط المشغّل** input + Copy button,
+        - **رابط واتساب** input + Open + Copy buttons,
+        - "ينتهي" timestamp ~72 hours from now.
+14. [ ] Trip status badge changes from "بانتظار الإرسال" or
+        "أُرسل للمشغّل" to **"أُرسل للمشغّل"** (Phase 5 keeps
+        the same wording). Header text above the cards reads
+        "الجولة الحالية (2 مشغّلين)".
+15. [ ] In Supabase:
+        ```sql
+        SELECT id AS trip_id, status, current_dispatch_round_id
+          FROM trip_requests WHERE id = '<trip_id>';
+        SELECT id, status, opened_at, closed_at, closed_reason
+          FROM trip_dispatch_rounds
+         WHERE trip_request_id = '<trip_id>'
+         ORDER BY opened_at DESC LIMIT 1;
+        SELECT id, target_phone, status, sent_at, expires_at
+          FROM trip_dispatch_targets
+         WHERE dispatch_round_id = (
+                SELECT current_dispatch_round_id FROM trip_requests WHERE id = '<trip_id>'
+              )
+         ORDER BY sent_at;
+        ```
+        → trip status `distributed` (or unchanged if it was
+        already `distributed`/`offered`),
+        `current_dispatch_round_id` non-null. One round row,
+        `status = 'open'`. Two target rows, each
+        `status = 'pending'`, with the phones you entered.
+
+### Refresh-durability probe (acceptance #14a)
+
+16. [ ] Hard-refresh `<host>/admin/trips/<id>` (Ctrl+R / Cmd+R).
+        The same two cards re-render with **byte-identical**
+        operator URLs and WhatsApp deep links. (The page is
+        rebuilding the URLs from the persisted target rows
+        via `issueOperatorTokenFromTarget`; both calls derive
+        `issued_at` from the same `target.sent_at` so the
+        HMAC is identical.)
+17. [ ] (Optional) Close the browser tab entirely and re-open
+        the trip URL from the address bar. Same two cards
+        appear again.
+18. [ ] (Optional SQL probe.) `SELECT id, sent_at FROM
+        trip_dispatch_targets WHERE dispatch_round_id = '<round>'
+        ORDER BY sent_at;` — confirm `sent_at` was persisted
+        as the Server Action's `batch_now` (not the DB-side
+        `NOW()` clock; same value across both rows in the same
+        batch).
+
+### v=2 operator submit
+
+19. [ ] Copy the **رابط المشغّل** of the first target. If the
+        URL host is `aeris.sa` and DNS isn't configured yet,
+        replace the host with the deployed Vercel URL host
+        (the HMAC token is host-independent). Open in
+        Window B (fresh Chrome incognito).
+20. [ ] The page renders the operator portal: AERIS branding,
+        Arabic RTL, trip summary (route, dates, passengers,
+        cabin) — **with NO customer name or phone**. The form
+        below is the standard offer form.
+21. [ ] Fill the offer form with reasonable values
+        (operator_name, operator_phone E.164, total_price_sar
+        ≥ 1000, departure_eta ≥ trip departure, validity_hours
+        24). Submit. The page renders the green "تم استلام
+        عرضك" success panel.
+22. [ ] In Supabase:
+        ```sql
+        SELECT id, trip_request_id, dispatch_target_id,
+               operator_name, total_price_sar, status
+          FROM phase5_operator_offers
+         WHERE trip_request_id = '<trip_id>'
+         ORDER BY created_at DESC;
+        SELECT id, status, submitted_at FROM trip_dispatch_targets
+         WHERE id = '<target_id>';
+        SELECT status FROM trip_requests WHERE id = '<trip_id>';
+        ```
+        → exactly one Phase 5 offer row, `status = 'pending'`,
+        `dispatch_target_id` matches the URL's target. Target
+        row `status = 'submitted'` with `submitted_at` non-null.
+        Trip status promoted to `offered`.
+23. [ ] In Window C, open the SECOND target's operator URL
+        (also from step 13). Submit a different offer (e.g.
+        higher price). Page renders the success panel.
+24. [ ] Supabase: now TWO rows in `phase5_operator_offers`,
+        both `status = 'pending'`, each tied to its own
+        `dispatch_target_id`. Both target rows now `submitted`.
+
+### Unified comparison view + accept
+
+25. [ ] Back in Window A, hard-refresh the trip detail page.
+        The "العروض المستلمة" section shows BOTH offers,
+        sorted by total_price_sar ascending (acceptance #17).
+        Each card has a "جولة حالية" pill (since both targets
+        belong to the trip's `current_dispatch_round_id`).
+26. [ ] Click "قبول العرض" on the lower-priced offer. Confirm
+        the JS dialog "هل أنت متأكد...".
+27. [ ] After the accept:
+        - chosen offer card flips to "مقبول" (green badge);
+        - sibling offer card flips to "مرفوض" (red badge);
+        - trip status badge becomes "محجوز";
+        - dispatch panel disables / shows
+          "هذه الرحلة مغلقة (محجوزة أو ملغاة)...".
+28. [ ] In Supabase, single SQL probe:
+        ```sql
+        SELECT request_number, status FROM trip_requests
+         WHERE id = '<trip_id>';
+        SELECT id, status, decided_at FROM phase5_operator_offers
+         WHERE trip_request_id = '<trip_id>'
+         ORDER BY total_price_sar;
+        SELECT id, status FROM trip_dispatch_targets
+         WHERE trip_request_id = '<trip_id>';
+        SELECT id, status, closed_at, closed_reason
+          FROM trip_dispatch_rounds
+         WHERE trip_request_id = '<trip_id>';
+        ```
+        → trip `status = 'booked'`. One offer `accepted`, one
+        `rejected`, both `decided_at` non-null. All targets
+        on the trip in terminal state (the two that submitted
+        are `submitted`; any never-submitted ones would be
+        `cancelled`). The round row is `closed`,
+        `closed_reason = 'offer_accepted'`.
+
+## Re-dispatch stale-link probes
+
+Run on a SEPARATE trip (not the booked one above).
+
+29. [ ] Promote a new lead → trip → multi-dispatch to two
+        phones. Note the operator URLs (call them URL-A1 and
+        URL-A2) and `dispatch_round_id` (call it ROUND-A).
+30. [ ] In Window A, click "إعادة الإرسال إلى مشغّلين جدد"
+        with two NEW phones. Get URL-B1, URL-B2 and ROUND-B.
+31. [ ] In Supabase:
+        ```sql
+        SELECT current_dispatch_round_id FROM trip_requests WHERE id = '<trip_id>';
+        SELECT id, status, closed_reason
+          FROM trip_dispatch_rounds
+         WHERE trip_request_id = '<trip_id>'
+         ORDER BY opened_at;
+        SELECT dispatch_round_id, status, count(*)
+          FROM trip_dispatch_targets
+         WHERE trip_request_id = '<trip_id>'
+         GROUP BY dispatch_round_id, status
+         ORDER BY 1, 2;
+        ```
+        → `current_dispatch_round_id` = ROUND-B (the new
+        round). ROUND-A is `closed` with
+        `closed_reason = 'redispatched'`. ROUND-A's two
+        targets are `cancelled`. ROUND-B's two targets are
+        `pending`.
+32. [ ] In Window B, open URL-A1 (the now-stale link from
+        ROUND-A). The page renders the friendly
+        "هذا الرابط منتهي الصلاحية" page. **No row was
+        written to `phase5_operator_offers`.**
+33. [ ] In Window C, open URL-B1 (a fresh link from ROUND-B).
+        The form renders normally. Submit a quick offer to
+        confirm the new round still accepts submissions.
+34. [ ] (Optional belt-and-suspenders.) Tampered-token probe
+        on a v=2 link: take URL-B2, flip the LAST character
+        of the signature half. Open in incognito. Page
+        renders the friendly expired/invalid view. SQL probe
+        confirms no offer row was inserted.
+
+## Pass criteria (Phase 5 section)
+
+- Steps 1–6: every probe returns the expected shape; EXECUTE
+  privileges are correct on all 3 RPCs.
+- Steps 7–8: gate-OFF baseline = Phase 4 still works. **STOP
+  before step 9** if not.
+- Step 11: after redeploy, dispatch panel switches to the
+  multi-row Phase 5 layout. If still single-row, the env didn't
+  propagate.
+- Steps 12–24: multi-dispatch produces N target rows + N
+  unique URLs; refresh reproduces the SAME URLs byte-identically;
+  v=2 operator submit lands an offer in `phase5_operator_offers`
+  with `dispatch_target_id` set; second operator submit doesn't
+  invalidate the first; trip status moves forward to `offered`
+  on the first submit and stays there.
+- Steps 25–28: comparison view shows both offers sorted by
+  price; accept flips chosen → `accepted`, sibling →
+  `rejected`, target → `cancelled` (if not already
+  submitted), round → `closed`, trip → `booked`.
+- Steps 29–34: re-dispatch closes the prior round AND its
+  pending targets in the same RPC transaction; the prior
+  round's URLs render the friendly expired page; the new
+  round's URLs work; tampered v=2 token rejected without DB
+  write.
+
+## If Phase 5 fails
+
+- **Step 1–6 fails on the schema/privileges shape:** do NOT
+  flip the gate. Re-apply the migration (or the relevant
+  REVOKE/GRANT statements) and re-run from step 1.
+- **Step 11 still shows the single-row Phase 4 form after
+  redeploy:** the `PHASE5_ADMIN_UI` env var didn't propagate.
+  Check Vercel env scope (Production vs Preview vs
+  Development), confirm the redeploy actually rebuilt (check
+  the deployment list timestamp), and that the value is
+  literally `true` (lowercase, no quotes).
+- **Step 16 shows DIFFERENT operator URLs after refresh:** the
+  refresh-durability invariant is broken. Most likely cause is
+  `sent_at` is being regenerated on the DB side instead of
+  passed through from the Server Action's `batch_now`.
+  Inspect `open_phase5_dispatch_round` in
+  `supabase/migrations/20260505000004_phase_5_distribution.sql`
+  and confirm the INSERT supplies `sent_at` explicitly. P1
+  regression of iteration-3 P1 fix.
+- **Step 22/24 shows the offer landed in
+  `phase4_operator_offers` instead of `phase5_operator_offers`:**
+  the operator portal v=2 branch isn't routing correctly. Check
+  `app/operator/offer/[token]/actions.ts` for the
+  `verified.version === 2` branch.
+- **Step 27 shows multiple offers `accepted` after one accept
+  click:** the `accept_offer` unified RPC isn't rejecting
+  cross-table siblings, or the trip-row lock is missing.
+  Critical regression. Inspect `accept_offer` in the migration.
+- **Step 32 actually loads a working form on the stale URL:**
+  either `target.dispatch_round_id` doesn't match
+  `trip.current_dispatch_round_id` after re-dispatch (RPC bug),
+  or the operator page's v=2 branch isn't checking round-currency
+  (page bug). Both regressions of iteration-2 P2 fix.
+- **Step 34 actually loads a working form on the tampered
+  token:** HMAC verification in `lib/operator/token.ts` is
+  broken or `OPERATOR_TOKEN_SECRET` differs between issuer and
+  verifier. Treat as P1.
+
+## Reverting the gate
+
+If anything in steps 11–34 surfaces a regression you can't
+fix immediately, roll back by **unsetting `PHASE5_ADMIN_UI`**
+(or setting it to anything other than the literal `true`) in
+Vercel and triggering a redeploy. The Phase 4 path comes back
+online with no DB rollback required — the Phase 5 schema and
+RPCs stay in place but go unused. Any in-flight v=2 tokens
+become useless (the page goes back to the v=1-only render
+path), but no data is lost.
+
+> **Recap of what activation does NOT include.** Phase 5
+> activation is purely the admin + operator dispatch path.
+> It does not change billing, payments, ZATCA invoicing, the
+> empty-leg engine, the medevac surface, the cargo surface,
+> or the loyalty program. None of those are wired to Phase 5
+> tables.
