@@ -238,10 +238,22 @@ function SuccessPanel() {
 function translateError(code: string): string {
   switch (code) {
     case 'invalid_input':
+    case 'invalid_offer':
+      // 'invalid_offer' is the Phase 5 RPC's own pre-validator
+      // for the same conditions Zod misses (e.g. price < 1000
+      // sneaking past a tampered client). Same UI treatment.
       return 'البيانات غير مكتملة أو غير صحيحة. راجع الحقول المطلوبة.';
+    case 'target_not_pending':
+      // Phase 5 only — target row is no longer pending (already
+      // submitted, expired, or cancelled by re-dispatch / accept).
+      return 'هذا الرابط لم يعد قابلًا للاستخدام (تم استخدامه مسبقًا أو ألغاه المؤسس).';
+    case 'trip_not_open':
+    case 'trip_closed':
+      // 'trip_closed' is Phase 4's name for the same condition
+      // Phase 5 calls 'trip_not_open' (booked or cancelled).
+      return 'هذه الرحلة لم تعد قابلة للحجز (محجوزة أو ملغاة).';
     case 'token_invalid':
     case 'trip_not_found':
-    case 'trip_closed':
     case 'token_stale':
       return 'هذا الرابط لم يعد صالحًا. يرجى طلب رابط جديد من المؤسس.';
     case 'failed':
