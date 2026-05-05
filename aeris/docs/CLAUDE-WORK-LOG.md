@@ -1294,16 +1294,78 @@ Step 3.2 against the patched DB. Did not run Step 4 yet.
 
 ### Status
 
-Implemented and pushed to a feature branch. CI status pending
-push. **Awaiting Codex review and merge.**
+Implemented, pushed, PR opened, CI green, Vercel preview built
+green. **Conditional on interactive browser verification before
+merge** — see "Interactive verification gap" below.
 
 - Spec: `docs/CLAUDE-TASK.md` iteration 3 (Codex-accepted
   100/100).
 - Branch: `feature/phase-4-2-pwa-foundation`.
-- PR: pending push.
+- PR: [#4](https://github.com/alharbib902-del/plan/pull/4)
+  — *Phase 4.2: PWA Foundation*.
+- HEAD commit: `f021124`.
+- CI run: [25356924957](https://github.com/alharbib902-del/plan/actions/runs/25356924957) — SUCCESS in ~63 s.
+- Vercel preview: SUCCESS at
+  https://aeris-osos9r8to-earis-projects-620f37e5.vercel.app
+- `mergeStateStatus`: `CLEAN` (all branch-protection checks
+  passed).
 - Phase 4 was merged (commit `502de21`) and deployed to Vercel
   at `https://aeris-flax.vercel.app/` before Phase 4.2 work
   began.
+
+### Interactive verification gap (Codex PR #4 review fix #1)
+
+Codex iteration 1 review of PR #4 flagged that the manual
+verification block in `CLAUDE-TASK.md` iteration 3 requires
+DevTools-level checks (SW activation,
+`navigator.serviceWorker.controller`,
+`Cache Storage` contents, `beforeinstallprompt` on Android
+Chrome, offline-toggle reload on `/admin/*` and `/operator/*`)
+— and curl alone can't prove any of those.
+
+**Attempt to drive Chrome from this Claude session: failed.**
+The `Claude in Chrome` MCP extension was offline (3 retries,
+"Chrome extension isn't reachable" each time). Without it,
+this Claude session has no way to script `chrome.devtools` or
+inject JavaScript into a real page.
+
+**Path taken instead.** Phase 4.2 ships with two artifacts that
+let the founder run the interactive verification themselves in
+under 5 minutes:
+
+- `aeris/docs/checklists/pwa-audit.md` — the full 18-step audit
+  (steps 1-3 and 8-12 are curl-based; the rest are DevTools).
+- `aeris/docs/PWA-INTERACTIVE-VERIFY.md` (new) — a copy-paste
+  Chrome DevTools console script that bundles the runtime
+  checks into ONE paste and prints a JSON object the founder
+  can ship back. Contains expected values per field.
+
+**PR #4 is therefore CONDITIONAL.** It must NOT be merged
+until the founder runs `PWA-INTERACTIVE-VERIFY.md` against the
+Vercel preview URL and the printed JSON matches the expected
+values. A comment to that effect is added to PR #4 itself so
+GitHub viewers see the constraint without digging into work-log
+history. A line for the founder to record the actual JSON they
+got back is reserved at the bottom of this section.
+
+#### Interactive verification record (founder fills in)
+
+```
+Run on:                ____________________  (YYYY-MM-DD HH:MM)
+Browser:               ____________________  (Chrome 13x.x / Edge / etc.)
+Target URL:            https://aeris-osos9r8to-earis-projects-620f37e5.vercel.app
+                       (or another preview URL if the PR was rebased)
+
+DevTools console JSON output (paste verbatim):
+
+(   to be filled in   )
+
+Offline-probe results:
+  - / loads from cache offline:                _____ (yes / no)
+  - /admin/leads fails offline (no SW cache):  _____ (yes / no)
+  - /operator/offer/test-token fails offline:  _____ (yes / no)
+  - /unknown-route shows /offline fallback:    _____ (yes / no)
+```
 
 ### What changed
 
@@ -1417,24 +1479,17 @@ recommendations baked in. Implementation followed each:
    over on next page load without "click to update" nag.
 8. **Offline page brand-only.** No admin login link.
 
-### Spec acceptance #7 — file count discrepancy
+### Spec acceptance #7 — file count discrepancy (FIXED)
 
-Spec acceptance criterion #7 says "All 9 icon files exist under
-`aeris/public/icons/` and `aeris/public/`." Iteration 2 removed
-`favicon.ico` from scope but left the count `9`. Actual count
-implemented:
+Initial implementation noted that spec acceptance #7 said
+"9 icon files" but only 8 exist after `favicon.ico` was removed
+from scope in spec iteration 2. Codex PR #4 review fix #2
+asked for the spec to be updated to match implementation.
 
-- 7 PNG files in `public/icons/` (icon-192, icon-512,
-  icon-maskable-192, icon-maskable-512, apple-touch-icon,
-  favicon-32, favicon-16)
-- 1 SVG source in `public/icons/icon-source.svg`
-- **Total: 8 files**
-
-The implementation matches the file list in §1c (8 files); only
-the bare count in #7 is off by one. This is a spec-text error,
-not an implementation gap. Codex iteration 4 review can fix
-the `9 → 8` typo if desired; functional completeness is
-otherwise intact.
+**Resolution:** `CLAUDE-TASK.md` acceptance #7 was patched in
+this PR's docs commit to enumerate the 8 files by name (1 SVG
++ 7 PNGs) instead of the bare "9" count. The implementation
+already matches; this is a spec text fix, not a code change.
 
 ### Quality gates
 
@@ -1563,51 +1618,65 @@ to run on `aeris-flax.vercel.app` after merge + deploy.
 
 ### Known Issues
 
-- **Spec acceptance #7 says "9 icon files"** — actual count is
-  8 after `favicon.ico` was removed in iteration 2 (7 PNGs + 1
-  SVG source). Implementation matches the §1c file list, not
-  the bare number in #7. Treat as a spec typo.
-
 - **Port-conflict friction during local verification** —
   another project ("حسابات المبنى") was already serving on
   `localhost:3000`. First attempt at `npm run start` silently
-  failed; curl was hitting the wrong project's manifest
-  ("حسابات المبنى" themed). Fixed by switching to `PORT=3050`.
-  Documented here so a future verifier knows to check `netstat`
-  before assuming the server bound. Not a code issue.
+  failed; curl was hitting the wrong project's manifest. Fixed
+  by switching to `PORT=3050`. Documented here so a future
+  verifier knows to check `netstat` before assuming the server
+  bound. Not a code issue.
 
-- **DevTools-dependent verification steps** were not run in this
-  Claude session because the shell cannot drive Chrome. These
-  are explicitly deferred to the founder's post-merge audit per
-  the Required Claude Output of `CLAUDE-TASK.md` iteration 3.
+- **Interactive Chrome verification gap (active blocker for
+  merge).** Documented above under "Interactive verification
+  gap". Founder must run
+  `aeris/docs/PWA-INTERACTIVE-VERIFY.md` against the Vercel
+  preview URL and record the JSON output before PR #4 is
+  merged. The `Claude in Chrome` MCP extension was offline
+  during this Claude session; without it, the runtime checks
+  (SW activation, controller, cache contents,
+  `beforeinstallprompt`, offline reload) cannot be performed
+  from a non-interactive shell.
 
 ### Acceptance Criteria — Self-Audit
 
-Cross-checked against `CLAUDE-TASK.md` iteration 3:
+Cross-checked against `CLAUDE-TASK.md` iteration 3 (criterion #7
+text was updated in this docs commit to enumerate 8 files
+instead of "9"):
 
 - **Manifest (1-6):** ✓ — verified by `curl
   /manifest.webmanifest` against the JSON shape above.
-- **Icons (7-11):** ✓ except #7's "9" count (see Known Issues).
-  Other items: 7 PNGs exist with non-zero size; maskable
-  variants use 40% safe-area padding; `icon-source.svg` exists;
-  `npm run generate:icons` regenerates idempotently.
+- **Icons (7-11):** ✓ — 7 PNGs + 1 SVG source = 8 files all
+  present with non-zero size; maskable variants use 40%
+  safe-area padding (60% inner content scale);
+  `icon-source.svg` exists; `npm run generate:icons` regenerates
+  idempotically. Spec text fixed to match the 8-file reality.
 - **Service worker (12-16):** ✓ for #12 (file exists, served
-  HTTP 200). #13-#16 require interactive verification (founder).
+  HTTP 200). #13-#16 require interactive verification —
+  packaged in `PWA-INTERACTIVE-VERIFY.md` for the founder.
 - **Layout integration (17-21):** ✓ — verified by `curl`
   output above. `<ServiceWorkerRegister />` mounted in
   `app/layout.tsx`.
 - **Installability requirements (22-25):** ✓ for the
-  curl-verifiable parts. `beforeinstallprompt` (#24) requires
-  Android Chrome — deferred to founder.
-- **Offline behavior (26-28):** Deferred to interactive
-  verification — `/offline` and `/sw.js` confirmed to serve;
-  actual offline-toggle reload behavior is browser-only.
+  curl-verifiable parts (#22, #25 verified). `sw_controller`
+  non-null (#23) and `beforeinstallprompt` (#24) deferred to
+  the interactive verification packet.
+- **Offline behavior (26-28):** Deferred to the interactive
+  verification packet — `/offline` and `/sw.js` confirmed to
+  serve HTTP 200; actual offline-toggle reload behavior is
+  browser-only and is the second half of
+  `PWA-INTERACTIVE-VERIFY.md`.
 - **Quality gates (29-31):** ✓ — type-check / build /
   lint:strict all exit 0; lockfile unchanged.
-- **Branch protection (32-35):** Pending push + PR open.
+- **Branch protection (32-35):** ✓ — PR #4 opened from
+  `feature/phase-4-2-pwa-foundation`, CI green
+  (`mergeStateStatus = CLEAN`). Rebase + merge happens after
+  interactive verification clears.
 - **Documentation (36-39):** ✓ — `pwa-audit.md` exists with
   required shape; `README.md`, `checklists/README.md`,
   `production-readiness.md` all link it.
+  `PWA-INTERACTIVE-VERIFY.md` added as a copy-paste DevTools
+  console packet so the founder can run runtime checks in one
+  paste.
 - **Scope discipline (40-45):** ✓ — no new deps, no CI yaml,
   no admin/operator/lib/types/migrations touched, no push
   notifications, no custom install prompt UI.
@@ -1616,9 +1685,12 @@ Cross-checked against `CLAUDE-TASK.md` iteration 3:
 
 None of these are blockers for accepting Phase 4.2 implementation:
 
-1. **Spec acceptance #7 typo (9 → 8).** Worth a one-character
-   edit on `CLAUDE-TASK.md` if you want strict alignment between
-   spec and implementation.
+1. **`PWA-INTERACTIVE-VERIFY.md` location.** Currently at
+   `aeris/docs/PWA-INTERACTIVE-VERIFY.md` (alongside
+   `CLAUDE-TASK.md` and `CLAUDE-WORK-LOG.md`). Could
+   alternatively live under `aeris/docs/checklists/` next to
+   `pwa-audit.md`. Recommendation: keep at top-level — it's a
+   one-shot packet, not a recurring checklist.
 
 2. **Designer placeholder iteration.** The current placeholder
    ("A" in serif on navy) is functional but utilitarian. A
@@ -1626,12 +1698,13 @@ None of these are blockers for accepting Phase 4.2 implementation:
    a separate work item. Want a Phase 4.2.1 spec for that, or
    defer until a designer is engaged?
 
-3. **PWA audit on production.** Founder runs `pwa-audit.md` on
-   `aeris-flax.vercel.app` after merge to confirm the
-   DevTools-dependent steps (SW activation,
-   `beforeinstallprompt`, Cache Storage, offline reload). Want
-   a one-line confirmation in this work-log when they're done,
-   or treat their checklist completion as the sign-off itself?
+3. **Should the Founder's interactive-verify JSON be saved
+   long-term?** Today the work log has a fill-in block. Could
+   alternatively store one snapshot per PR in a dedicated file
+   (`docs/audits/<pr>-pwa-verify.json`) for traceability.
+   Recommendation: keep inline in this work log — one-shot
+   evidence is enough; the audit pattern is in `pwa-audit.md`
+   for recurrence.
 
 4. **Phase 5 / 4.1 / 3.6 readiness.** Carries over; nothing
    changed.
