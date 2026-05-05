@@ -1965,3 +1965,320 @@ Phase 4.2.1 (designed icon, custom install prompt), Phase 4.1
 (multi-city editor + English variant), Phase 5 (operator
 marketplace), or Phase 3.6 (Sentry decision).
 
+---
+
+## Phase 4 — Production Activation (2026-05-05)
+
+### Status
+
+**ACTIVATED.** Phase 4 (Minimal Operator Portal) is live and
+end-to-end verified on production. The migration is applied to
+the production Supabase project, the dispatch + offer + accept
+flow was executed against `https://aeris-flax.vercel.app/` with
+real RPCs, and all SQL post-conditions match expectation.
+
+This entry is the closure record for the production-activation
+session. No code changed; this is operational documentation
+plus discovered findings.
+
+### Pre-flight (local)
+
+Run from `D:\Plan\` on Windows against `main` HEAD `13fcf89`.
+
+| command | exit | notes |
+|---|---|---|
+| `npm --prefix aeris ci` | 0 | 750 packages in ~4 min. 9 npm-audit findings (2 low / 1 moderate / 6 high) tracked in `docs/security/npm-audit-triage.md`; not a build blocker. |
+| `npm --prefix aeris run type-check` | 0 | `tsc --noEmit` clean. |
+| `npm --prefix aeris run build` | 0 | Route table matches expected: admin/operator routes `ƒ Dynamic`, `/`, `/_not-found`, `/manifest.webmanifest`, `/offline`, `/request` `○ Static`. |
+| `npm --prefix aeris run lint:strict` | 0 | "✔ No ESLint warnings or errors". |
+
+CI on `13fcf89`: [run 25358565729](https://github.com/alharbib902-del/plan/actions/runs/25358565729)
+SUCCESS. Local results match CI; no drift.
+
+### Step 3 — Snapshot (skipped)
+
+Free-plan Supabase projects do not include scheduled backups.
+A row-count probe before the migration confirmed the production
+database was empty (`lead_inquiries=0, trip_requests=0,
+bookings=0`), so the data-loss risk of running the migration
+without a snapshot was zero. An inverse rollback SQL was
+prepared and handed to the founder as the emergency parachute.
+The rollback covers every operation in the forward migration:
+DROP the 3 RPCs, DROP `phase4_operator_offers` cascade, DROP
+the 7 added `trip_requests` columns, DROP the identity check
+constraint, restore `client_id` NOT NULL, DROP `lead_inquiries.
+converted_at`. All wrapped in a single transaction with
+`IF EXISTS` guards.
+
+### Step 4 — Migration applied
+
+`aeris/supabase/migrations/20260504000003_phase_4_operator_portal.sql`
+was pasted into Supabase SQL Editor on the production project
+and ran cleanly with no errors. SQL Editor reported "Success.
+No rows returned" — expected, since the file is pure DDL.
+
+### Step 5 — Migration verification (5 SQL probes)
+
+All five probes passed against the production DB.
+
+#### 5.1 — `trip_requests` shape
+
+8 columns present with correct nullability:
+
+| column | type | nullable |
+|---|---|---|
+| `client_id` | uuid | YES (NOT NULL was dropped) |
+| `customer_name` | character varying | YES |
+| `customer_phone` | character varying | YES |
+| `customer_source` | character varying | YES |
+| `dispatch_expires_at` | timestamp with time zone | YES |
+| `dispatch_nonce` | text | YES |
+| `dispatch_target_phone` | character varying | YES |
+| `dispatched_at` | timestamp with time zone | YES |
+
+#### 5.2 — Identity check constraint
+
+`trip_requests_identity_check` present with definition
+`CHECK (((client_id IS NOT NULL) OR ((customer_name IS NOT NULL) AND (customer_phone IS NOT NULL))))`.
+
+#### 5.3 — `lead_inquiries.converted_at` + `phase4_operator_offers` table
+
+- `lead_inquiries.converted_at` → `timestamp with time zone`,
+  nullable.
+- `phase4_operator_offers.relrowsecurity = true`.
+- `phase4_operator_offers.policy_count = 0` (deny-all RLS;
+  service role only).
+- 3 indexes present: `phase4_operator_offers_pkey`,
+  `idx_phase4_offers_status`, `idx_phase4_offers_trip`.
+
+#### 5.4 — RPCs SECURITY DEFINER + pinned `search_path`
+
+All 3 functions present, each with
+`prosecdef = true (SECURITY DEFINER)` and `proconfig` containing
+`search_path=public, pg_temp` (anti-hijacking pin):
+
+- `accept_phase4_offer`
+- `promote_lead_to_trip_request`
+- `submit_phase4_operator_offer`
+
+#### 5.5 — RPC EXECUTE privileges (P1 fix from prior live round)
+
+9 rows from `has_function_privilege()` cross-product — every
+row matches expected:
+
+- `service_role` → `can_execute = true` for all 3 functions.
+- `anon` → `can_execute = false` for all 3 functions.
+- `authenticated` → `can_execute = false` for all 3 functions.
+
+The Supabase `REVOKE ... FROM PUBLIC, anon, authenticated`
+defense-in-depth is correctly applied on production. P1 fix
+holds.
+
+### Step 6 — `OPERATOR_TOKEN_SECRET` generation
+
+A fresh 64-char hex value was generated locally with
+`openssl rand -hex 32` and saved by the founder to
+`D:\secrets\aeris-operator-token-2026-05-05.txt` (outside the
+repo, outside any cloud sync). However, an existing
+`OPERATOR_TOKEN_SECRET` was already present in Vercel from a
+prior session (added 9 hours before this activation); the
+freshly-generated value is therefore an unused backup. The
+existing Vercel value is what the production deployment
+actually verifies HMAC tokens against — and as the e2e in
+step 10 below demonstrates, that secret is correct.
+
+### Step 7 — `SUPABASE_SERVICE_ROLE_KEY` rotation: **DEFERRED**
+
+The founder elected to defer rotation in this session. The
+legacy `service_role` JWT shared in chat earlier therefore
+remains valid and is still in use by the production deployment.
+
+A new finding surfaced here: Supabase's JWT Keys page shows the
+project was auto-migrated 14 hours ago from `Legacy HS256
+(Shared Secret)` to `ECC (P-256)` for new token signing. The
+legacy HS256 key is still present under "Previously used keys"
+because Supabase keeps it active for verification of any
+pre-rotation tokens. Until that previous key is explicitly
+revoked, the leaked legacy `service_role` JWT continues to be
+honored.
+
+Two clean rotation paths are available when the founder is
+ready (both can be done in a separate operational session — no
+code change required):
+
+1. **Legacy path**: rotate JWT secret again in JWT Keys, then
+   capture the new `service_role` JWT from the legacy tab and
+   update Vercel's `SUPABASE_SERVICE_ROLE_KEY`. Same env name,
+   new value.
+2. **Modern path**: switch Vercel's `SUPABASE_SERVICE_ROLE_KEY`
+   to the existing `sb_secret_*` Secret API key already
+   auto-created during the ECC migration (visible in the new
+   "Publishable and secret API keys" tab), then revoke the
+   "Previous Key" (HS256) so the leaked legacy JWT becomes
+   invalid.
+
+This is captured in the carry-over list at the bottom of this
+section.
+
+### Step 8 — Vercel env state (no redeploy needed)
+
+`OPERATOR_TOKEN_SECRET` is set in Production + Preview scope on
+the Vercel project, marked Sensitive, added 9 hours before this
+session. The current production deployment `EtCXJtb7k` for
+commit `13fcf89` was built 1 hour before this session — i.e.
+*after* the env var was added — so it picks up the env var at
+runtime. No redeploy was required to activate Phase 4. Step 10
+(real e2e) confirmed this empirically.
+
+### Step 10 — End-to-end on production (the moment of truth)
+
+Two browser windows, both on `aeris-flax.vercel.app`:
+- **Window A**: admin signed into `/admin/leads`.
+- **Window B**: fresh Chrome incognito session (no admin
+  cookie) for the operator role.
+
+Sequence executed:
+
+1. **Lead created via the public form** (`/request`). Resulting
+   lead `AER-2605056372` appeared at the top of `/admin/leads`
+   with status "جديد".
+2. **Lead promoted** via the `/admin/leads/<id>` "تحويل إلى
+   طلب رحلة" panel: cabin = متوسطة, no special requests.
+   Browser redirected to `/admin/trips/AER-260505F3B3` showing
+   status "بانتظار الإرسال". Customer source = `lead`,
+   `client_id` is NULL (guest), customer name and phone
+   populated. Source lead status flipped to "تحوّل لحجز"
+   (`converted`) with `converted_at` set.
+3. **Trip dispatched**: from the trip detail page's "إرسال
+   للمشغّل" panel, founder entered E.164 phone and clicked the
+   button. The panel revealed copy-able operator URL +
+   WhatsApp deep link, plus expiry timestamp `2026/05/08
+   9:09 ص` (~72 h). Trip status flipped to "أُرسل للمشغّل".
+4. **Operator URL opened in Window B**: the URL was originally
+   prefixed with `https://aeris.sa/...` because
+   `NEXT_PUBLIC_SITE_URL` is configured to that value, but the
+   `aeris.sa` domain currently fails to resolve in DNS
+   (`DNS_PROBE_FINISHED_NXDOMAIN`). Replacing the host part
+   with `aeris-flax.vercel.app` (HMAC token unaffected — host
+   is not part of the signature) loaded the operator portal
+   correctly: AERIS branding, RTL Arabic, trip summary, and
+   **customer name + phone deliberately absent** (privacy
+   preserved as designed).
+5. **Operator submitted offer**: free-text form, total price
+   `45000` SAR, departure ETA `2026-05-10 10:00`, validity
+   `24` hours. Green success panel "تم استلام عرضك" rendered.
+   Trip status auto-promoted to "وصل عرض" via the RPC's
+   in-transaction status branch.
+6. **Admin accepted offer**: clicked "قبول العرض" on the
+   single offer card; confirmation dialog accepted. The card's
+   badge flipped to "مقبول", the trip status badge flipped to
+   "محجوز", and the dispatch panel disabled re-dispatch with
+   "هذه الرحلة محجوزة … ولا يمكن إعادة إرسالها".
+
+#### Step 10 — final SQL post-conditions
+
+Joined query against the booked trip + accepted offer + source
+lead. Every column matches expected:
+
+| column | value |
+|---|---|
+| trip | `AER-260505F3B3` |
+| trip_status | `booked` |
+| customer_source | `lead` |
+| guest (client_id IS NULL) | `true` |
+| offer_status | `accepted` |
+| total_price_sar | `45000.00` |
+| decided (decided_at IS NOT NULL) | `true` |
+| lead_status | `converted` |
+| lead_converted (converted_at IS NOT NULL) | `true` |
+
+All three Phase 4 RPCs (`promote_lead_to_trip_request`,
+`submit_phase4_operator_offer`, `accept_phase4_offer`) execute
+correctly on production with the deployed `OPERATOR_TOKEN_SECRET`
+and the production database.
+
+### New findings (from this activation)
+
+These were discovered during the activation but are not Phase 4
+defects — they are operational items for the founder to address
+in a separate session.
+
+1. **`aeris.sa` DNS not configured.**
+   `NEXT_PUBLIC_SITE_URL` in Vercel Production points to
+   `https://aeris.sa`, which does not currently resolve
+   (`DNS_PROBE_FINISHED_NXDOMAIN`). All dispatch URLs generated
+   for operators today therefore point to a dead host and
+   require manual host-swap to be opened. The fix is to
+   configure `aeris.sa` (and ideally `www.aeris.sa`) under the
+   Vercel project's Domains tab and update DNS at the registrar
+   to point at Vercel's nameservers (or A/AAAA records).
+2. **Supabase JWT key was auto-migrated to ECC P-256 ~14 h
+   before this session.** The legacy HS256 key is in the
+   "Previously used keys" set, which means any token previously
+   signed under HS256 — including the legacy `service_role`
+   JWT shared in chat in an earlier session — is still valid
+   for verification. See "Step 7" above for the two
+   remediation paths.
+3. **Test data lives on production.** This activation seeded:
+   - Lead `AER-2605056372` (status `converted`).
+   - Trip `AER-260505F3B3` (status `booked`).
+   - One accepted operator offer for `45000` SAR.
+
+   All three rows are real production data even though the
+   intent was a smoke test. Cleanup is not strictly required —
+   the trip is for `2026-05-10 جدة → الرياض` and would
+   naturally age out of any active list — but a clean prod
+   start is preferable. A targeted SQL cleanup is a one-liner;
+   the founder may run it at their convenience.
+
+### Resolved from prior carry-over (Phase 4.2 closure)
+
+These items were carried over from the Phase 4.2 closure entry
+(`Phase 4.2 — PWA Foundation implementation` / `Merge +
+production deploy` section above) and are now resolved by this
+activation:
+
+- ✓ Apply Phase 4 migration to production Supabase.
+- ✓ `OPERATOR_TOKEN_SECRET` set in Vercel Production env vars
+  (was already done 9 h before this session; verified working
+  via the e2e in Step 10).
+- ✓ Run real Phase 4 end-to-end on production (Step 10 above).
+
+### Open carry-over for the founder (post-activation)
+
+In priority order:
+
+1. **Rotate `SUPABASE_SERVICE_ROLE_KEY` and revoke the legacy
+   HS256 JWT key.** The leaked-in-chat JWT remains valid until
+   one of the two paths in Step 7 is executed. Off-peak,
+   single-session work; ~10 minutes including verification.
+2. **Configure DNS for `aeris.sa`.** Point the apex (and `www`)
+   at Vercel via the project's Domains tab, then verify the
+   operator dispatch URL resolves end-to-end without host
+   swap.
+3. **Clean up the production smoke-test artifacts** if a clean
+   prod is preferred:
+
+   ```sql
+   BEGIN;
+   DELETE FROM phase4_operator_offers
+    WHERE trip_request_id IN (
+      SELECT id FROM trip_requests WHERE request_number = 'AER-260505F3B3'
+    );
+   DELETE FROM trip_requests WHERE request_number = 'AER-260505F3B3';
+   DELETE FROM lead_inquiries  WHERE request_number = 'AER-2605056372';
+   COMMIT;
+   ```
+
+4. **(Open from earlier phases, unchanged)** Phase 5 (Trip
+   Distribution Engine), Phase 4.1 (multi-city editor +
+   English variant), Phase 3.6 (Sentry decision), Phase 4.2.1
+   (designed icon, custom install prompt).
+
+### Closing
+
+Phase 4 is **active on production**. No new code shipped; this
+session was operational only. The docs-only PR carrying this
+entry is a record-keeping commit; rebase + merge after Codex
+review.
+
