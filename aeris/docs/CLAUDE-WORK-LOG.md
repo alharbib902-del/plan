@@ -1971,15 +1971,28 @@ marketplace), or Phase 3.6 (Sentry decision).
 
 ### Status
 
-**ACTIVATED.** Phase 4 (Minimal Operator Portal) is live and
-end-to-end verified on production. The migration is applied to
+**Functionally activated; security activation incomplete until
+`SUPABASE_SERVICE_ROLE_KEY` rotation and legacy HS256 revocation
+are completed.**
+
+Phase 4 (Minimal Operator Portal) is **functionally** live and
+end-to-end verified on production: the migration is applied to
 the production Supabase project, the dispatch + offer + accept
 flow was executed against `https://aeris-flax.vercel.app/` with
 real RPCs, and all SQL post-conditions match expectation.
 
-This entry is the closure record for the production-activation
-session. No code changed; this is operational documentation
-plus discovered findings.
+**However, security activation is NOT complete.** The legacy
+`service_role` JWT shared in chat in an earlier session remains
+valid and is still in use by the production deployment. Until
+`SUPABASE_SERVICE_ROLE_KEY` is rotated **and** the legacy HS256
+JWT signing key is revoked (see "P0 — Security activation
+blockers" below), production runs under a known-leaked
+high-privilege credential. **Phase 4 must NOT be considered
+fully activated until both items clear.**
+
+This entry records the functional activation. No code changed;
+this is operational documentation plus discovered findings,
+including the open security blockers.
 
 ### Pre-flight (local)
 
@@ -2244,19 +2257,42 @@ activation:
   via the e2e in Step 10).
 - ✓ Run real Phase 4 end-to-end on production (Step 10 above).
 
-### Open carry-over for the founder (post-activation)
+### P0 — Security activation blockers (must clear before Phase 4 is fully activated)
+
+These items **block** the security half of Phase 4 production
+activation. Until both clear, the production deployment runs
+under a known-leaked high-privilege credential and Phase 4
+cannot be considered fully activated, regardless of the
+functional flow being green. Do **not** treat the rest of the
+list below as equivalent — these two are the gate.
+
+1. **Rotate `SUPABASE_SERVICE_ROLE_KEY`.** Replace the leaked
+   legacy JWT in Vercel Production env vars with a new value.
+   Either path from "Step 7" above is acceptable: legacy JWT
+   re-rotation, or move to the new `sb_secret_*` Secret API
+   key system (the `default` secret already exists in the
+   project and is unused).
+2. **Revoke the legacy HS256 JWT signing key.** Even after
+   Vercel stops using the leaked JWT, that JWT remains valid
+   for verification by Supabase as long as the HS256 key is
+   in "Previously used keys". Revoke it (Supabase Dashboard →
+   JWT Keys → "Previous Key" actions menu) so the leaked
+   legacy JWT becomes uniformly invalid.
+
+Both items together are off-peak, single-session work; ~10
+minutes total including verification. Once both clear, update
+the **Status** block at the top of this entry to "Fully
+activated" and move both lines to a Resolved subsection.
+
+### Open carry-over for the founder (operational, non-blocking)
 
 In priority order:
 
-1. **Rotate `SUPABASE_SERVICE_ROLE_KEY` and revoke the legacy
-   HS256 JWT key.** The leaked-in-chat JWT remains valid until
-   one of the two paths in Step 7 is executed. Off-peak,
-   single-session work; ~10 minutes including verification.
-2. **Configure DNS for `aeris.sa`.** Point the apex (and `www`)
+1. **Configure DNS for `aeris.sa`.** Point the apex (and `www`)
    at Vercel via the project's Domains tab, then verify the
    operator dispatch URL resolves end-to-end without host
    swap.
-3. **Clean up the production smoke-test artifacts** if a clean
+2. **Clean up the production smoke-test artifacts** if a clean
    prod is preferred:
 
    ```sql
@@ -2270,15 +2306,23 @@ In priority order:
    COMMIT;
    ```
 
-4. **(Open from earlier phases, unchanged)** Phase 5 (Trip
+3. **(Open from earlier phases, unchanged)** Phase 5 (Trip
    Distribution Engine), Phase 4.1 (multi-city editor +
    English variant), Phase 3.6 (Sentry decision), Phase 4.2.1
    (designed icon, custom install prompt).
 
 ### Closing
 
-Phase 4 is **active on production**. No new code shipped; this
-session was operational only. The docs-only PR carrying this
-entry is a record-keeping commit; rebase + merge after Codex
-review.
+Phase 4 is **functionally active on production**, but
+**security activation remains open** until both P0 blockers
+above clear. No new code shipped; this session was operational
+only. The docs-only PR carrying this entry is a record-keeping
+commit, **not a closure declaration** — it records functional
+activation while explicitly leaving security activation as
+open work. Rebase + merge after Codex review.
+
+Update the **Status** block at the top of this entry to "Fully
+activated" only after both P0 security items have been
+verified clear and the leaked legacy `service_role` JWT is
+demonstrably no longer accepted by Supabase.
 
