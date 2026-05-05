@@ -24,8 +24,10 @@ import {
   acceptOfferRpc,
   openPhase5DispatchRoundRpc,
 } from '@/lib/supabase/queries/phase5-offers';
-import { normalizeWhatsAppPhone } from '@/lib/utils/format';
-import { AERIS_CONTACT } from '@/lib/config/contact';
+import {
+  buildOperatorUrl,
+  buildOperatorWhatsAppLink,
+} from '@/lib/operator/links';
 import type {
   OfferSource,
   Phase5DispatchTargetInput,
@@ -190,22 +192,6 @@ export async function dispatchTrip(formData: FormData): Promise<DispatchResult> 
     whatsapp_link: whatsappLink,
     expires_at: expiresAtIso,
   };
-}
-
-function buildOperatorWhatsAppLink(
-  operatorPhoneE164: string,
-  operatorUrl: string
-): string {
-  const digits = normalizeWhatsAppPhone(operatorPhoneE164);
-  const message = [
-    'مرحباً،',
-    'هذه دعوة لتقديم عرض على رحلة خاصة عبر منصة Aeris.',
-    '',
-    `الرابط: ${operatorUrl}`,
-    '',
-    `للاستفسار: wa.me/${AERIS_CONTACT.whatsappNumber}`,
-  ].join('\n');
-  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
 
 export type AcceptResult =
@@ -403,11 +389,6 @@ export async function dispatchTripV2(formData: FormData): Promise<DispatchTripV2
   };
 }
 
-function buildOperatorUrl(token: string): string {
-  const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, '') || 'https://aeris.sa';
-  return `${siteUrl}/operator/offer/${token}`;
-}
 
 export type AcceptOfferV2Result =
   | { ok: true; trip_request_id: string }
