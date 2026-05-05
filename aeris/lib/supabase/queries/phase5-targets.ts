@@ -56,6 +56,36 @@ export async function listCurrentRoundTargets(
 }
 
 /**
+ * Read a single target row by id. Used by the operator portal
+ * v=2 path: after `verifyOperatorToken` returns version=2, the
+ * page reads the target row referenced by the token's
+ * `dispatch_target_id` to re-verify state at request time
+ * (nonce match, expiry, status='pending', and that the target
+ * still belongs to the trip's current round). The Phase 5
+ * submit RPC re-checks the same fields under FOR UPDATE on
+ * submit, so this server-side read is necessary but never
+ * sufficient — it just lets the page show ExpiredLink quickly
+ * instead of rendering a form for a stale token.
+ */
+export async function getTargetById(
+  id: string
+): Promise<TripDispatchTargetRow | null> {
+  noStore();
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from(TABLE)
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[phase5-targets] getTargetById failed', error);
+    throw new Error(`getTargetById failed: ${error.message}`);
+  }
+  return (data as TripDispatchTargetRow | null) ?? null;
+}
+
+/**
  * Read every target on a trip across ALL rounds (current + closed).
  * Used by the (future) audit / history view. NOT used by the live
  * dispatch panel — that one only shows current-round pending
