@@ -646,11 +646,145 @@ Run on a SEPARATE trip (not the booked one above).
 If anything in steps 11–34 surfaces a regression you can't
 fix immediately, roll back by **unsetting `PHASE5_ADMIN_UI`**
 (or setting it to anything other than the literal `true`) in
-Vercel and triggering a redeploy. The Phase 4 path comes back
-online with no DB rollback required — the Phase 5 schema and
-RPCs stay in place but go unused. Any in-flight v=2 tokens
-become useless (the page goes back to the v=1-only render
-path), but no data is lost.
+Vercel and triggering a redeploy.
+
+**Important — what the env unset DOES and does NOT do.** The
+`PHASE5_ADMIN_UI` env var is read **only** by the admin trip
+detail page (`/admin/trips/[id]`). It controls which view that
+page renders (Phase 5 multi-row vs Phase 4 single-row). It has
+**no effect** on the operator portal or on the Server Actions:
+
+- ✅ The admin trip page reverts to the Phase 4 view. Multi-row
+  dispatch and the unified comparison view disappear from the
+  admin's screen.
+- ✅ `dispatchTripV2` is no longer reachable through the UI
+  (the multi-row form is gone), so no NEW v=2 dispatches will
+  happen.
+- ❌ Any v=2 operator URLs that **were already issued before
+  the rollback** remain valid. The operator portal's v=2
+  branch (PR #11) is wired regardless of the env var, so an
+  operator opening one of those URLs will still see the offer
+  form and can still submit. The submission lands in
+  `phase5_operator_offers` via `submit_phase5_operator_offer`
+  exactly as before.
+- ❌ Those landed Phase 5 offers are then **invisible** to
+  the rolled-back admin (the Phase 4 view's offer list reads
+  only `phase4_operator_offers` via `listOffersByTrip`). They
+  exist in the DB but the admin won't see or accept them in
+  the UI.
+
+This is not a data-loss bug — the offers persist correctly —
+but it IS a "silent split-brain": operators may submit, the
+trip state reflects their offers in the DB (target rows flip
+to `submitted`, trip status promotes to `offered`), but the
+admin can't act on them.
+
+### When rollback is safe without an SQL rescue
+
+- The flip happened in step 9, then a regression surfaced
+  immediately in step 11 (the multi-row UI didn't render).
+  No v=2 URLs ever reached an operator → nothing to rescue.
+- Or: every v=2 URL you generated has already been submitted
+  AND accepted in step 26. The accept already cancelled the
+  remaining pending targets and closed the round. Nothing
+  pending → nothing to rescue.
+
+In those cases: `unset env → redeploy → Phase 4 baseline`. No
+DB action required.
+
+### When rollback REQUIRES an SQL rescue
+
+If you flipped the gate, generated v=2 URLs, sent them to
+operators, and now want to roll back **before** the flow
+reaches a clean accept, you must close out the in-flight v=2
+state at the SQL level. Otherwise operators may submit while
+admin sees Phase 4 only.
+
+#### Step 1 — see what's in flight
+
+In Supabase SQL Editor:
+
+```sql
+-- Open dispatch rounds (still allowing operator submissions)
+SELECT r.id AS round_id,
+       r.trip_request_id,
+       r.opened_at,
+       count(*) FILTER (WHERE t.status = 'pending') AS pending_targets
+  FROM trip_dispatch_rounds r
+  LEFT JOIN trip_dispatch_targets t ON t.dispatch_round_id = r.id
+ WHERE r.status = 'open'
+ GROUP BY r.id
+ ORDER BY r.opened_at DESC;
+
+-- Pending Phase 5 offers (already submitted, awaiting admin
+-- decision; rollback should NOT delete these — they're real
+-- operator submissions)
+SELECT trip_request_id, count(*)
+  FROM phase5_operator_offers
+ WHERE status = 'pending'
+ GROUP BY trip_request_id;
+```
+
+If both queries return **zero rows**, no rescue needed — the
+gate-only revert above is fine.
+
+#### Step 2 — close out in-flight v=2 dispatches (SAFE rescue)
+
+This block cancels still-pending v=2 targets and closes their
+open rounds, so any in-flight v=2 URL submitted from now on
+will hit the RPC's `target_not_pending` / `token_stale` path
+and render the friendly expired page. **It does NOT delete
+any submitted offers** — those are real operator data and
+must be preserved for audit.
+
+```sql
+BEGIN;
+
+-- Cancel pending Phase 5 targets (operators with these
+-- URLs will see the expired-link page on next click).
+UPDATE trip_dispatch_targets
+   SET status = 'cancelled'
+ WHERE status = 'pending';
+
+-- Close open rounds with an explicit rollback marker so the
+-- audit trail shows why.
+UPDATE trip_dispatch_rounds
+   SET status = 'closed',
+       closed_at = NOW(),
+       closed_reason = 'rollback'
+ WHERE status = 'open';
+
+-- (Optional) inspect what changed before COMMIT.
+-- SELECT count(*) AS now_cancelled FROM trip_dispatch_targets WHERE status = 'cancelled';
+-- SELECT count(*) AS now_closed    FROM trip_dispatch_rounds  WHERE status = 'closed';
+
+COMMIT;
+```
+
+After this commits, every v=2 link that was outstanding
+becomes useless on next click — the operator portal's v=2
+re-check (`target.status === 'pending'`) fails and renders
+ExpiredLink. Already-submitted Phase 5 offers stay in
+`phase5_operator_offers` exactly as they were; if the founder
+later wants to address them, flip the gate back ON
+temporarily and accept/cancel through the normal admin UI.
+
+#### Step 3 — only NOW unset the env
+
+Set `PHASE5_ADMIN_UI` to anything other than the literal
+`true` in Vercel and trigger a redeploy. The Phase 4 path
+takes over the admin UI; no further v=2 dispatches will be
+generated.
+
+### What rollback does NOT do (regardless of SQL rescue)
+
+- It does not drop the Phase 5 schema. The 3 new tables and
+  3 new RPCs stay in `public`. Re-flipping the gate later
+  picks up exactly where you left off.
+- It does not invalidate v=1 (Phase 4) tokens. Phase 4
+  dispatch + submit + accept paths keep working.
+- It does not touch `phase4_operator_offers` or any Phase 4
+  RPCs.
 
 > **Recap of what activation does NOT include.** Phase 5
 > activation is purely the admin + operator dispatch path.
