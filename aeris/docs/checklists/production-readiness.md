@@ -49,6 +49,11 @@ sub-list because "nothing changed there" — environment drift is real.
         the deploy does not touch Phase 4 surfaces and the previous
         run is < 7 days old, the spot-checks at steps 1-17 (promote
         + dispatch + submit + accept happy path) are sufficient.
+8b. [ ] [pwa-audit.md](pwa-audit.md) — run if this deploy touches
+        any PWA surface (`app/manifest.ts`, `public/sw.js`,
+        `public/icons/**`, `app/offline/**`, `components/pwa/**`,
+        `app/layout.tsx`). Quarterly otherwise. **No Lighthouse
+        score involved** — concrete `curl` + DevTools checks only.
 9. [ ] [resend-email-test.md](resend-email-test.md) — at least the
        valid-key path verified after this build is on preview.
 10. [ ] [env-vars-vercel-supabase.md](env-vars-vercel-supabase.md) —

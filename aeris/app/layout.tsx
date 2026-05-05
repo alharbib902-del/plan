@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { ServiceWorkerRegister } from '@/components/pwa/sw-register';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -25,6 +26,22 @@ export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL || 'https://aeris.sa'
   ),
+  // PWA icons. The manifest is auto-linked by Next.js from app/manifest.ts.
+  icons: {
+    icon: [
+      { url: '/icons/favicon-32.png', type: 'image/png', sizes: '32x32' },
+      { url: '/icons/favicon-16.png', type: 'image/png', sizes: '16x16' },
+    ],
+    apple: '/icons/apple-touch-icon.png',
+  },
+  // Apple PWA + format-detection. theme-color must NOT be set here —
+  // it lives in `viewport.themeColor` below per Next.js 14 conventions.
+  other: {
+    'apple-mobile-web-app-capable': 'yes',
+    'apple-mobile-web-app-status-bar-style': 'black-translucent',
+    'apple-mobile-web-app-title': 'Aeris',
+    'format-detection': 'telephone=no',
+  },
   openGraph: {
     type: 'website',
     locale: 'ar_SA',
@@ -55,7 +72,9 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
-  themeColor: '#0A1628',
+  // Phase 4.2: gold to match `manifest.theme_color`. This tints the
+  // mobile browser address bar and the PWA install banner accent.
+  themeColor: '#C9A961',
 };
 
 export default function RootLayout({
@@ -67,6 +86,7 @@ export default function RootLayout({
     <html lang="ar" dir="rtl" className="h-full">
       <body className="min-h-screen bg-navy text-ink antialiased">
         {children}
+        <ServiceWorkerRegister />
       </body>
     </html>
   );

@@ -1288,3 +1288,356 @@ CI on the new commit will be linked once it runs.
 Stopped after the round-1 fix. Awaiting the founder's re-run of
 Step 3.2 against the patched DB. Did not run Step 4 yet.
 
+---
+
+## Phase 4.2 — PWA Foundation implementation (2026-05-05)
+
+### Status
+
+Implemented and pushed to a feature branch. CI status pending
+push. **Awaiting Codex review and merge.**
+
+- Spec: `docs/CLAUDE-TASK.md` iteration 3 (Codex-accepted
+  100/100).
+- Branch: `feature/phase-4-2-pwa-foundation`.
+- PR: pending push.
+- Phase 4 was merged (commit `502de21`) and deployed to Vercel
+  at `https://aeris-flax.vercel.app/` before Phase 4.2 work
+  began.
+
+### What changed
+
+13 files added or edited. No new dependencies, no CI workflow
+change, no admin/operator/lib/types/migrations touched.
+
+#### Added (10 files)
+
+- `aeris/app/manifest.ts` — Next.js native manifest route.
+  Exports `MetadataRoute.Manifest` with name (Arabic), short_name,
+  description, `start_url: '/'`, `display: 'standalone'`,
+  `theme_color: '#C9A961'`, `background_color: '#0A1628'`,
+  `lang: 'ar'`, `dir: 'rtl'`, and four icons (192/512 ×
+  any/maskable). Auto-served at `/manifest.webmanifest`.
+- `aeris/public/sw.js` — hand-rolled service worker (~125
+  lines). `CACHE_VERSION = 'aeris-v1'`. `PRECACHE_URLS = ['/',
+  '/offline']`. `shouldBypassCache(pathname)` function (NOT
+  regex) explicitly checks `pathname === '/admin' ||
+  pathname.startsWith('/admin/')` for each of admin / operator /
+  api. Static-asset cache-first; HTML pages network-first with
+  `/offline` final fallback. `skipWaiting()` + `clients.claim()`.
+- `aeris/components/pwa/sw-register.tsx` — client component.
+  Registers SW production-only, after `load` event so install
+  doesn't block first paint. Failures swallowed with
+  `console.error`.
+- `aeris/components/pwa/offline-card.tsx` — client component
+  containing the "إعادة المحاولة" button (needs
+  `window.location.reload()`).
+- `aeris/app/offline/page.tsx` — server component that wraps
+  the `<OfflineCard />`. Static, no data fetches. Precached by
+  the SW so always available offline.
+- `aeris/public/icons/icon-source.svg` — single source of
+  truth for the placeholder icon (gold "A" on full-bleed navy
+  canvas, `viewBox="0 0 512 512"`). Designer can iterate on this
+  file alone, then re-run `npm run generate:icons`.
+- `aeris/public/icons/icon-192.png` (2,891 bytes)
+- `aeris/public/icons/icon-512.png` (9,785 bytes)
+- `aeris/public/icons/icon-maskable-192.png` (2,173 bytes —
+  60% inner content scale, navy-padded for adaptive launchers)
+- `aeris/public/icons/icon-maskable-512.png` (6,964 bytes)
+- `aeris/public/icons/apple-touch-icon.png` (2,705 bytes,
+  180×180)
+- `aeris/public/icons/favicon-32.png` (486 bytes)
+- `aeris/public/icons/favicon-16.png` (277 bytes)
+- `aeris/scripts/generate-pwa-icons.mjs` — Node script using
+  `sharp` (already in deps). Renders the SVG into 5 standard
+  PNG sizes via `sharp.resize()`, plus 2 maskable variants by
+  compositing a 60%-scaled inner image onto a navy canvas.
+- `aeris/docs/checklists/pwa-audit.md` — manual installability
+  audit (Purpose / When to run / Steps 1-18 / Pass criteria /
+  If it fails). NO Lighthouse score involved; concrete `curl` +
+  DevTools checks only.
+
+#### Edited (4 files)
+
+- `aeris/app/layout.tsx`:
+  - `viewport.themeColor` changed from `'#0A1628'` (navy) to
+    `'#C9A961'` (gold) — matches `manifest.theme_color`.
+  - `metadata.icons` block added with favicon + apple-touch.
+  - `metadata.other` block added with apple-mobile-web-app-*
+    meta tags.
+  - `<ServiceWorkerRegister />` mounted near `</body>`.
+- `aeris/package.json`: added one new script:
+  `"generate:icons": "node scripts/generate-pwa-icons.mjs"`. **No
+  dependency changes.**
+- `aeris/docs/checklists/README.md`: index entry for
+  `pwa-audit.md`.
+- `aeris/docs/checklists/production-readiness.md`: new step 8b
+  for PWA audit (gated on touching PWA surfaces; quarterly
+  otherwise).
+- `aeris/README.md`: link to PWA audit + mention of the
+  icon-regeneration script.
+
+### Files NOT changed (scope discipline)
+
+- `.github/workflows/ci.yml` — frozen.
+- `aeris/scripts/preflight.ps1` — frozen.
+- `aeris/docs/security/npm-audit-triage.md` — frozen.
+- `aeris/docs/checklists/ci-pipeline.md` — frozen (Phase 3.5.1
+  artifact).
+- `aeris/docs/CLAUDE-TASK.md` — frozen (iteration 3 contract).
+- `aeris/docs/CODEX-REVIEW.md` — Codex's file.
+- `aeris/lib/`, `aeris/types/`, `aeris/supabase/migrations/`,
+  any admin / operator / Phase 4 file — not touched.
+- `aeris/.env.example` — no new env vars (PWA needs none).
+- All Phase 4 SQL functions, Server Actions, components,
+  validators, queries — frozen.
+
+### Open Question decisions taken during implementation
+
+The 8 open questions in `CLAUDE-TASK.md` iteration 3 had
+recommendations baked in. Implementation followed each:
+
+1. **Hand-rolled SW.** No `next-pwa` package added. SW is ~125
+   lines including comments; passes lint:strict cleanly because
+   it's served from `public/` (static, not part of the TS build).
+2. **Placeholder icon (gold "A" on navy).** SVG source designed
+   with `Playfair Display` (with serif fallbacks) at 400px font
+   size. Designer iterates on this file; script regenerates PNGs.
+3. **Maskable safe-area = 40% (60% inner scale).** Implemented
+   via `MASKABLE_INNER_SCALE = 0.6` in the generation script.
+4. **Admin/operator excluded from cache.**
+   `shouldBypassCache()` covers exact path AND any sub-path for
+   each of `/admin`, `/operator`, `/api`.
+5. **iOS splash screens deferred.** No `apple-touch-startup-image`
+   variants generated.
+6. **Theme color unified to gold.** `viewport.themeColor` and
+   `manifest.theme_color` both `#C9A961`. Verified by `curl`
+   match.
+7. **`skipWaiting()` + `clients.claim()` in SW.** New SW takes
+   over on next page load without "click to update" nag.
+8. **Offline page brand-only.** No admin login link.
+
+### Spec acceptance #7 — file count discrepancy
+
+Spec acceptance criterion #7 says "All 9 icon files exist under
+`aeris/public/icons/` and `aeris/public/`." Iteration 2 removed
+`favicon.ico` from scope but left the count `9`. Actual count
+implemented:
+
+- 7 PNG files in `public/icons/` (icon-192, icon-512,
+  icon-maskable-192, icon-maskable-512, apple-touch-icon,
+  favicon-32, favicon-16)
+- 1 SVG source in `public/icons/icon-source.svg`
+- **Total: 8 files**
+
+The implementation matches the file list in §1c (8 files); only
+the bare count in #7 is off by one. This is a spec-text error,
+not an implementation gap. Codex iteration 4 review can fix
+the `9 → 8` typo if desired; functional completeness is
+otherwise intact.
+
+### Quality gates
+
+Run from `aeris/` on the feature branch immediately before
+push:
+
+- `npm run generate:icons` → exit 0; 7 PNGs produced as listed
+  above with non-zero file sizes. Re-running produces identical
+  output (deterministic).
+- `npm run type-check` → exit 0; zero diagnostics.
+- `npm run build` → exit 0. Route table:
+  - `/` 183 B (96.1 kB) **○ Static**
+  - `/_not-found` 873 B (88.1 kB) **○ Static**
+  - `/admin/leads` 183 B (96.1 kB) **ƒ Dynamic**
+  - `/admin/leads/[id]` 3.44 kB (120 kB) **ƒ Dynamic**
+  - `/admin/login` 2.24 kB (89.5 kB) **ƒ Dynamic**
+  - `/admin/trips` 183 B (96.1 kB) **ƒ Dynamic**
+  - `/admin/trips/[id]` 3.54 kB (99.5 kB) **ƒ Dynamic**
+  - `/offline` 1.42 kB (88.7 kB) **○ Static** ← new
+  - `/operator/offer/[token]` 2.62 kB (119 kB) **ƒ Dynamic**
+  - `/request` 4.32 kB (108 kB) **○ Static**
+- `npm run lint:strict` → exit 0; "✔ No ESLint warnings or errors".
+- `npm audit --json` not re-run for this round; lockfile is
+  byte-identical to current `main` (no new deps).
+
+### Manual installability verification (curl-only on localhost:3050)
+
+Production server: `PORT=3050 npm run start`, then ran the
+verification commands from `CLAUDE-TASK.md` "Commands That Must
+Pass" → "Manual verification" block. The DevTools-dependent
+steps (SW activation, `beforeinstallprompt`, Cache Storage,
+offline reload) require an interactive browser session and are
+deferred to the founder's post-merge audit on the deployed
+Vercel URL — they cannot be observed from a non-interactive
+shell.
+
+#### Step 2 — rendered `<head>` PWA tags
+
+```bash
+curl -s http://localhost:3050/ \
+  | grep -oE '<(link|meta)[^>]*(theme-color|apple-touch-icon|apple-mobile-web|format-detection|rel="manifest"|rel="icon")[^>]*>'
+```
+
+Output (verbatim, all 9 expected tags present):
+
+```html
+<meta name="theme-color" content="#C9A961"/>
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Aeris"/>
+<meta name="format-detection" content="telephone=no"/>
+<link rel="icon" href="/icons/favicon-32.png" type="image/png" sizes="32x32"/>
+<link rel="icon" href="/icons/favicon-16.png" type="image/png" sizes="16x16"/>
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"/>
+```
+
+`theme-color` content `#C9A961` matches `manifest.theme_color`
+exactly (string-equal). Acceptance criterion #25 satisfied.
+
+#### Step 3 — manifest.webmanifest
+
+```bash
+curl -s http://localhost:3050/manifest.webmanifest
+```
+
+Output (formatted for readability):
+
+```json
+{
+  "name": "Aeris — الطيران الخاص الذكي",
+  "short_name": "Aeris",
+  "description": "منصة Aeris للطيران الخاص في المملكة العربية السعودية",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0A1628",
+  "theme_color": "#C9A961",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["travel", "business", "lifestyle"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+```
+
+All required Chrome installability fields present: `name`,
+`short_name`, `start_url`, `display: 'standalone'`, plus a
+192×192 AND a 512×512 PNG icon with `purpose: 'any'`. Acceptance
+criteria #1-#6 and #22 satisfied.
+
+#### Step 6 — asset HTTP probes
+
+```
+/offline                              → HTTP 200
+/sw.js                                → HTTP 200
+/icons/icon-192.png                   → HTTP 200
+/icons/icon-512.png                   → HTTP 200
+/icons/icon-maskable-192.png          → HTTP 200
+/icons/icon-maskable-512.png          → HTTP 200
+/icons/apple-touch-icon.png           → HTTP 200
+/icons/favicon-32.png                 → HTTP 200
+/icons/favicon-16.png                 → HTTP 200
+```
+
+All 7 icons + the offline page + the service-worker script
+served correctly.
+
+#### Steps deferred to founder
+
+- **Step 4 (DevTools → Application → Manifest no warnings)** —
+  requires interactive Chrome.
+- **Step 5 (`beforeinstallprompt` listener fires)** — requires
+  Android Chrome or DevTools Mobile preset.
+- **Step 6 (DevTools → Application → Cache Storage entries)** —
+  requires interactive Chrome after a real visit.
+- **Steps 7-10 (Offline toggle reload)** — interactive only.
+
+The `pwa-audit.md` checklist documents these for the founder
+to run on `aeris-flax.vercel.app` after merge + deploy.
+
+### Known Issues
+
+- **Spec acceptance #7 says "9 icon files"** — actual count is
+  8 after `favicon.ico` was removed in iteration 2 (7 PNGs + 1
+  SVG source). Implementation matches the §1c file list, not
+  the bare number in #7. Treat as a spec typo.
+
+- **Port-conflict friction during local verification** —
+  another project ("حسابات المبنى") was already serving on
+  `localhost:3000`. First attempt at `npm run start` silently
+  failed; curl was hitting the wrong project's manifest
+  ("حسابات المبنى" themed). Fixed by switching to `PORT=3050`.
+  Documented here so a future verifier knows to check `netstat`
+  before assuming the server bound. Not a code issue.
+
+- **DevTools-dependent verification steps** were not run in this
+  Claude session because the shell cannot drive Chrome. These
+  are explicitly deferred to the founder's post-merge audit per
+  the Required Claude Output of `CLAUDE-TASK.md` iteration 3.
+
+### Acceptance Criteria — Self-Audit
+
+Cross-checked against `CLAUDE-TASK.md` iteration 3:
+
+- **Manifest (1-6):** ✓ — verified by `curl
+  /manifest.webmanifest` against the JSON shape above.
+- **Icons (7-11):** ✓ except #7's "9" count (see Known Issues).
+  Other items: 7 PNGs exist with non-zero size; maskable
+  variants use 40% safe-area padding; `icon-source.svg` exists;
+  `npm run generate:icons` regenerates idempotently.
+- **Service worker (12-16):** ✓ for #12 (file exists, served
+  HTTP 200). #13-#16 require interactive verification (founder).
+- **Layout integration (17-21):** ✓ — verified by `curl`
+  output above. `<ServiceWorkerRegister />` mounted in
+  `app/layout.tsx`.
+- **Installability requirements (22-25):** ✓ for the
+  curl-verifiable parts. `beforeinstallprompt` (#24) requires
+  Android Chrome — deferred to founder.
+- **Offline behavior (26-28):** Deferred to interactive
+  verification — `/offline` and `/sw.js` confirmed to serve;
+  actual offline-toggle reload behavior is browser-only.
+- **Quality gates (29-31):** ✓ — type-check / build /
+  lint:strict all exit 0; lockfile unchanged.
+- **Branch protection (32-35):** Pending push + PR open.
+- **Documentation (36-39):** ✓ — `pwa-audit.md` exists with
+  required shape; `README.md`, `checklists/README.md`,
+  `production-readiness.md` all link it.
+- **Scope discipline (40-45):** ✓ — no new deps, no CI yaml,
+  no admin/operator/lib/types/migrations touched, no push
+  notifications, no custom install prompt UI.
+
+### Questions For Codex
+
+None of these are blockers for accepting Phase 4.2 implementation:
+
+1. **Spec acceptance #7 typo (9 → 8).** Worth a one-character
+   edit on `CLAUDE-TASK.md` if you want strict alignment between
+   spec and implementation.
+
+2. **Designer placeholder iteration.** The current placeholder
+   ("A" in serif on navy) is functional but utilitarian. A
+   proper designed icon (logo lock-up, tighter typography) is
+   a separate work item. Want a Phase 4.2.1 spec for that, or
+   defer until a designer is engaged?
+
+3. **PWA audit on production.** Founder runs `pwa-audit.md` on
+   `aeris-flax.vercel.app` after merge to confirm the
+   DevTools-dependent steps (SW activation,
+   `beforeinstallprompt`, Cache Storage, offline reload). Want
+   a one-line confirmation in this work-log when they're done,
+   or treat their checklist completion as the sign-off itself?
+
+4. **Phase 5 / 4.1 / 3.6 readiness.** Carries over; nothing
+   changed.
+
+Stopped after Phase 4.2 implementation. Did not start
+Phase 4.2.1 (designed icon, custom install prompt), Phase 4.1
+(multi-city editor + English variant), Phase 5 (operator
+marketplace), or Phase 3.6 (Sentry decision).
+
