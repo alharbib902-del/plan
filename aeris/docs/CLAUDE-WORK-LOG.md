@@ -2437,10 +2437,19 @@ all of:
    v=2 URLs render the friendly expired page).
 
 If any step fails, the runbook's "If Phase 5 fails" section
-gives the most-likely-cause diagnoses. Roll back at any time
-by unsetting `PHASE5_ADMIN_UI` and redeploying — no DB
-rollback required, the Phase 5 schema can stay in place
-unused.
+gives the most-likely-cause diagnoses. Rollback is gated by
+**what's in flight**: if the failure surfaces before any v=2
+operator URL has been sent (or every URL has already been
+accepted in step 26), unset `PHASE5_ADMIN_UI` + redeploy and
+the Phase 4 admin UI takes over with no DB action. **If v=2
+URLs are in flight, an env-only revert is unsafe** — the
+operator portal still accepts v=2 submissions while the
+admin UI no longer renders them, creating a silent
+split-brain where operators submit but admin can't see the
+offers. The runbook's "Reverting the gate" section spells
+out the SQL rescue (cancel pending targets, close open
+rounds with `closed_reason='rollback'`, preserve already-
+submitted offers) for that case.
 
 ### Quality gates (rolling, across the 5 PRs)
 
