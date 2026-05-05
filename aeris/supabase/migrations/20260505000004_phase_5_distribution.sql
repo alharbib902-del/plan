@@ -300,8 +300,9 @@ DECLARE
   v_trip_status      trip_request_status;
   v_prior_round_id   UUID;
   v_new_round_id     UUID;
+  v_invalid_shape    BOOLEAN;
 BEGIN
-  -- Step 1: validate p_targets shape (length and uniqueness).
+  -- Step 1a: validate p_targets is an array of length 1..8.
   IF jsonb_typeof(p_targets) <> 'array' THEN
     RETURN json_build_object('ok', false, 'error', 'invalid_targets');
   END IF;
@@ -311,12 +312,55 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'invalid_targets');
   END IF;
 
-  SELECT
-    COUNT(DISTINCT (t->>'id')::UUID),
-    COUNT(DISTINCT t->>'target_phone'),
-    COUNT(DISTINCT t->>'nonce')
-  INTO v_unique_ids, v_unique_phones, v_unique_nonces
-  FROM jsonb_array_elements(p_targets) AS t;
+  -- Step 1b: required keys present + non-null on every element.
+  -- Pre-check WITHOUT casts so a missing key fails as a clean
+  -- structured error rather than a NULL-cast.
+  SELECT EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_targets) AS t
+    WHERE NOT (
+            t ? 'id' AND t ? 'target_phone' AND t ? 'nonce'
+            AND t ? 'sent_at' AND t ? 'expires_at'
+          )
+       OR t->>'id' IS NULL
+       OR t->>'target_phone' IS NULL
+       OR t->>'nonce' IS NULL
+       OR t->>'sent_at' IS NULL
+       OR t->>'expires_at' IS NULL
+  ) INTO v_invalid_shape;
+
+  IF v_invalid_shape THEN
+    RETURN json_build_object('ok', false, 'error', 'invalid_targets');
+  END IF;
+
+  -- Step 1c: parse + uniqueness inside an EXCEPTION block so a
+  -- malformed UUID / timestamp surfaces as the structured
+  -- 'invalid_targets' error rather than a raw Postgres
+  -- exception bubbling up to the Server Action. Casts here are
+  -- the same casts used by the INSERT in step 5; if step 1c
+  -- succeeds, step 5's casts are guaranteed to succeed too, so
+  -- the INSERT does not need its own EXCEPTION wrapper.
+  -- (Codex iteration-1 P2 fix on PR #7.)
+  BEGIN
+    SELECT
+      COUNT(DISTINCT (t->>'id')::UUID),
+      COUNT(DISTINCT t->>'target_phone'),
+      COUNT(DISTINCT t->>'nonce')
+    INTO v_unique_ids, v_unique_phones, v_unique_nonces
+    FROM jsonb_array_elements(p_targets) AS t;
+
+    -- Force-parse the typed timestamp fields so a malformed
+    -- value here fails before the INSERT.
+    PERFORM (t->>'sent_at')::TIMESTAMPTZ,
+            (t->>'expires_at')::TIMESTAMPTZ
+    FROM jsonb_array_elements(p_targets) AS t;
+  EXCEPTION
+    WHEN invalid_text_representation
+      OR datetime_field_overflow
+      OR invalid_datetime_format
+    THEN
+      RETURN json_build_object('ok', false, 'error', 'invalid_targets');
+  END;
 
   IF v_unique_ids <> v_n
      OR v_unique_phones <> v_n
@@ -437,6 +481,17 @@ GRANT EXECUTE ON FUNCTION open_phase5_dispatch_round(UUID, JSONB)
 --   - The phase5_operator_offers_target_unique constraint
 --     blocks a duplicate insert if a network retry races past
 --     the application-level guard.
+--
+-- Error union (returned as JSON `{ok:false, error: ...}`):
+--   - 'invalid_offer'        — operator_name empty or > 120 chars,
+--                              total_price_sar NULL or < 1000,
+--                              departure_eta NULL,
+--                              validity_hours NULL / < 1 / > 168.
+--   - 'target_not_pending'   — target row does not exist or is
+--                              not in 'pending' state.
+--   - 'trip_not_open'        — trip is booked or cancelled.
+--   - 'token_stale'          — nonce mismatch, expired, or
+--                              dispatch round no longer current.
 
 CREATE OR REPLACE FUNCTION submit_phase5_operator_offer(
   p_target_id              UUID,
@@ -464,6 +519,31 @@ DECLARE
   v_target                 trip_dispatch_targets%ROWTYPE;
   v_offer_id               UUID;
 BEGIN
+  -- Step 0: validate offer-input shape upfront so a bad value
+  -- surfaces as the structured 'invalid_offer' error rather
+  -- than a raw check_violation / not_null_violation from the
+  -- INSERT in step 4. The DB-level CHECK constraints stay as
+  -- defense-in-depth. (Codex iteration-1 P2 fix on PR #7.)
+  IF p_operator_name IS NULL
+     OR length(trim(p_operator_name)) = 0
+     OR length(p_operator_name) > 120 THEN
+    RETURN json_build_object('ok', false, 'error', 'invalid_offer');
+  END IF;
+
+  IF p_total_price_sar IS NULL OR p_total_price_sar < 1000 THEN
+    RETURN json_build_object('ok', false, 'error', 'invalid_offer');
+  END IF;
+
+  IF p_departure_eta IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'invalid_offer');
+  END IF;
+
+  IF p_validity_hours IS NULL
+     OR p_validity_hours < 1
+     OR p_validity_hours > 168 THEN
+    RETURN json_build_object('ok', false, 'error', 'invalid_offer');
+  END IF;
+
   -- Step 1: discover trip_id from the target row (no lock).
   -- trip_request_id on trip_dispatch_targets is set on INSERT
   -- and never updated, so reading it before the lock is safe.
