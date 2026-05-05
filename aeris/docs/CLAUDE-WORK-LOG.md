@@ -1882,6 +1882,56 @@ instead of "9"):
   no admin/operator/lib/types/migrations touched, no push
   notifications, no custom install prompt UI.
 
+### Merge + production deploy (2026-05-05)
+
+PR #4 was rebase-merged into `main` at `2026-05-05T04:47:14Z`
+via `gh pr merge 4 --rebase --delete-branch`. Branch
+`feature/phase-4-2-pwa-foundation` was deleted on remote.
+
+- **Merge mode:** Rebase + delete-branch (no merge commit;
+  linear history preserved per the active branch-protection
+  rule on `main`).
+- **Commits on `main` after rebase** (the 5 PR commits got new
+  SHAs as rebase rewrites them):
+  - `b46002b` — Add Phase 4.2 PWA Foundation (PWA code + 7
+    icon PNGs + 1 SVG source + manual audit checklist).
+  - `7d47a5c` — Address Codex PR #4 review: docs-only fixes
+    + interactive verify packet.
+  - `3273842` — Codex follow-up: refresh preview URL +
+    work-log HEAD/CI.
+  - `4025a99` — Lift PR #4 conditional: interactive
+    verification done.
+  - `9e4388b` — Phase 4.2: cleanup stale Conditional/blocker
+    language in work log. **(= new `main` HEAD.)**
+- **Vercel production deployment for `9e4388b`:** SUCCESS at
+  `2026-05-05T04:47:58Z` — 44 seconds after merge. Deployment
+  id `4578341774`. SHA-specific URL:
+  `https://aeris-3whdpa6vc-earis-projects-620f37e5.vercel.app`.
+  The production alias `aeris-flax.vercel.app` is auto-
+  promoted by Vercel to this deployment.
+
+Phase 4.2 is **closed**.
+
+#### Carry-over founder actions (from prior phases, not Phase 4.2)
+
+These are the open items pre-existing this merge; Phase 4.2
+itself has no remaining follow-ups beyond optional recurring
+audits:
+
+- Apply Phase 4 migration to production Supabase (currently
+  only on the dev DB).
+- Set `OPERATOR_TOKEN_SECRET` in Vercel Production env vars.
+- Rotate `SUPABASE_SERVICE_ROLE_KEY` (pasted in chat earlier;
+  already flagged as deferred).
+- Run real Phase 4 end-to-end on production once the three
+  items above are in place.
+
+Re-running `pwa-audit.md` against `https://aeris-flax.vercel.app/`
+on production is a recurring audit any time PWA surfaces
+change; it is **not** a required follow-up to this merge —
+the same surface was verified interactively against a
+production build via Claude Preview MCP (record above).
+
 ### Questions For Codex
 
 None of these are blockers for accepting Phase 4.2 implementation:
