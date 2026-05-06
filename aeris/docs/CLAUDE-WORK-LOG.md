@@ -2951,3 +2951,261 @@ shipped based on this entry alone; the merge of this PR + the
 Codex acceptance + the founder follow-up production check are
 the actual ship signals.
 
+---
+
+## Phase 6.0 — Airports Foundation, PR 1 (2026-05-06)
+
+### Status
+
+**PR 1 of 2 opened. Production migration NOT YET applied.**
+This PR is the first slice of Phase 6.0 (Operator-Experience
+Polish's structural follow-up — see the spec at
+`aeris/docs/CLAUDE-TASK.md` Phase 6.0 iteration 3, Codex
+100/100, founder-accepted). PR 1 is intentionally schema +
+types + helpers only; no UI runtime, no Server Action change,
+no consumer of the new columns yet.
+
+The 2-PR split was prescribed by Codex iteration-2 P1 to
+prevent the same class of break Phase 5 needed
+`PHASE5_ADMIN_UI` to avoid: if runtime UI that reads/writes
+new columns merges before the migration is applied to
+production Supabase, every `/request` submit and operator
+portal render that hits the new code path will crash. PR 1
+opens the slot; PR 2 fills it.
+
+### What this PR adds
+
+Three substantive files plus this work-log entry:
+
+1. **Migration:**
+   `aeris/supabase/migrations/20260506000005_phase_6_airports.sql`.
+   Idempotent (`IF NOT EXISTS` on the `ALTER TABLE` calls,
+   `ON CONFLICT (iata_code) DO NOTHING` on the seed inserts).
+2. **Types:** `aeris/types/database.ts`. Hand-maintained
+   updates per Phase 6.0 spec Resolved decision (the file is
+   not auto-generated; missing updates would have left
+   crafted/replay payloads silently typed as `any`).
+3. **Helpers:** `aeris/lib/supabase/queries/airports.ts`.
+   Four functions with cleanly separated sync vs. async
+   surfaces (per Codex iteration-1 P1 of the spec).
+
+### Migration effects
+
+#### `lead_inquiries` table
+
+Two new nullable VARCHAR(3) columns, both with FK references
+to `airports(iata_code)`:
+
+- `origin_iata` — set when the customer picks an airport
+  from the picker (PR 2 wires this). NULL for legacy rows
+  and for new rows where the customer typed a freeform
+  city/airport name.
+- `destination_iata` — same shape, same semantics.
+
+The pre-existing `origin VARCHAR(120) NOT NULL` /
+`destination VARCHAR(120) NOT NULL` columns stay untouched.
+Existing rows continue to render correctly through the
+freeform path.
+
+#### Airports seed extension
+
+Final list (4 KSA operational airports, total seed grows
+from 12 to 16 — within the +4 to +6 range per Resolved
+decision #1):
+
+| IATA | ICAO | City (EN) | City (AR) | Name (AR) |
+|---|---|---|---|---|
+| `YNB` | `OEYN` | Yanbu | ينبع | مطار الأمير عبد المحسن بن عبد العزيز |
+| `HAS` | `OEHL` | Hail | حائل | مطار حائل الإقليمي |
+| `ELQ` | `OEGS` | Buraidah | بريدة | مطار الأمير نايف بن عبد العزيز الإقليمي |
+| `GIZ` | `OEGN` | Jizan | جازان | مطار الملك عبد الله بن عبد العزيز |
+
+All four carry full bilingual fields (`name`, `name_ar`,
+`city`, `city_ar`, `country`, `country_ar`) plus
+`latitude` / `longitude` / `timezone = 'Asia/Riyadh'`.
+`is_private_capable` defaults to `true` (matching the
+existing seed convention).
+
+**Najran (EAM, ICAO OENG) was OMITTED.** The currently-
+seeded NUM (NEOM Bay) row carries `icao_code = OENG`
+(verified in `20260422000001_initial_schema.sql` line 735),
+and the airports table has a UNIQUE constraint on
+`icao_code`. Adding Najran would either fail the unique
+constraint or require fixing the pre-existing NUM data —
+both out of scope for PR 1. NEOM Bay's actual ICAO is
+`OENK`, not `OENG`; that data-quality fix is recorded here
+as a follow-up but **not** addressed in PR 1.
+
+OEPV (Riyadh Executive Aviation Terminal) was also
+considered but **deferred** per Resolved decision #1: it's
+unclear whether OEPV is a separate IATA-coded entry or a
+sub-facility of RUH; deciding requires operational
+confirmation that's out of scope for Phase 6.0.
+
+#### `promote_lead_to_trip_request` RPC
+
+**Body-only update** per Resolved decision #4. Signature
+unchanged: same parameters
+(`p_lead_id UUID, p_legs JSONB, p_aircraft_category aircraft_category, p_special_requests TEXT, p_lead_trip_type TEXT`),
+same return type (`JSON`), same `LANGUAGE plpgsql`, same
+`SECURITY DEFINER`, same `SET search_path = public, pg_temp`.
+
+Body changes:
+
+- The `INSERT INTO trip_requests` statement now includes
+  `departure_airport` and `arrival_airport` in its column
+  list.
+- Their values are derived from the legs payload using
+  CASE-guarded subqueries:
+  - `departure_airport` ← `p_legs[0]->>'from'`, normalized
+    via `upper(NULLIF(..., ''))`, matched against the
+    airports table — returns the IATA code on hit, NULL
+    on miss.
+  - `arrival_airport` ← same approach against the LAST
+    leg's `to`, computed via
+    `p_legs->(jsonb_array_length(p_legs) - 1)->>'to'`.
+- Defensive guards: `jsonb_typeof(p_legs) = 'array' AND
+  jsonb_array_length(p_legs) > 0` short-circuits to NULL
+  when the payload is missing, malformed, or empty.
+
+The `REVOKE ALL ... FROM PUBLIC, anon, authenticated` plus
+`GRANT EXECUTE ... TO service_role` block is restated after
+the `CREATE OR REPLACE` for visibility — `CREATE OR REPLACE`
+preserves existing privileges, but Codex review wants the
+full security posture in one place per the Phase 4 PR #6
+discipline.
+
+### Founder verification probes (REQUIRED before PR 2)
+
+After this PR merges and the founder applies
+`20260506000005_phase_6_airports.sql` to the production
+Supabase project (same paste-into-SQL-Editor flow as Phase
+4 / Phase 5 activations), **the founder runs these 5 probes
+exactly as documented in the spec's Quality gates section**:
+
+```sql
+-- 1. Airports row count (expect 12 + 4 = 16).
+SELECT count(*) AS airports_count FROM airports;
+
+-- 2. lead_inquiries new columns nullable + correct shape.
+SELECT column_name, is_nullable, data_type, character_maximum_length
+  FROM information_schema.columns
+  WHERE table_name = 'lead_inquiries'
+    AND column_name IN ('origin_iata', 'destination_iata')
+  ORDER BY column_name;
+-- Expect 2 rows; both is_nullable = 'YES';
+-- both data_type = 'character varying'; both length = 3.
+
+-- 3. FK constraints present.
+SELECT tc.constraint_name, kcu.column_name, ccu.table_name AS references_table,
+       ccu.column_name AS references_column
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+  JOIN information_schema.constraint_column_usage ccu
+    ON tc.constraint_name = ccu.constraint_name
+  WHERE tc.table_name = 'lead_inquiries'
+    AND tc.constraint_type = 'FOREIGN KEY'
+    AND kcu.column_name IN ('origin_iata', 'destination_iata');
+-- Expect 2 rows; both references_table = 'airports';
+-- both references_column = 'iata_code'.
+
+-- 4. promote_lead_to_trip_request hardening preserved.
+SELECT prosecdef, proconfig
+  FROM pg_proc
+  WHERE proname = 'promote_lead_to_trip_request';
+-- Expect prosecdef = true;
+-- proconfig contains 'search_path=public, pg_temp'.
+
+-- 4b. EXECUTE privilege cross-product (same shape as Phase 4
+--     verification step #5.5).
+SELECT r.rolname,
+       has_function_privilege(
+         r.rolname,
+         'promote_lead_to_trip_request(uuid, jsonb, aircraft_category, text, text)',
+         'EXECUTE'
+       ) AS can_execute
+  FROM (VALUES ('service_role'), ('anon'), ('authenticated')) r(rolname);
+-- Expect:
+--   service_role  → can_execute = true
+--   anon          → can_execute = false
+--   authenticated → can_execute = false
+
+-- 5. Re-runnability — paste 20260506000005_phase_6_airports.sql
+--    into the SQL Editor a second time. Expected:
+--    "Success. No rows returned" (no errors, no duplicate
+--    inserts, no constraint violations).
+```
+
+If any probe fails, the founder pings Claude before opening
+PR 2. PR 2 cannot open against an unverified migration.
+
+### Files touched
+
+| file | type | change |
+|---|---|---|
+| `aeris/supabase/migrations/20260506000005_phase_6_airports.sql` | new | migration above |
+| `aeris/types/database.ts` | edited | LeadInquiry IATA cols + Airport types + table registry |
+| `aeris/lib/supabase/queries/airports.ts` | new | 4 helpers (1 sync + 3 async) |
+| `aeris/docs/CLAUDE-WORK-LOG.md` | edited | this entry (last commit) |
+
+`aeris/docs/CLAUDE-TASK.md` is intentionally NOT in this PR;
+remains a local working-tree draft per the Phase 5 / 5.1
+discipline.
+
+### Quality gates (locally on Windows, branch HEAD before push)
+
+| command | exit | notes |
+|---|---|---|
+| `npm --prefix aeris run type-check` | 0 | `tsc --noEmit` clean. New `AirportRow` types and extended `LeadInquiryRow` / `LeadInquiryInsert` compile. |
+| `npm --prefix aeris run lint:strict` | 0 | "✔ No ESLint warnings or errors". |
+| `npm --prefix aeris run build` | 0 | Route table unchanged. PR 1 adds no new routes and no client bundle. Bundle sizes for every route identical to the previous main HEAD `a407951`. |
+| Lockfile diff | empty | No new dependencies. |
+| `package.json` diff | empty | No script change. |
+
+CI (Type-check, build, lint + Vercel) re-runs on the PR head;
+those results land on the PR description, not here.
+
+### Decision: no isIataFormat unit test
+
+Founder's PR 1 prescription was "small unit test ONLY IF
+test pattern exists and fits". The existing test pattern in
+the project is the self-contained `.mjs` script
+(`scripts/verify-operator-token.mjs`, ~37 algorithm
+assertions for Phase 5's HMAC token format). That pattern
+was justified by token-correctness being a security-critical
+algorithm. `isIataFormat` is a 1-line regex
+(`/^[A-Z]{3}$/.test(value)`); a dedicated Node script for
+it would be heavier than the function being tested. The
+function is exercised end-to-end by the PR 2 acceptance
+criteria (the picker's IATA submission AND the legacy-shape
+detection on the operator-portal display). `tsc --noEmit`
+covers the type-guard return shape. No unit test added.
+
+### Carry-overs (unchanged by this PR)
+
+- **`SUPABASE_SERVICE_ROLE_KEY` rotation + legacy HS256
+  revoke** — deferred indefinitely per founder decision
+  recorded in Phase 4 Production Activation. Not reopened.
+- **NUM (NEOM Bay) ICAO data quality** — currently seeded
+  as `OENG` but the real ICAO is `OENK`. Documented above
+  as the reason Najran (EAM/OENG) was omitted from this
+  PR's seed. Fix is a separate single-row UPDATE migration
+  in a follow-up PR (NOT Phase 6.0 PR 2; that PR is
+  app-side only).
+- **OEPV (Riyadh Executive Aviation Terminal)** — deferred
+  per Resolved decision #1; needs operational confirmation
+  before adding.
+
+### Closing
+
+PR 1 is **schema-and-types complete on the feature branch
+and quality-gates green locally**. The runtime UI in PR 2
+(picker + Server Action wiring + operator-portal display
+update) cannot open until: (a) PR 1 merges, (b) the founder
+applies the migration to production Supabase, and (c) the 5
+verification probes pass. Do NOT declare Phase 6.0 shipped
+based on this entry alone — PR 2 + Codex acceptance + the
+founder spot-check on PR 2's preview are the actual ship
+signals for Phase 6.0 as a whole.
+
