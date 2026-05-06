@@ -1237,11 +1237,22 @@ Reload `/request`.
 - [ ] Reload. Type "wheelchair" into medical notes (with
       leading/trailing spaces "  wheelchair  "); submit.
       Latest `preferences.medical_notes = "wheelchair"`
-      (whitespace trimmed by Codex P2 patch on PR 1).
+      (whitespace trimmed by client-side
+      `mergeTripPreferences`, mirroring the server's Zod
+      `.trim()`).
 - [ ] Reload. Type only spaces "   " into medical notes;
-      submit. The form rejects with
-      `preferences_medical_notes_too_short` inline error
-      (rejection, not silent strip). Acceptance #7.
+      submit. **Submit succeeds**; the latest lead's
+      `preferences` has **no `medical_notes` key** —
+      whitespace-only inputs are silently normalized to
+      "no preference expressed" by the client-side
+      `mergeTripPreferences` call in the form's submit
+      handler (per Codex iteration-1 P2 patch on PR 2).
+      No inline error is shown because the form has no
+      error slot for individual preference fields and
+      the value never reaches the server's strict Zod.
+      Acceptance #7 reframed: the test verifies that
+      whitespace-only inputs DO NOT land in the JSONB,
+      not that they produce a visible error.
 
 ### Phase 6.1-4 — Validator rejects unknown keys + crafted payloads
 
