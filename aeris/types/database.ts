@@ -5,6 +5,8 @@
  * project. Mirrors the SQL migrations under `supabase/migrations/`.
  */
 
+import type { TripPreferences } from '@/lib/validators/trip-preferences';
+
 export type LeadStatus =
   | 'new'
   | 'contacted'
@@ -38,6 +40,11 @@ export type LeadInquiryRow = {
   last_contacted_at: string | null;
   // Phase 4: set by promote_lead_to_trip_request when the lead is converted.
   converted_at: string | null;
+  // Phase 6.1: structured customer preferences. Migration
+  // 20260507000006 makes this NOT NULL DEFAULT '{}'::jsonb,
+  // so existing rows have `{}` and new code never has to
+  // null-check. Shape governed by `lib/validators/trip-preferences.ts`.
+  preferences: TripPreferences;
   created_at: string;
   updated_at: string;
 };
@@ -57,6 +64,10 @@ export type LeadInquiryInsert = {
   passengers: number;
   notes: string | null;
   source?: string;
+  // Phase 6.1: optional on insert because the DB column has
+  // `DEFAULT '{}'::jsonb`. Callers that omit it get `{}`
+  // automatically.
+  preferences?: TripPreferences;
 };
 
 // ============================================================================
@@ -164,7 +175,12 @@ export type TripRequestRow = {
   passengers_count: number;
   aircraft_category_preference: AircraftCategoryValue | null;
   special_requests: string | null;
-  preferences: Record<string, unknown> | null;
+  // Phase 6.1: strong-typed (was `Record<string, unknown> | null`).
+  // Existing rows in production carry at most
+  // `{ lead_trip_type: 'one_way' | 'round_trip' | 'multi_city' }`
+  // (the legacy injection from promote_lead_to_trip_request);
+  // post-migration shape is governed by `lib/validators/trip-preferences.ts`.
+  preferences: TripPreferences | null;
   status: TripRequestStatus;
   distributed_to: string[] | null;
   distributed_at: string | null;
