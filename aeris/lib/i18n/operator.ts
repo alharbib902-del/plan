@@ -12,6 +12,8 @@
  */
 
 import type { AircraftCategoryValue } from '@/lib/validators/promote-lead';
+import { isIataFormat } from '@/lib/utils/iata';
+import type { AirportRow } from '@/types/database';
 
 export type Lang = 'ar' | 'en';
 
@@ -278,6 +280,17 @@ const dictionary = {
     ar: 'بعيدة المدى',
     en: 'Long-range',
   },
+
+  // Phase 6.0 PR 2 (S6) — airport label fallbacks for the
+  // operator portal trip summary.
+  airport_unknown_suffix: {
+    ar: '(غير معروف)',
+    en: '(unknown)',
+  },
+  airport_missing_value: {
+    ar: '—',
+    en: '—',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 export type StringKey = keyof typeof dictionary;
@@ -366,4 +379,80 @@ export function formatRiyadhDate(
     numberingSystem: 'latn',
     calendar: 'gregory',
   }).format(date);
+}
+
+// ============================================================================
+// Phase 6.0 PR 2 (S6) — operator portal airport label helper
+// ============================================================================
+
+/**
+ * Render the visible label for one side of a leg
+ * (`leg.from` / `leg.to`) for the operator-portal trip
+ * summary. Phase 6.0 spec S6 — handles three leg shapes to
+ * maintain backwards compatibility with every trip already
+ * in the database:
+ *
+ *   (a) New shape, IATA known.
+ *       `value = "RUH"`, `freeform = null` (or undefined).
+ *       Looks up the code in the airports list and renders
+ *       `city_ar (IATA)` (or `city (IATA)` under `?lang=en`).
+ *       If the lookup misses despite a valid IATA shape (the
+ *       airport row was deleted between dispatch and view),
+ *       renders the IATA bare with the `airport_unknown_suffix`.
+ *
+ *   (b) New shape, freeform fallback.
+ *       `value = null`, `freeform = "العُلا — مطار خاص"`.
+ *       Renders the freeform string verbatim. No DB lookup.
+ *
+ *   (c) Legacy shape, raw string.
+ *       `value = "الرياض"`, `freeform = undefined`.
+ *       The legs[] JSONB on this row was written before
+ *       Phase 6.0 — `from` / `to` carry bare freeform Arabic
+ *       strings and the `_freeform` keys don't exist. The
+ *       discriminator is `freeform === undefined && value
+ *       is not in IATA shape`. **Crucially the helper does
+ *       NOT call getAirportByCode on legacy values** —
+ *       treating them as IATA codes would produce a bogus
+ *       lookup and a misleading `(unknown)` suffix.
+ *
+ * The security note from the Phase 5 activation entry's
+ * Step 34 doesn't apply here (this helper runs after the
+ * trip summary's own visibility check), so the three shapes
+ * can be distinguished freely without leaking an oracle.
+ */
+export function airportLabel(
+  value: string | null | undefined,
+  freeform: string | null | undefined,
+  lang: Lang,
+  airports: AirportRow[]
+): string {
+  // Shape (b): explicit freeform fallback wins over anything
+  // else. Freeform is set only when the new shape was used and
+  // the picker chose freeform mode.
+  if (freeform !== null && freeform !== undefined && freeform.length > 0) {
+    return freeform;
+  }
+
+  // Shape (a) discriminator: IATA-shape value present.
+  if (value && isIataFormat(value)) {
+    const found = airports.find((a) => a.iata_code === value);
+    if (found) {
+      const city = lang === 'en' ? found.city : found.city_ar ?? found.city;
+      return `${city} (${found.iata_code})`;
+    }
+    // Valid IATA shape but not in the picker's list — render
+    // bare with the unknown suffix.
+    return `${value} ${t('airport_unknown_suffix', lang)}`;
+  }
+
+  // Shape (c): legacy raw-string value (or any other non-IATA
+  // string). Render verbatim, no lookup.
+  if (value && value.length > 0) {
+    return value;
+  }
+
+  // Truly missing (null/empty on both sides). Should not
+  // happen for trips that the operator-portal page already
+  // accepted, but guard anyway.
+  return t('airport_missing_value', lang);
 }

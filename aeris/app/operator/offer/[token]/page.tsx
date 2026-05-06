@@ -8,6 +8,7 @@ import {
 } from '@/components/operator/trip-summary';
 import { parseLang } from '@/lib/i18n/operator';
 import { verifyOperatorToken } from '@/lib/operator/token';
+import { listAirports } from '@/lib/supabase/queries/airports';
 import { getTargetById } from '@/lib/supabase/queries/phase5-targets';
 import { getTripById } from '@/lib/supabase/queries/trips';
 
@@ -83,7 +84,14 @@ export default async function OperatorOfferPage({
   // v=1 (Phase 4) — trip-level dispatch state
   // ──────────────────────────────────────────────────────────
   if (verified.version === 1) {
-    const trip = await getTripById(verified.payload.trip_request_id);
+    // Phase 6.0 PR 2 (S6): fetch airports in parallel with the
+    // trip read so the operator-portal trip summary can render
+    // the airport label per the 3-shape contract without a
+    // round-trip per leg.
+    const [trip, airports] = await Promise.all([
+      getTripById(verified.payload.trip_request_id),
+      listAirports({ privateCapable: true }),
+    ]);
     if (!trip) {
       return <ExpiredLink lang={lang} />;
     }
@@ -116,6 +124,7 @@ export default async function OperatorOfferPage({
         <OperatorTripSummary
           trip={trip}
           operatorContext={operatorContext}
+          airports={airports}
           lang={lang}
         />
         <OperatorOfferForm
@@ -132,9 +141,12 @@ export default async function OperatorOfferPage({
   // ──────────────────────────────────────────────────────────
   // verified.version === 2; payload carries trip_request_id +
   // dispatch_target_id + nonce + expires_at (issued_at).
-  const [trip, target] = await Promise.all([
+  // Airports fetched in parallel for the trip-summary's
+  // 3-shape airportLabel rendering (Phase 6.0 PR 2 S6).
+  const [trip, target, airports] = await Promise.all([
     getTripById(verified.payload.trip_request_id),
     getTargetById(verified.payload.dispatch_target_id),
+    listAirports({ privateCapable: true }),
   ]);
 
   if (!trip || !target) {
@@ -185,6 +197,7 @@ export default async function OperatorOfferPage({
       <OperatorTripSummary
         trip={trip}
         operatorContext={operatorContext}
+        airports={airports}
         lang={lang}
       />
       <OperatorOfferForm

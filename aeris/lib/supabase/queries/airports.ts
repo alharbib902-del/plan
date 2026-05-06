@@ -4,28 +4,15 @@ import { unstable_noStore as noStore } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { AirportRow } from '@/types/database';
 
+// Phase 6.0 PR 2: isIataFormat lives in lib/utils/iata.ts so
+// the operator-portal client surface can import it without
+// pulling `server-only` along. Re-exported here for back-compat
+// with any code that already imports it from this module
+// (acceptance #6's Server Action validation chain still uses
+// the same name).
+export { isIataFormat } from '@/lib/utils/iata';
+
 const TABLE = 'airports';
-
-const IATA_PATTERN = /^[A-Z]{3}$/;
-
-/**
- * Sync, truly pure type-guard. Returns true iff `value` is
- * a string of exactly 3 uppercase ASCII letters.
- *
- * Phase 6.0 spec S1 splits this from the async DB lookup so
- * server-side validators can pre-filter cheaply before
- * touching Supabase, and so the operator-portal display
- * helper (PR 2 / S6) can use it as the discriminator
- * between an IATA code (new shape) and a freeform Arabic
- * legacy string (legacy `legs[].from` shape).
- *
- * Pairs with `assertKnownAirport` for the full
- * sync-then-async validation chain that acceptance #6
- * exercises.
- */
-export function isIataFormat(value: unknown): value is string {
-  return typeof value === 'string' && IATA_PATTERN.test(value);
-}
 
 export interface ListAirportsOptions {
   /**

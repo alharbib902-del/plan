@@ -190,7 +190,7 @@ export function AirportCombobox({
             onClick={() => setOpen((v) => !v)}
             aria-haspopup="listbox"
             aria-expanded={open}
-            aria-invalid={Boolean(error) || undefined}
+            aria-describedby={error ? `${inputId}-error` : undefined}
             className={cn(
               'font-ar flex w-full items-center justify-between gap-3 rounded-md border border-border bg-navy-secondary/60 px-4 py-3 text-base text-ink transition-colors',
               'hover:border-gold/40 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40',
@@ -269,7 +269,7 @@ export function AirportCombobox({
             <div className="max-h-60 overflow-y-auto py-1">
               {grouped.length === 0 && (
                 <p className="font-ar px-4 py-6 text-center text-xs text-ink-muted">
-                  لا نتائج. جرّب اسم المدينة بالعربي، أو اضغط "اكتب يدوياً".
+                  لا نتائج. جرّب اسم المدينة بالعربي، أو اضغط &quot;اكتب يدوياً&quot;.
                 </p>
               )}
               {grouped.map((group) => (
