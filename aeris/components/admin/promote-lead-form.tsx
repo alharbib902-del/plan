@@ -8,22 +8,37 @@ import {
   AIRCRAFT_CATEGORY_LABEL_AR,
   type AircraftCategoryValue,
 } from '@/lib/validators/promote-lead';
+import type { TripPreferences } from '@/lib/validators/trip-preferences';
+import { TripPreferencesFields } from '@/components/forms/trip-preferences-fields';
 import { cn } from '@/lib/utils/cn';
 
 interface PromoteLeadFormProps {
   leadId: string;
   leadTripType: 'one_way' | 'round_trip' | 'multi_city';
   alreadyConverted: boolean;
+  // Phase 6.1 PR 2: customer-pre-filled preferences read
+  // from lead_inquiries.preferences. The founder amends
+  // before promoting. Strips the legacy lead_trip_type
+  // key on display so the founder edits real preferences,
+  // not the legacy injection that the RPC re-adds.
+  initialPreferences: TripPreferences;
 }
 
 export function PromoteLeadForm({
   leadId,
   leadTripType,
   alreadyConverted,
+  initialPreferences,
 }: PromoteLeadFormProps) {
   const [aircraftCategory, setAircraftCategory] =
     useState<AircraftCategoryValue>('mid');
   const [specialRequests, setSpecialRequests] = useState('');
+  // Phase 6.1 PR 2: pre-fill from lead.preferences (minus
+  // the legacy lead_trip_type key — the RPC re-injects it).
+  const [preferences, setPreferences] = useState<TripPreferences>(() => {
+    const { lead_trip_type: _ignored, ...editable } = initialPreferences;
+    return editable;
+  });
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -47,6 +62,12 @@ export function PromoteLeadForm({
     if (specialRequests.trim().length > 0) {
       formData.append('special_requests', specialRequests);
     }
+    // Phase 6.1 PR 2: serialize preferences as a single
+    // JSON-string field. The Server Action JSON.parses +
+    // tripPreferencesSchema.safeParse +
+    // mergeTripPreferences before passing to the 6-arg
+    // RPC. Empty object (no edits) → '{}', the default.
+    formData.append('preferences', JSON.stringify(preferences));
 
     startTransition(async () => {
       const result = await promoteLead(formData);
@@ -102,6 +123,25 @@ export function PromoteLeadForm({
           className="font-ar mt-1 block w-full rounded-md border border-border bg-navy-secondary/80 px-3 py-2 text-sm text-ink placeholder:text-ink-muted hover:border-gold/40 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40"
         />
       </label>
+
+      {/* Phase 6.1 PR 2: structured customer preferences,
+          pre-filled from lead.preferences when set on the
+          public /request form, editable by the founder
+          before promotion. Always-expanded (no collapsible
+          wrapper) — admin sees the full state at a glance.
+          Per spec S3. */}
+      <div className="rounded-md border border-border bg-navy-secondary/40 p-4">
+        <h4 className="font-ar text-xs uppercase tracking-tagged text-ink-muted">
+          تفضيلات العميل (اختياري)
+        </h4>
+        <div className="mt-3">
+          <TripPreferencesFields
+            value={preferences}
+            onChange={setPreferences}
+            disabled={pending}
+          />
+        </div>
+      </div>
 
       <button
         type="submit"

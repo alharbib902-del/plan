@@ -81,6 +81,7 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
                 leadId={lead.id}
                 leadTripType={lead.trip_type}
                 alreadyConverted={lead.status === 'converted'}
+                initialPreferences={lead.preferences}
               />
             </div>
           </div>
