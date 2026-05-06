@@ -172,7 +172,14 @@ export function FlightRequestForm({
           label="من (المطار)"
           placeholder="اختر مطار المغادرة…"
           required
-          error={errors.origin}
+          // Phase 6.0 PR 2 (Codex round-2 P2): the validator
+          // can emit errors on three paths per side
+          // (`origin`, `origin_iata`, `origin_freeform`); the
+          // Combobox only renders one slot. Resolve in
+          // priority order so the most specific signal wins,
+          // falling back to the refinement-path error when
+          // neither IATA nor freeform sub-validator fired.
+          error={errors.origin ?? errors.origin_iata ?? errors.origin_freeform}
         />
         <AirportCombobox
           name="destination"
@@ -180,7 +187,11 @@ export function FlightRequestForm({
           label="إلى (المطار)"
           placeholder="اختر مطار الوصول…"
           required
-          error={errors.destination}
+          error={
+            errors.destination ??
+            errors.destination_iata ??
+            errors.destination_freeform
+          }
         />
       </fieldset>
 
