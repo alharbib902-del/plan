@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-import { OperatorPortalHeader } from '@/components/operator/operator-portal-header';
+import { OperatorPortalHeader } from '@/components/operator/lang-toggle';
 
 export const metadata: Metadata = {
   title: 'عرض رحلة',

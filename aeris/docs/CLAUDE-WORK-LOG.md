@@ -2849,7 +2849,7 @@ Per spec "Files likely touched" (iteration 3):
 |---|---|---|
 | `aeris/lib/i18n/operator.ts` | new | typed dictionary + helpers |
 | `aeris/components/operator/lang-toggle.tsx` | new | toggle button |
-| `aeris/components/operator/operator-portal-header.tsx` | new | bridges Server-Component layout to client `useSearchParams` reader (not named in the spec; called out as a structural necessity for App Router layouts that cannot read searchParams) |
+| `aeris/components/operator/lang-toggle.tsx` (additional export) | n/a | also exports `OperatorPortalHeader` — co-located here because both components need `useSearchParams` and App Router Server-Component layouts cannot read searchParams. Kept inside the spec's approved `lang-toggle.tsx` after Codex P2 patch removed the standalone `operator-portal-header.tsx` file as a scope deviation. |
 | `aeris/app/operator/offer/[token]/layout.tsx` | edited | swaps inline header for `<OperatorPortalHeader />` |
 | `aeris/components/operator/expired-link.tsx` | edited | optional `reason` discriminator + i18n |
 | `aeris/components/operator/trip-summary.tsx` | edited | `operatorContext` prop, link-validity row, i18n, Asia/Riyadh formatting |
@@ -2884,9 +2884,24 @@ on local. The `aeris/docs/checklists/operator-flow-smoke-test.md`
 "Phase 5.1 — Operator Experience Polish (preview checklist)"
 section covers them in 7 short sequenced steps.
 
-**Preview URL the acceptance was checked against:**
-`<preview-url — to be filled in after Vercel deploys the PR
-head; founder + Codex spot-check before merge>`.
+**Vercel preview URL for this PR:**
+`https://aeris-git-feature-phase-5-1-oper-ecf2a0-earis-projects-620f37e5.vercel.app`
+
+(Deploy status: Ready as of the second push to PR #14. CI's
+"Type-check, build, lint" + Vercel build are green on the head
+of the patch branch.)
+
+**Founder spot-check against the Phase 5.1 preview checklist:
+PENDING.** This entry is written before the founder runs the
+7-step preview checklist (`aeris/docs/checklists/operator-flow-smoke-test.md`
+"Phase 5.1 — Operator Experience Polish (preview checklist)")
+against the URL above. The acceptance criteria #1–#14 are
+therefore **not yet observed**; this entry records the
+implementation and the preview being available, not a passed
+spot-check. The spot-check result (pass / fail with deltas)
+will be appended in a small follow-up commit when the founder
+runs it, or — if the spot-check passes cleanly — captured in
+the PR merge comment without amending this entry.
 
 Acceptance #11 (v=1 backwards compat): per Codex resolved
 decision #7, satisfied by code review of

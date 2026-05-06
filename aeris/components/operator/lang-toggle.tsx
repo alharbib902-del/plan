@@ -3,7 +3,42 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 
-import { type Lang, t } from '@/lib/i18n/operator';
+import { type Lang, parseLang, t } from '@/lib/i18n/operator';
+
+/**
+ * Operator portal language-aware header (Phase 5.1, S6).
+ *
+ * Co-located with LangToggle because both need `useSearchParams`
+ * (App Router layouts cannot read searchParams; this wrapper is
+ * the bridge from the Server-Component layout to the URL reader).
+ * Renders the AERIS title + translated tagline + the LangToggle
+ * button. The `dir` attribute on the wrapping element flips with
+ * the language.
+ */
+export function OperatorPortalHeader() {
+  const searchParams = useSearchParams();
+  const lang = parseLang(searchParams.get('lang'));
+
+  return (
+    <header
+      lang={lang}
+      dir={lang === 'en' ? 'ltr' : 'rtl'}
+      className="relative mb-8"
+    >
+      <div className="absolute end-0 top-0">
+        <LangToggle currentLang={lang} />
+      </div>
+      <div className="text-center">
+        <span className="font-display text-2xl tracking-[0.28em] text-gold-light">
+          AERIS
+        </span>
+        <p className="font-ar mt-2 text-xs uppercase tracking-tagged text-ink-muted">
+          {t('portal_tagline', lang)}
+        </p>
+      </div>
+    </header>
+  );
+}
 
 /**
  * Operator portal language toggle (Phase 5.1, S6).
