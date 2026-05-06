@@ -20,6 +20,16 @@ import { submitPhase5OperatorOfferRpc } from '@/lib/supabase/queries/phase5-offe
  * matches the persisted state"). The form's translateError handles
  * every code; clients shouldn't need to know which path produced
  * the error.
+ *
+ * Phase 5.1 (iteration-2 P1 fix): when `error === 'invalid_input'`
+ * AND the source was the Zod safeParse issue list, the result
+ * additionally carries `field_errors`, a map from form field name
+ * (e.g. 'operator_name') to a translation key (e.g.
+ * 'zod_operator_name_required'). The form uses this to render
+ * inline messages next to each offending input. Strict superset:
+ * older v=1-only consumers that ignore the field continue to
+ * compile and behave correctly, which is why it's optional and
+ * the error code is unchanged.
  */
 export type SubmitOperatorOfferResult =
   | { ok: true; offer_id: string }
@@ -38,6 +48,7 @@ export type SubmitOperatorOfferResult =
         | 'invalid_offer'
         | 'target_not_pending'
         | 'trip_not_open';
+      field_errors?: Record<string, string>;
     };
 
 export async function submitOperatorOffer(
@@ -70,7 +81,21 @@ export async function submitOperatorOffer(
     notes: formData.get('notes'),
   });
   if (!parsed.success) {
-    return { ok: false, error: 'invalid_input' };
+    // Phase 5.1: walk the Zod issue list and emit a path-keyed
+    // map of translation keys for the form to render inline.
+    // First-error-per-field wins (Zod can report multiple per
+    // path; the form only renders one inline per input).
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of parsed.error.issues) {
+      const field = String(issue.path[0] ?? '');
+      if (!field || fieldErrors[field]) continue;
+      fieldErrors[field] = `zod_${issue.message}`;
+    }
+    return {
+      ok: false,
+      error: 'invalid_input',
+      ...(Object.keys(fieldErrors).length > 0 ? { field_errors: fieldErrors } : {}),
+    };
   }
 
   // 3. Convert the local-time string from <input type="datetime-local">

@@ -1,22 +1,32 @@
 import type { TripRequestRow } from '@/types/database';
-import { AIRCRAFT_CATEGORY_LABEL_AR } from '@/lib/validators/promote-lead';
+import {
+  aircraftCategoryLabel,
+  formatRiyadhDate,
+  formatRiyadhDateTime,
+  type Lang,
+  t,
+} from '@/lib/i18n/operator';
 
-function formatDateAr(value: string | null): string {
-  if (!value) return '—';
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
-}
+/**
+ * Carries token-derived facts the operator needs to see, without
+ * the trip summary having to know about HMAC payload shapes.
+ * Phase 5.1 P2 wiring fix (iteration 2): explicit prop instead
+ * of having OperatorTripSummary peek at the verifier's return.
+ */
+export type OperatorContext = {
+  /** ISO 8601 — from verified payload's expires_at (seconds → date). */
+  tokenExpiresAt: string;
+  /** For client-side debugging only; not rendered. */
+  tokenVersion: 1 | 2;
+};
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="grid grid-cols-[120px,1fr] gap-3 border-t border-border/60 py-3 sm:grid-cols-[160px,1fr]">
       <dt className="font-ar text-xs uppercase tracking-tagged text-ink-muted">
@@ -29,46 +39,74 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 /**
  * Read-only trip summary shown to the operator. Customer name and
- * phone are intentionally NOT included — Phase 4 keeps client
- * identity private until acceptance.
+ * phone are intentionally NOT included — Phase 4/5 invariant:
+ * client identity stays private until acceptance.
+ *
+ * Phase 5.1 (S1):
+ *   - Departure rendered with explicit Asia/Riyadh time + label.
+ *   - Link-validity row added (read from operatorContext, not
+ *     the trip — the token TTL is what the operator's link will
+ *     stop working at, not the trip itself).
+ *   - All labels translated via the operator i18n dictionary.
  */
-export function OperatorTripSummary({ trip }: { trip: TripRequestRow }) {
+export function OperatorTripSummary({
+  trip,
+  operatorContext,
+  lang,
+}: {
+  trip: TripRequestRow;
+  operatorContext: OperatorContext;
+  lang: Lang;
+}) {
   return (
-    <div className="rounded-xl border border-border bg-navy-card/40 p-6">
+    <div
+      lang={lang}
+      dir={lang === 'en' ? 'ltr' : 'rtl'}
+      className="rounded-xl border border-border bg-navy-card/40 p-6"
+    >
       <div className="font-mono text-sm text-gold-light">
         {trip.request_number}
       </div>
-      <h2 className="font-ar mt-1 text-xl text-ink">تفاصيل الرحلة</h2>
+      <h2 className="font-ar mt-1 text-xl text-ink">{t('trip_details', lang)}</h2>
 
       <dl className="mt-4">
-        <Row label="المسار">
+        <Row label={t('route_label', lang)}>
           <ol className="space-y-1">
             {(trip.legs ?? []).map((leg, idx) => (
               <li key={idx} className="font-ar">
                 <span className="text-ink-muted">[{idx + 1}]</span>{' '}
                 {leg.from} ← {leg.to}
                 <span className="ms-2 text-xs text-ink-muted">
-                  {formatDateAr(leg.date)}
+                  {formatRiyadhDate(leg.date, lang)}
                 </span>
               </li>
             ))}
           </ol>
         </Row>
-        <Row label="المغادرة">{formatDateAr(trip.departure_date)}</Row>
+        <Row label={t('departure_label', lang)}>
+          {formatRiyadhDateTime(trip.departure_date, lang)}
+        </Row>
         {trip.return_date && (
-          <Row label="العودة">{formatDateAr(trip.return_date)}</Row>
+          <Row label={t('return_label', lang)}>
+            {formatRiyadhDateTime(trip.return_date, lang)}
+          </Row>
         )}
-        <Row label="عدد الركاب">{trip.passengers_count}</Row>
+        <Row label={t('passengers_label', lang)}>{trip.passengers_count}</Row>
         {trip.aircraft_category_preference && (
-          <Row label="فئة الطائرة المطلوبة">
-            {AIRCRAFT_CATEGORY_LABEL_AR[trip.aircraft_category_preference]}
+          <Row label={t('aircraft_category_requested_label', lang)}>
+            {aircraftCategoryLabel(trip.aircraft_category_preference, lang)}
           </Row>
         )}
         {trip.special_requests && (
-          <Row label="متطلبات خاصة">
+          <Row label={t('special_requests_label', lang)}>
             <span className="whitespace-pre-wrap">{trip.special_requests}</span>
           </Row>
         )}
+        <Row label={t('link_valid_until_label', lang)}>
+          <span className="text-ink-secondary">
+            {formatRiyadhDateTime(operatorContext.tokenExpiresAt, lang)}
+          </span>
+        </Row>
       </dl>
     </div>
   );
