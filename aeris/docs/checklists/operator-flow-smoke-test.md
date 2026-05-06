@@ -976,3 +976,189 @@ checked against goes into the Phase 5.1 work-log entry.
   durable rebuild, accept atomicity, re-dispatch atomicity,
   tampered-token rejection at the security level) — those are
   the Phase 5 runbook above and are unchanged by Phase 5.1.
+
+---
+
+# Phase 6.0 — Airports Foundation, PR 2 (preview checklist)
+
+A short visual checklist for Phase 6.0 PR 2 (UI wiring on
+top of PR 1's schema + types + helpers). Runs against the
+**Vercel preview build of the PR itself** (`<preview-url>`),
+**not** production. Prerequisites:
+
+- PR 1 has merged to main.
+- Founder has applied
+  `20260506000005_phase_6_airports.sql` to production
+  Supabase and the 5 verification probes pass.
+- The preview build is green and the `airports` table on
+  the upstream Supabase has the 16 seeded airports (12
+  initial + 4 KSA from PR 1).
+
+This checklist mirrors `aeris/docs/CLAUDE-TASK.md` Phase 6.0
+spec acceptance criteria #1–#13 (UX) into the smallest
+sequence that exercises every changed surface. Non-UX
+criteria #14–#17 are gated by the build/lint/type checks
+in CI and the PR-2-scope `git diff main` check.
+
+## Steps
+
+### Phase 6.0-1 — `/request` picker renders + IATA submit
+
+Open `<preview-url>/request` in incognito.
+
+- [ ] The "من" combobox trigger is a styled button (not a
+      free text input). Click it.
+- [ ] Dropdown shows airports grouped by country, KSA
+      first ("Saudi Arabia" header). At least 16 airports
+      appear (12 initial + 4 PR 1 additions).
+- [ ] Type "rua" or "ري" in the search box; the list
+      filters in real time. Type "ynb"; YNB (Yanbu) appears.
+- [ ] Pick "الرياض — مطار الملك خالد الدولي — RUH" as
+      origin. The trigger button now shows
+      "الرياض (RUH)".
+- [ ] Pick "جدة — مطار الملك عبدالعزيز الدولي — JED" as
+      destination.
+- [ ] Fill the rest of the form (name, phone, dates,
+      passengers) and submit.
+- [ ] Success panel renders. In Supabase SQL Editor:
+      `SELECT request_number, origin, destination,
+      origin_iata, destination_iata FROM lead_inquiries
+      ORDER BY created_at DESC LIMIT 1;`
+- [ ] Returned row has `origin_iata = 'RUH'` AND
+      `destination_iata = 'JED'` AND `origin` = "الرياض
+      (RUH)" AND `destination` = "جدة (JED)" — the display
+      label, not raw IATA. Acceptance #2.
+
+### Phase 6.0-2 — Freeform fallback works
+
+Reload `<preview-url>/request`.
+
+- [ ] In the origin combobox, open the dropdown and click
+      "أخرى — اكتب يدوياً" at the bottom.
+- [ ] The trigger swaps to a text input with an edit-mode
+      icon and a "↺" return button.
+- [ ] Type "العُلا — مطار خاص" as origin. Pick a known
+      IATA (DMM) for destination. Submit the rest.
+- [ ] Success panel renders.
+- [ ] Latest lead row has `origin_iata = NULL`,
+      `origin = "العُلا — مطار خاص"`,
+      `destination_iata = 'DMM'`,
+      `destination = "الدمام (DMM)"`. Acceptance #3.
+
+### Phase 6.0-3 — Validator rejects "neither" + "both"
+
+Reload `/request`.
+
+- [ ] Fill the rest of the form but leave the origin
+      combobox untouched (no selection). Submit.
+- [ ] Inline error renders under the origin field:
+      "اختر مطاراً أو اكتب يدوياً." (the
+      `origin_required` translation). Acceptance #4.
+- [ ] Open browser DevTools → Network tab. Re-submit with
+      both `origin_iata = 'RUH'` AND `origin_freeform = 'X'`
+      forced via "Edit and resend" (or by manually crafting
+      a fetch). Server returns
+      `{ ok: false, fieldErrors: { origin: 'origin_ambiguous' } }`.
+      Acceptance #5.
+
+### Phase 6.0-4 — Validator rejects unknown IATA
+
+In DevTools, craft a request payload with `origin_iata = 'ZZZ'`
+(format-valid but not in the airports table). Submit.
+
+- [ ] Server returns
+      `{ ok: false, fieldErrors: { origin: 'origin_iata_unknown' } }`.
+      The form translates to "هذا الرمز غير معروف. اختر من
+      القائمة أو اكتب يدوياً." Acceptance #6.
+
+### Phase 6.0-5 — Admin promote-lead writes the new legs shape
+
+In `<preview-url>/admin/leads/<the-lead-from-step-6.0-1-id>`:
+
+- [ ] Trigger the "تأكيد التحويل" button to promote the
+      lead (with origin_iata=RUH, destination_iata=JED).
+- [ ] In Supabase SQL Editor:
+      `SELECT request_number, departure_airport,
+      arrival_airport, legs FROM trip_requests ORDER BY
+      created_at DESC LIMIT 1;`
+- [ ] Row has `departure_airport = 'RUH'`,
+      `arrival_airport = 'JED'`, and `legs` JSONB shape:
+      `[{ "from": "RUH", "to": "JED", "from_freeform":
+      null, "to_freeform": null, "date": "...", "time":
+      null }]`. Acceptance #7.
+- [ ] Promote the freeform-origin lead from step 6.0-2.
+      The new trip row has `departure_airport = NULL`,
+      `arrival_airport = 'DMM'`, and
+      `legs[0].from = null, legs[0].from_freeform =
+      "العُلا — مطار خاص", legs[0].to = 'DMM'`.
+      Acceptance #8.
+
+### Phase 6.0-6 — Operator portal renders airport labels
+
+Dispatch the IATA-only trip from step 6.0-5 to one operator
+phone via the Phase 5 admin dispatch panel. Capture the v=2
+operator URL.
+
+- [ ] Open the URL in a fresh incognito. Trip summary card
+      shows route as "الرياض (RUH) ← جدة (JED)" — labels
+      from the airports table, not raw IATA codes.
+      Acceptance #9.
+- [ ] Append `?lang=en` to the URL. Same row renders
+      "Riyadh (RUH) → Jeddah (JED)". Acceptance #11.
+
+### Phase 6.0-7 — Operator portal renders freeform fallback
+
+Dispatch the freeform-origin trip from step 6.0-5 the same
+way. Capture URL.
+
+- [ ] Open in incognito. Trip summary route shows
+      "العُلا — مطار خاص ← الدمام (DMM)". The freeform
+      side renders verbatim with no IATA parenthetical, no
+      "(غير معروف)" / "(unknown)" suffix, no crash.
+      Acceptance #10.
+
+### Phase 6.0-8 — Legacy `legs[]` shape still renders correctly
+
+This is acceptance #13 — verifies that trips created BEFORE
+Phase 6.0 (their legs JSONB has `from`/`to` as bare freeform
+Arabic strings, no `from_freeform`/`to_freeform` keys at
+all) continue to render through the legacy fallback path
+without the helper attempting an IATA lookup.
+
+If a pre-Phase-6.0 trip is still in the DB and you have a
+v=2 URL for it:
+
+- [ ] Open the URL in incognito. Route renders with the
+      raw Arabic strings verbatim (e.g. "الرياض ← جدة"),
+      no IATA parenthetical, no "(unknown)" suffix, no
+      crash.
+
+If no pre-Phase-6.0 v=2 URL is reachable, fall back to
+**SQL fixture**: in Supabase SQL Editor, pick any current
+trip_request and update its legs shape to legacy:
+```sql
+UPDATE trip_requests
+SET legs = '[{"from":"الرياض","to":"جدة","date":"2026-06-01","time":null}]'::jsonb
+WHERE id = '<a-test-trip-id>';
+```
+Re-open the trip's existing v=2 operator URL.
+
+- [ ] Same render: "الرياض ← جدة" verbatim, no errors.
+
+## Pass criteria
+
+All checked boxes above. The preview URL the boxes were
+checked against goes into the Phase 6.0 PR 2 work-log entry.
+
+## What this checklist does NOT cover
+
+- Real production traffic on `aeris-flax.vercel.app` —
+  production verification is a **founder follow-up after
+  merge**, not a PR acceptance gate.
+- The `empty_legs` table — no Phase 6.0 changes touch it
+  (per spec acceptance #12).
+- The Phase 5 / Phase 5.1 invariants (multi-dispatch
+  atomicity, refresh-durable rebuild, accept atomicity,
+  re-dispatch atomicity, tampered-token rejection,
+  language toggle) — those are unchanged by Phase 6.0
+  and are covered by their own checklists above.
