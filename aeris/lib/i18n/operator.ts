@@ -291,6 +291,72 @@ const dictionary = {
     ar: '—',
     en: '—',
   },
+
+  // Phase 6.1 PR 1 — operator portal preferences section
+  // labels. Dormant in PR 1 (no consumer); PR 2's
+  // operator-portal display will start reading them.
+  // Additive only, no restructuring of the existing
+  // dictionary entries.
+  preferences_section_title: {
+    ar: 'تفضيلات العميل',
+    en: 'Customer Preferences',
+  },
+  pref_halal_required: {
+    ar: 'حلال: نعم — وجبات حلال مطلوبة',
+    en: 'Halal meals: required',
+  },
+  pref_halal_no: {
+    ar: 'حلال: لا حاجة',
+    en: 'Halal meals: not required',
+  },
+  pref_prayer_setup: {
+    ar: 'تجهيز الصلاة: مطلوب',
+    en: 'Prayer setup: requested',
+  },
+  pref_prayer_setup_no: {
+    ar: 'تجهيز الصلاة: غير مطلوب',
+    en: 'Prayer setup: not required',
+  },
+  pref_crew_gender_male: {
+    ar: 'جنس الطاقم المفضّل: ذكر',
+    en: 'Preferred crew gender: male',
+  },
+  pref_crew_gender_female: {
+    ar: 'جنس الطاقم المفضّل: أنثى',
+    en: 'Preferred crew gender: female',
+  },
+  pref_crew_gender_no_preference: {
+    ar: 'جنس الطاقم المفضّل: لا تفضيل',
+    en: 'Preferred crew gender: no preference',
+  },
+  pref_pilot_nationality_label: {
+    ar: 'جنسية الطيار المفضّلة',
+    en: 'Preferred pilot nationality',
+  },
+  pref_crew_nationalities_label: {
+    ar: 'جنسيات الطاقم المفضّلة',
+    en: 'Preferred crew nationalities',
+  },
+  pref_crew_languages_label: {
+    ar: 'لغات الطاقم المفضّلة',
+    en: 'Preferred crew languages',
+  },
+  pref_child_seats_label: {
+    ar: 'كراسي أطفال',
+    en: 'Child seats',
+  },
+  pref_elderly_assistance: {
+    ar: 'مساعدة لكبار السن: مطلوبة',
+    en: 'Elderly assistance: requested',
+  },
+  pref_elderly_assistance_no: {
+    ar: 'مساعدة لكبار السن: غير مطلوبة',
+    en: 'Elderly assistance: not required',
+  },
+  pref_medical_notes_label: {
+    ar: 'ملاحظات طبية',
+    en: 'Medical notes',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 export type StringKey = keyof typeof dictionary;
