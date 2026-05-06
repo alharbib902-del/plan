@@ -69,8 +69,8 @@ async function tryPersistLead(
  * sync (regex) + async (FK) validator chain.
  */
 async function resolveAirportSide(
-  iata: string | null,
-  freeform: string | null
+  iata: string | null | undefined,
+  freeform: string | null | undefined
 ): Promise<
   | { ok: true; label: string; iata: string | null }
   | { ok: false; code: 'iata_unknown' }
