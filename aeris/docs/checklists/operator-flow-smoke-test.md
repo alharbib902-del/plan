@@ -1162,3 +1162,157 @@ checked against goes into the Phase 6.0 PR 2 work-log entry.
   re-dispatch atomicity, tampered-token rejection,
   language toggle) — those are unchanged by Phase 6.0
   and are covered by their own checklists above.
+
+---
+
+# Phase 6.1 — Customer Preferences, PR 2 (preview checklist)
+
+A short visual checklist for Phase 6.1 PR 2 (UI wiring on
+top of PR 1's schema + types + validators + dormant i18n).
+Runs against the **Vercel preview build of the PR itself**
+(`<preview-url>`), **not** production. Prerequisites:
+
+- PR 1 (#17) merged to main.
+- Founder applied
+  `20260507000006_phase_6_1_preferences.sql` to production
+  Supabase and the 4 verification probes pass (Probe 2 =
+  exactly 2 overloads).
+- The preview build is green.
+
+Mirrors `aeris/docs/CLAUDE-TASK.md` Phase 6.1 spec
+iteration 4 acceptance criteria #1–#13 into 7 sequenced
+steps. Non-UX criteria #14–#17 are gated by build/lint/type
++ PR-2-scope `git diff main` checks.
+
+## Steps
+
+### Phase 6.1-1 — `/request` collapsible section + empty submit
+
+Open `<preview-url>/request` in incognito.
+
+- [ ] The form shows a "تفضيلات (اختياري)" section closed
+      by default. Click expands it; all 9 preference
+      fields visible, none required. (Acceptance #1.)
+- [ ] Without opening the section, fill in everything
+      else and submit. In Supabase SQL Editor:
+      `SELECT preferences FROM lead_inquiries
+      ORDER BY created_at DESC LIMIT 1;`
+- [ ] Returned `preferences = {}` (an empty JSONB
+      object — NOT `{ halal: null, ... }` and NOT
+      `null`). Acceptance #2 (canonical key-omission).
+
+### Phase 6.1-2 — Halal explicit Yes / No / silence
+
+Reload `/request`. Open the preferences section.
+
+- [ ] Pick "نعم — وجبات حلال مطلوبة"; submit. Latest
+      lead row has `preferences.halal = true`.
+      Acceptance #3.
+- [ ] Reload `/request`. Pick "لا حاجة"; submit. Latest
+      lead row has `preferences.halal = false` (the
+      explicit-No case).
+- [ ] Reload `/request`. Open the section but DON'T
+      touch the halal control; submit. Latest row's
+      `preferences` has **no `halal` key at all** (key
+      OMITTED, not `null`, not `false`). Acceptance #4.
+
+### Phase 6.1-3 — Multi-select + child seats + medical notes
+
+Reload `/request`.
+
+- [ ] In crew languages chips, click "العربية" and
+      "الإنجليزية"; in crew nationalities, click "السعودية"
+      and "مصر"; submit. Latest lead's
+      `preferences.crew_languages = ["ar", "en"]` and
+      `preferences.crew_nationalities = ["SA", "EG"]`.
+- [ ] Reload. Click "العربية" then click it again
+      (toggle off — leaves zero languages); submit. Latest
+      lead's `preferences` has **no `crew_languages` key**
+      (empty array stripped). Acceptance #5.
+- [ ] Reload. Type `2` into child seats; submit. Latest
+      `preferences.child_seats = 2`.
+- [ ] Reload. Type `0` into child seats; submit. The
+      child_seats key is NOT stored (UI clears on 0 per
+      the canonical rule).
+- [ ] Reload. Type "wheelchair" into medical notes (with
+      leading/trailing spaces "  wheelchair  "); submit.
+      Latest `preferences.medical_notes = "wheelchair"`
+      (whitespace trimmed by Codex P2 patch on PR 1).
+- [ ] Reload. Type only spaces "   " into medical notes;
+      submit. The form rejects with
+      `preferences_medical_notes_too_short` inline error
+      (rejection, not silent strip). Acceptance #7.
+
+### Phase 6.1-4 — Validator rejects unknown keys + crafted payloads
+
+In DevTools, intercept the submit and craft a payload
+with `preferences: { halal: true, evil_key: "x" }`.
+
+- [ ] Server returns
+      `{ ok: false, fieldErrors: { preferences: 'preferences_invalid' } }`
+      (strict Zod). Acceptance #6.
+
+### Phase 6.1-5 — Admin promote pre-fill
+
+Pick the lead from Phase 6.1-2 step 1 (halal=true).
+
+- [ ] Open `<preview-url>/admin/leads/<id>`. The promote
+      form's "تفضيلات العميل" section is rendered
+      always-expanded (NOT collapsible) and the halal
+      tri-state has "نعم" pre-selected. Acceptance #8.
+
+### Phase 6.1-6 — Admin promote passes preferences through
+
+From the same lead detail page (Phase 6.1-5):
+
+- [ ] Click "تأكيد التحويل" without changing anything.
+      Browser redirects to `/admin/trips/<new-id>`.
+- [ ] In Supabase SQL Editor:
+      `SELECT preferences FROM trip_requests
+      ORDER BY created_at DESC LIMIT 1;`
+- [ ] Returned preferences contains BOTH
+      `halal: true` AND `lead_trip_type: 'one_way'` (or
+      whichever the lead's trip type was). The legacy
+      `lead_trip_type` injection is preserved by the
+      RPC's body-side merge. Acceptance #9.
+
+### Phase 6.1-7 — Operator portal renders preferences + EN mode + legacy
+
+Dispatch the trip from Phase 6.1-6 to one operator phone
+via the Phase 5 admin dispatch panel. Capture v=2 URL.
+
+- [ ] Open the URL in fresh incognito. Trip summary
+      card shows a "تفضيلات العميل" section above
+      `special_requests`, with "حلال: نعم — وجبات حلال
+      مطلوبة" as the first row. Acceptance #10.
+- [ ] Append `?lang=en`. Same row renders "Customer
+      Preferences: Halal meals: required". Other
+      sections + chrome translate too. Acceptance #12.
+- [ ] Pick a lead with NO preferences (an empty-section
+      submit from earlier), promote it, dispatch, open
+      the v=2 URL. Trip summary card shows NO
+      preferences section at all (legacy trips have
+      `preferences = { lead_trip_type: 'one_way' }`,
+      which the display helper treats as
+      "no displayable preferences" per acceptance #11
+      + #13).
+
+## Pass criteria
+
+All checked boxes above. The preview URL the boxes were
+checked against goes into the Phase 6.1 PR 2 work-log
+entry.
+
+## What this checklist does NOT cover
+
+- Real production traffic on `aeris-flax.vercel.app` —
+  production verification is a **founder follow-up after
+  merge**, not a PR acceptance gate.
+- The optional CHECK constraint (Q4 in the spec — deferred,
+  not implemented in PR 1).
+- Optional PR 3 cleanup — drop of the 5-arg compatibility
+  wrapper. Defer indefinitely; the wrapper is harmless and
+  documented.
+- Phase 5 / Phase 5.1 / Phase 6.0 invariants — those are
+  unchanged by Phase 6.1 and covered by their own
+  checklists above.
