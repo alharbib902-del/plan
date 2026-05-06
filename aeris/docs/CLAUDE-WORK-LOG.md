@@ -3054,19 +3054,28 @@ Body changes:
 
 - The `INSERT INTO trip_requests` statement now includes
   `departure_airport` and `arrival_airport` in its column
-  list.
-- Their values are derived from the legs payload using
-  CASE-guarded subqueries:
-  - `departure_airport` ← `p_legs[0]->>'from'`, normalized
-    via `upper(NULLIF(..., ''))`, matched against the
-    airports table — returns the IATA code on hit, NULL
-    on miss.
-  - `arrival_airport` ← same approach against the LAST
-    leg's `to`, computed via
-    `p_legs->(jsonb_array_length(p_legs) - 1)->>'to'`.
-- Defensive guards: `jsonb_typeof(p_legs) = 'array' AND
-  jsonb_array_length(p_legs) > 0` short-circuits to NULL
-  when the payload is missing, malformed, or empty.
+  list. Their values come from local variables
+  (`v_departure_iata`, `v_arrival_iata`) populated before
+  the INSERT runs.
+- The variables are derived from the legs payload inside a
+  **nested `IF jsonb_typeof(p_legs) = 'array' THEN ...`
+  block** that first computes `v_legs_len :=
+  jsonb_array_length(p_legs)` and then, when
+  `v_legs_len > 0`, runs two `SELECT iata_code FROM airports
+  WHERE iata_code = upper(NULLIF(..., ''))` lookups:
+  - `v_departure_iata` ← `p_legs->0->>'from'` matched
+    against the airports table.
+  - `v_arrival_iata` ← `p_legs->(v_legs_len - 1)->>'to'`
+    matched the same way.
+- Both variables stay NULL when the payload is missing,
+  not an array, or empty — and when present but not
+  matching a known IATA. The nested-IF shape (instead of
+  `WHEN jsonb_typeof = 'array' AND jsonb_array_length > 0`
+  inline in CASE WHEN) is required because the SQL
+  standard does NOT guarantee short-circuit evaluation of
+  `AND`. **Codex P2 patch on PR #15** addressed this — the
+  inline form could let `jsonb_array_length` execute on a
+  non-array payload and raise.
 
 The `REVOKE ALL ... FROM PUBLIC, anon, authenticated` plus
 `GRANT EXECUTE ... TO service_role` block is restated after
