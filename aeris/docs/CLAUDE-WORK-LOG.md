@@ -3831,11 +3831,26 @@ The `aeris/docs/checklists/operator-flow-smoke-test.md`
 "Phase 6.1 — Customer Preferences, PR 2 (preview
 checklist)" section covers them in 7 sequenced steps.
 
-**Vercel preview URL for this PR:** *to be filled in by
-the founder after Vercel deploys the PR head; founder +
-Codex spot-check before merge*. Acceptance #14–#17
-(non-UX) are gated by the build/lint/type checks above
-and the PR-2-scope `git diff main` check.
+**Vercel preview URL for this PR:**
+`https://aeris-git-feature-phase-6-1-pref-689331-earis-projects-620f37e5.vercel.app`
+
+(Deploy status: Ready as of the PR open and the
+subsequent Codex iteration-1 P1 + 2× P2 patches. CI's
+"Type-check, build, lint" + Vercel build are green on
+the head of the patch branch.)
+
+**Founder spot-check against the Phase 6.1 preview
+checklist: PENDING.** This entry records the
+implementation + the live preview URL; the founder runs
+the 7 steps of `aeris/docs/checklists/operator-flow-smoke-test.md`
+"Phase 6.1 — Customer Preferences, PR 2 (preview
+checklist)" against the URL above before merge.
+Acceptance criteria #1–#13 (UX) are not yet observed;
+this entry records the implementation and the preview
+being available, not a passed spot-check.
+
+Acceptance #14–#17 (non-UX) are gated by the build/lint/type
+checks above and the PR-2-scope `git diff main` check.
 
 ### What this PR does NOT do
 

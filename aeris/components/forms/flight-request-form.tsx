@@ -13,7 +13,10 @@ import {
 import { AirportCombobox } from '@/components/ui/airport-combobox';
 import { TripPreferencesFields } from '@/components/forms/trip-preferences-fields';
 import type { AirportRow } from '@/types/database';
-import type { TripPreferences } from '@/lib/validators/trip-preferences';
+import {
+  mergeTripPreferences,
+  type TripPreferences,
+} from '@/lib/validators/trip-preferences';
 
 const ERROR_MESSAGES_AR: Record<string, string> = {
   // Phase 6.0 PR 2 (S3): airport picker error codes.
@@ -119,13 +122,17 @@ export function FlightRequestForm({
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    // Phase 6.1 PR 2: serialize preferences state to JSON
-    // and append as a single FormData field. The Server
-    // Action JSON.parses + runs through the strict
-    // tripPreferencesSchema + mergeTripPreferences before
-    // persisting (canonical key-omission rule enforced
-    // server-side too).
-    formData.append('preferences', JSON.stringify(preferences));
+    // Phase 6.1 PR 2: serialize preferences state to JSON.
+    // Run mergeTripPreferences({}, state) on the CLIENT
+    // first to strip transient empties / trim
+    // whitespace-only strings — the form has no error slot
+    // for individual preference fields, so values that the
+    // server's strict Zod would reject must be normalized
+    // here (per Codex iteration-1 P2 review of PR 2). The
+    // Server Action calls mergeTripPreferences again as
+    // defense-in-depth.
+    const cleanedPreferences = mergeTripPreferences({}, preferences);
+    formData.append('preferences', JSON.stringify(cleanedPreferences));
     setErrors({});
 
     startTransition(async () => {

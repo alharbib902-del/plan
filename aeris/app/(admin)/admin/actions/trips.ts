@@ -86,16 +86,24 @@ export async function promoteLead(formData: FormData): Promise<PromoteResult> {
 
   const legs = buildLegsFromLead(lead);
 
-  // Phase 6.1 PR 2: merge admin-edited preferences over the
-  // lead's pre-existing preferences (read from
-  // lead_inquiries.preferences). The merge helper strips
-  // null/undefined/empty values from the admin overlay so
-  // the canonical "key omission = no preference" rule
-  // holds. The legacy lead_trip_type key is injected by
-  // the RPC body itself (last-write-wins on JSONB || in
-  // SQL); we don't need to inject it here.
+  // Phase 6.1 PR 2 (Codex iteration-1 P1 fix): the admin
+  // payload IS the full replacement for editable
+  // preferences. The form pre-fills state from
+  // lead.preferences (minus the legacy lead_trip_type key)
+  // so the founder sees the existing values, edits from
+  // there, and submits the post-edit state. Merging over
+  // lead.preferences would silently preserve cleared keys —
+  // e.g. a lead with halal=true would still have halal=true
+  // even after the founder picks "لا تفضيل" (which removes
+  // the key from the form payload). Treat the admin payload
+  // as canonical. The merge helper still runs to enforce
+  // the "key omission = no preference" rule against any
+  // empty/whitespace transients. The legacy lead_trip_type
+  // key is injected by the RPC body itself after this merge
+  // (last-write-wins on JSONB || in SQL); we don't preserve
+  // it client-side.
   const mergedPreferences = mergeTripPreferences(
-    lead.preferences,
+    {},
     preferencesParsed.data
   );
 
