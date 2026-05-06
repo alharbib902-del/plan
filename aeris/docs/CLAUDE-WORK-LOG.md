@@ -3446,3 +3446,238 @@ shipped based on this entry alone — the merge of PR 2 +
 Codex acceptance + the founder's spot-check are the
 actual ship signals.
 
+---
+
+## Phase 6.1 — Customer Preferences, PR 1 (2026-05-06)
+
+### Status
+
+**PR 1 of 2 opened. Production migration NOT YET applied.**
+First slice of Phase 6.1 (matching-only preferences, no
+pricing) per `aeris/docs/CLAUDE-TASK.md` Phase 6.1 spec
+iteration 4 (Codex round 4 acceptance 100/100, founder-
+accepted). PR 1 is intentionally schema + types +
+validators + i18n keys only; no UI runtime, no consumer of
+the new column or new RPC parameter yet.
+
+The 2-PR split was prescribed by Codex iteration-2 P1 to
+prevent the same class of break Phase 5 / Phase 6.0
+needed their own splits to avoid: if runtime UI that
+reads/writes the new `lead_inquiries.preferences` column
+or calls the new 6-arg RPC merges before the migration
+applies to production Supabase, every `/request` submit
+and admin promote that hits the new code path crashes.
+PR 1 opens the slot; PR 2 fills it.
+
+### What this PR adds
+
+Four substantive files plus this work-log entry:
+
+1. **Migration:**
+   `aeris/supabase/migrations/20260507000006_phase_6_1_preferences.sql`.
+   Idempotent (`ADD COLUMN IF NOT EXISTS` + two
+   `CREATE OR REPLACE FUNCTION` calls + REVOKE/GRANT
+   blocks).
+2. **Validators:**
+   `aeris/lib/validators/trip-preferences.ts` — Zod
+   schema + `mergeTripPreferences` helper. **Dormant in
+   PR 1** (no consumer); PR 2 wires it into the
+   `/request` Server Action and the admin promote action.
+3. **Types:** `aeris/types/database.ts` strong-types
+   `trip_requests.preferences` from
+   `Record<string, unknown> | null` to
+   `TripPreferences | null` and adds
+   `lead_inquiries.preferences: TripPreferences` (NOT
+   NULL).
+4. **i18n keys:** `aeris/lib/i18n/operator.ts` — 15 new
+   keys (Arabic + English) for the operator portal's
+   future preferences section. Additive only, **dormant
+   in PR 1**.
+
+### Migration effects
+
+#### `lead_inquiries` table
+
+One new column, NOT NULL with default:
+
+```
+preferences  JSONB NOT NULL DEFAULT '{}'::jsonb
+```
+
+Existing rows get `{}` automatically. New code never has
+to null-check this column. Per Phase 6.1 spec iteration 2
+P2 (Codex resolved nullability lock).
+
+#### `promote_lead_to_trip_request` RPC — TWO overloads
+
+PR 1 leaves the RPC in a temporary **two-overload state**
+that's intentional and will be cleaned up in an optional
+future PR 3:
+
+- **5-arg compatibility wrapper** (kept alive across
+  PR 1 → probe → PR 2 deploy window):
+  ```
+  promote_lead_to_trip_request(
+    UUID, JSONB, aircraft_category, TEXT, TEXT
+  )
+  ```
+  Body REPLACED with a thin delegation to the 6-arg
+  function with `'{}'::jsonb` for the missing
+  `p_preferences`. Running production admin code (which
+  still calls the 5-arg path) sees no behavior change —
+  the merged preferences with empty `p_preferences`
+  resolves to the same `{ lead_trip_type: ... }` shape
+  Phase 6.0 PR 1 produced.
+
+- **6-arg canonical** (NEW — PR 2's Server Action
+  callers will switch to this):
+  ```
+  promote_lead_to_trip_request(
+    UUID, JSONB, aircraft_category, TEXT, TEXT, JSONB
+  )
+  ```
+  Body is the Phase 6.0 PR 1 IATA-aware body PLUS the
+  preferences merge:
+  ```sql
+  v_merged_preferences := COALESCE(p_preferences, '{}'::jsonb)
+    || jsonb_build_object('lead_trip_type', p_lead_trip_type);
+  ```
+  The legacy `lead_trip_type` injection is preserved
+  verbatim (any caller-supplied `lead_trip_type` key in
+  `p_preferences` is overwritten by the canonical value
+  via JSONB `||` right-wins-on-collision semantics).
+
+Both signatures preserved:
+- `LANGUAGE plpgsql`
+- `SECURITY DEFINER`
+- `SET search_path = public, pg_temp`
+- `REVOKE ALL ... FROM PUBLIC, anon, authenticated`
+- `GRANT EXECUTE ... TO service_role`
+
+The 5-arg signature is **NOT dropped in PR 1**. An
+optional future PR 3 cleanup can drop it after PR 2
+ships and grep confirms zero callers — see the spec's
+"Optional PR 3" section.
+
+### Founder verification probes (REQUIRED before PR 2)
+
+After this PR merges and the founder applies
+`20260507000006_phase_6_1_preferences.sql` to the
+production Supabase project (same paste-into-SQL-Editor
+flow as Phase 4 / 5 / 6.0 activations), **the founder
+runs these 4 probes exactly as documented in the spec's
+Quality gates section**:
+
+```sql
+-- Probe 1: lead_inquiries.preferences column shape.
+SELECT column_name, data_type, is_nullable, column_default
+  FROM information_schema.columns
+  WHERE table_name = 'lead_inquiries'
+    AND column_name = 'preferences';
+-- Expected one row:
+--   data_type     = 'jsonb'
+--   is_nullable   = 'NO'
+--   column_default contains "'{}'::jsonb"
+
+-- Probe 2: promote_lead_to_trip_request — TWO overloads.
+SELECT
+  pg_get_function_identity_arguments(p.oid) AS args,
+  p.prosecdef,
+  p.proconfig
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'promote_lead_to_trip_request'
+ORDER BY pg_get_function_identity_arguments(p.oid);
+-- Expected EXACTLY TWO rows:
+--   Row 1 (5-arg compatibility wrapper):
+--     args = "p_lead_id uuid, p_legs jsonb,
+--             p_aircraft_category aircraft_category,
+--             p_special_requests text,
+--             p_lead_trip_type text"
+--   Row 2 (6-arg canonical):
+--     args = "..., p_preferences jsonb"
+-- Both: prosecdef = true,
+--       proconfig contains 'search_path=public, pg_temp'.
+-- If 1 row OR 3+ rows: halt before opening PR 2.
+
+-- Probe 3: EXECUTE privileges on BOTH signatures.
+SELECT r.rolname,
+       has_function_privilege(
+         r.rolname,
+         'promote_lead_to_trip_request(uuid, jsonb, aircraft_category, text, text)',
+         'EXECUTE'
+       ) AS can_execute_5_arg,
+       has_function_privilege(
+         r.rolname,
+         'promote_lead_to_trip_request(uuid, jsonb, aircraft_category, text, text, jsonb)',
+         'EXECUTE'
+       ) AS can_execute_6_arg
+  FROM (VALUES ('service_role'), ('anon'), ('authenticated')) r(rolname);
+-- Expected (BOTH columns the same on every row):
+--   service_role  → true,  true
+--   anon          → false, false
+--   authenticated → false, false
+
+-- Probe 4: Re-runnability — paste 20260507000006 a
+-- second time. Expected: "Success. No rows returned".
+-- ALTER TABLE IF NOT EXISTS no-ops, both
+-- CREATE OR REPLACE FUNCTION calls re-run idempotently,
+-- both signatures remain present (NO drop in PR 1),
+-- REVOKE/GRANT reapply cleanly. Re-running probes 1-3
+-- still returns the same shape (probe 2: still EXACTLY
+-- TWO rows).
+```
+
+If any probe fails, halt before opening PR 2.
+
+### Files touched
+
+| file | type | change |
+|---|---|---|
+| `aeris/supabase/migrations/20260507000006_phase_6_1_preferences.sql` | new | migration above |
+| `aeris/lib/validators/trip-preferences.ts` | new | TripPreferences type + Zod + mergeTripPreferences |
+| `aeris/types/database.ts` | edited | LeadInquiryRow.preferences (NOT NULL), LeadInquiryInsert.preferences? optional, TripRequestRow.preferences narrowed |
+| `aeris/lib/i18n/operator.ts` | edited | 15 new keys (additive, dormant) |
+| `aeris/docs/CLAUDE-WORK-LOG.md` | edited | this entry (last commit) |
+
+`aeris/docs/CLAUDE-TASK.md` is intentionally NOT in this
+PR; remains a local working-tree draft per the
+established discipline.
+
+### Quality gates (locally on Windows, branch HEAD before push)
+
+| command | exit | notes |
+|---|---|---|
+| `npm --prefix aeris run type-check` | 0 | `tsc --noEmit` clean. The TripPreferences narrowing on `TripRequestRow.preferences` ripples cleanly through every consumer (the single one in `components/admin/trip-detail-card.tsx` uses an explicit cast that remains compatible). |
+| `npm --prefix aeris run lint:strict` | 0 | "✔ No ESLint warnings or errors". |
+| `npm --prefix aeris run build` | 0 | Route table unchanged. PR 1 adds no UI surface and no client bundle delta. |
+| Lockfile diff | empty | No new dependencies (zod is already in package.json). |
+| `package.json` diff | empty | No script change. |
+
+### Carry-overs (unchanged by this PR)
+
+- **`SUPABASE_SERVICE_ROLE_KEY` rotation + HS256 revoke**
+  — deferred indefinitely per founder decision. Not
+  reopened.
+- **NUM (NEOM Bay) ICAO data quality** — `OENG` should
+  be `OENK`. Open Phase 6.0 PR 1 carry-over.
+- **OEPV (Riyadh Executive Aviation Terminal)** —
+  deferred per Phase 6.0 PR 1 Resolved decision.
+- **Phase 4 v=1 deprecation timing** — open question
+  from Phase 5 PR #6, still open.
+
+### Closing
+
+PR 1 is **schema + types + validators + dormant i18n
+keys complete on the feature branch and quality-gates
+green locally**. The runtime UI in PR 2 (collapsible
+preferences section on `/request` + admin promote
+pre-fill + operator portal display) cannot open until:
+(a) PR 1 merges, (b) the founder applies the migration
+to production Supabase, and (c) the 4 verification
+probes pass. Do NOT declare Phase 6.1 shipped based on
+this entry alone — PR 2 + Codex acceptance + the
+founder's spot-check on PR 2's preview checklist are
+the actual ship signals.
+
