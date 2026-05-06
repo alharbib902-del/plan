@@ -1,6 +1,7 @@
-import type { TripRequestRow } from '@/types/database';
+import type { AirportRow, TripRequestRow } from '@/types/database';
 import {
   aircraftCategoryLabel,
+  airportLabel,
   formatRiyadhDate,
   formatRiyadhDateTime,
   type Lang,
@@ -52,10 +53,12 @@ function Row({
 export function OperatorTripSummary({
   trip,
   operatorContext,
+  airports,
   lang,
 }: {
   trip: TripRequestRow;
   operatorContext: OperatorContext;
+  airports: AirportRow[];
   lang: Lang;
 }) {
   return (
@@ -75,7 +78,8 @@ export function OperatorTripSummary({
             {(trip.legs ?? []).map((leg, idx) => (
               <li key={idx} className="font-ar">
                 <span className="text-ink-muted">[{idx + 1}]</span>{' '}
-                {leg.from} ← {leg.to}
+                {airportLabel(leg.from, leg.from_freeform, lang, airports)} ←{' '}
+                {airportLabel(leg.to, leg.to_freeform, lang, airports)}
                 <span className="ms-2 text-xs text-ink-muted">
                   {formatRiyadhDate(leg.date, lang)}
                 </span>
