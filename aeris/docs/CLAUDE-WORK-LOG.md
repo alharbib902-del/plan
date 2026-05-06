@@ -2778,3 +2778,161 @@ protocol; the runbook is the canonical specification of
 "expected", and the claim of this entry is that results
 matched that specification for every executed step.
 
+---
+
+## Phase 5.1 — Operator Experience Polish (2026-05-06)
+
+### Status
+
+**Implementation PR opened. Acceptance pending Codex review +
+founder spot-check on the Vercel preview build.** No code on
+`main` yet. No production change. The PR adds operator-facing
+UX polish on top of the activated Phase 5 dispatch engine; the
+engine itself is unchanged.
+
+The spec is `aeris/docs/CLAUDE-TASK.md` Phase 5.1 iteration 3
+(Codex 100/100, accepted by founder). The implementation
+follows that spec strictly: no DB / RPC / admin / payment /
+ZATCA / WhatsApp-API / operator-account changes, no new
+dependencies, no token HMAC internals touched.
+
+### What this PR adds
+
+The operator portal at `/operator/offer/[token]` gets:
+
+- **English/Arabic toggle (S6).** A `?lang=en` query parameter
+  switches the entire Phase 5.1 surface (chrome tagline + trip
+  summary + form + ExpiredLink + success panel) between
+  Arabic and English. No cookies, no localStorage; URL is the
+  single source of truth. Default = AR; any other value falls
+  through to AR.
+- **Trip summary clarity (S1).** Departure (and return) shown
+  with explicit Asia/Riyadh time + `(بتوقيت الرياض)` /
+  `(Riyadh time)` suffix. Single canonical timezone (no
+  dual-time per Codex resolved decision #3). New
+  "هذا الرابط صالح حتى …" row reads the token's `expires_at`
+  from the verified payload via a new `operatorContext` prop
+  (no extra DB query).
+- **ExpiredLink variants (S2).** Three reason-specific bodies:
+  `link_expired`, `link_cancelled`, `link_already_used`,
+  selected by `app/operator/offer/[token]/page.tsx` from the
+  per-target row state on the v=2 path and from trip-level
+  signals on the v=1 path. **HMAC-fail still funnels to the
+  generic body with no reason** — preserves the no-oracle
+  property documented in the Phase 5 activation entry's
+  Step 34. Code comment at the early-return makes this a hard
+  contract.
+- **Form UX (S3 + S5).** Helper text under every required
+  field; aircraft category select labels translated; per-field
+  inline error messages render under the offending input via
+  the new `field_errors` map on the Server Action result.
+- **Success panel (S4).** Replaces the bare thank-you with a
+  summary card echoing request number + price + aircraft +
+  departure ETA (Asia/Riyadh) + validity hours + WhatsApp
+  contact button + "save this page for reference" note (per
+  spec Risk 4 — the panel is React state and disappears on
+  refresh).
+- **`field_errors` Server Action contract.**
+  `SubmitOperatorOfferResult` widens with optional
+  `field_errors?: Record<string, string>` populated only when
+  the result is `{ ok: false, error: 'invalid_input' }` and
+  the source was the Zod safeParse issue list. Strict
+  superset: existing v=1-only consumers ignoring the field
+  continue to compile and behave correctly. Per Codex
+  resolved decision #5.
+
+### Files touched
+
+Per spec "Files likely touched" (iteration 3):
+
+| file | type | change |
+|---|---|---|
+| `aeris/lib/i18n/operator.ts` | new | typed dictionary + helpers |
+| `aeris/components/operator/lang-toggle.tsx` | new | toggle button |
+| `aeris/components/operator/operator-portal-header.tsx` | new | bridges Server-Component layout to client `useSearchParams` reader (not named in the spec; called out as a structural necessity for App Router layouts that cannot read searchParams) |
+| `aeris/app/operator/offer/[token]/layout.tsx` | edited | swaps inline header for `<OperatorPortalHeader />` |
+| `aeris/components/operator/expired-link.tsx` | edited | optional `reason` discriminator + i18n |
+| `aeris/components/operator/trip-summary.tsx` | edited | `operatorContext` prop, link-validity row, i18n, Asia/Riyadh formatting |
+| `aeris/app/operator/offer/[token]/actions.ts` | edited | widened result with optional `field_errors` |
+| `aeris/components/operator/offer-form.tsx` | edited | helper text, per-field errors, success panel echo, i18n |
+| `aeris/app/operator/offer/[token]/page.tsx` | edited | reads `?lang`, builds `operatorContext`, computes ExpiredLink reason for HMAC-valid + state-fail branches |
+| `aeris/docs/checklists/operator-flow-smoke-test.md` | edited | appends "Phase 5.1 preview checklist" section (7 steps) |
+| `aeris/docs/CLAUDE-WORK-LOG.md` | edited | this entry (last commit) |
+
+`aeris/docs/CLAUDE-TASK.md` is intentionally NOT in this PR;
+it remains a local working-tree draft per the established PR
+discipline.
+
+### Quality gates (locally on Windows, branch HEAD before push)
+
+| command | exit | notes |
+|---|---|---|
+| `npm --prefix aeris run type-check` | 0 | `tsc --noEmit` clean. The dictionary's typed key map catches missing translations at compile time. |
+| `npm --prefix aeris run lint:strict` | 0 | "✔ No ESLint warnings or errors". |
+| `npm --prefix aeris run build` | 0 | Route table unchanged. `/operator/offer/[token]` 2.74 → 6.79 kB (delta **+4.05 kB**, under the 5 kB ceiling per spec Risk 5). All other route bundles unchanged. |
+| Lockfile diff | empty | `git diff aeris/package-lock.json` produces no output. No new dependencies. |
+| `package.json` diff | empty | No script or dep change. |
+
+CI (Type-check, build, lint + Vercel) re-runs on the PR head;
+those results are recorded in the PR description, not here.
+
+### Acceptance verification
+
+The spec's acceptance criteria #1–#14 are user-facing UX
+checks that run on the **Vercel preview build of this PR**, not
+on local. The `aeris/docs/checklists/operator-flow-smoke-test.md`
+"Phase 5.1 — Operator Experience Polish (preview checklist)"
+section covers them in 7 short sequenced steps.
+
+**Preview URL the acceptance was checked against:**
+`<preview-url — to be filled in after Vercel deploys the PR
+head; founder + Codex spot-check before merge>`.
+
+Acceptance #11 (v=1 backwards compat): per Codex resolved
+decision #7, satisfied by code review of
+`app/operator/offer/[token]/page.tsx` v=1 branch confirming the
+new prop surfaces (`lang` + `operatorContext` +
+`tripRequestNumber`) thread through unchanged. A live v=1
+probe in the preview environment is generated only if
+practical.
+
+### What this PR does NOT do
+
+Mirroring the spec's "Out of scope" section, for the historical
+record:
+
+- No DB schema, RLS, RPC, or migration changes.
+- No admin dispatch engine changes (`app/(admin)/admin/...`
+  unchanged).
+- No payment, ZATCA, WhatsApp Business API, or operator
+  account work.
+- No new dependencies. `package.json` and `package-lock.json`
+  unchanged.
+- No token HMAC internals touched. `lib/operator/token.ts`
+  unchanged. v=1 and v=2 verifier behavior identical.
+- No real-time / WebSocket / countdown UI on the link expiry
+  display (absolute timestamp only per Codex resolved
+  decision #4).
+- No work on the Phase 4 deprecation question raised in the
+  Phase 5 PR #6 entry — that stays open.
+
+### Carry-overs (unchanged by this PR)
+
+- **`SUPABASE_SERVICE_ROLE_KEY` rotation + legacy HS256
+  revoke** — deferred indefinitely per founder decision
+  recorded in Phase 4 Production Activation. Not reopened.
+- **Vercel collaboration-Hobby author restriction** —
+  mitigated since Phase 5 PR #2 by setting the local git
+  author to `alharbib902-del`. All Phase 5.1 commits use that
+  author.
+
+### Closing
+
+Phase 5.1 is **code-complete on the feature branch and
+quality-gates green locally**. Activation is a docs-PR review
++ Vercel preview verification + merge — none of which is done
+yet at the time of this entry. Do NOT declare Phase 5.1
+shipped based on this entry alone; the merge of this PR + the
+Codex acceptance + the founder follow-up production check are
+the actual ship signals.
+
