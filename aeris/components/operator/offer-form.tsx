@@ -88,6 +88,18 @@ export function OperatorOfferForm({
 
   const submitting = state.kind === 'submitting';
   const fieldErrors = state.kind === 'error' ? state.fieldErrors : undefined;
+  // Banner is shown ONLY for non-field errors (token_invalid /
+  // target_not_pending / failed / etc., or invalid_input where
+  // every field_errors key is unknown to the form). When at
+  // least one inline message will render, the banner is
+  // suppressed — the inline messages are the more specific
+  // signal. Per spec acceptance #10 + Codex P2 patch.
+  const hasResolvedFieldError =
+    fieldErrors !== undefined &&
+    Object.keys(fieldErrors).some(
+      (field) => resolveFieldError(fieldErrors, field, lang) !== undefined
+    );
+  const showBanner = state.kind === 'error' && !hasResolvedFieldError;
 
   return (
     <form
@@ -271,7 +283,7 @@ export function OperatorOfferForm({
         {t('submit_button', lang)}
       </button>
 
-      {state.kind === 'error' && (
+      {showBanner && state.kind === 'error' && (
         <p
           className="font-ar rounded-md border border-red-400/40 bg-red-500/10 p-3 text-xs text-red-200"
           role="alert"
