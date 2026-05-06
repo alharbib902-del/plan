@@ -4,6 +4,10 @@ import {
   flightRequestSchema,
   type FlightRequestInput,
 } from '@/lib/validators/trip-request';
+import {
+  mergeTripPreferences,
+  type TripPreferences,
+} from '@/lib/validators/trip-preferences';
 import { buildFlightRequestWhatsAppLink } from '@/lib/utils/whatsapp';
 import { insertLead } from '@/lib/supabase/queries/leads';
 import { notifyAdminOfNewLead } from '@/lib/notifications/lead-email';
@@ -34,6 +38,7 @@ interface ResolvedLeadInput {
   destinationLabel: string;
   originIata: string | null;
   destinationIata: string | null;
+  preferences: TripPreferences;
 }
 
 async function tryPersistLead(
@@ -53,6 +58,7 @@ async function tryPersistLead(
       passengers: input.data.passengers,
       notes: input.data.notes ?? null,
       source: 'website',
+      preferences: input.preferences,
     });
     return { persisted: true, row };
   } catch (err) {
@@ -122,6 +128,23 @@ export async function submitFlightRequest(
     };
   }
 
+  // Phase 6.1 PR 2: preferences arrive as a single
+  // JSON-stringified field. Empty string (collapsible
+  // section never opened, or all fields cleared) becomes
+  // an empty object before validation.
+  const preferencesRaw = formData.get('preferences');
+  let preferencesCandidate: unknown = {};
+  if (typeof preferencesRaw === 'string' && preferencesRaw.trim().length > 0) {
+    try {
+      preferencesCandidate = JSON.parse(preferencesRaw);
+    } catch {
+      return {
+        ok: false,
+        fieldErrors: { preferences: 'preferences_invalid' },
+      };
+    }
+  }
+
   const raw = {
     origin_iata: formData.get('origin_iata'),
     origin_freeform: formData.get('origin_freeform'),
@@ -134,6 +157,7 @@ export async function submitFlightRequest(
     customerName: formData.get('customerName'),
     customerPhone: formData.get('customerPhone'),
     notes: formData.get('notes'),
+    preferences: preferencesCandidate,
   };
 
   const parsed = flightRequestSchema.safeParse(raw);
@@ -170,12 +194,24 @@ export async function submitFlightRequest(
     };
   }
 
+  // Phase 6.1 PR 2: enforce the canonical "key omission =
+  // no preference" rule. mergeTripPreferences strips
+  // null / undefined / empty-array / empty-string values
+  // from the incoming object. The result is exactly the
+  // shape the JSONB column should hold (lib/validators/
+  // trip-preferences.ts canonical rule).
+  const cleanedPreferences = mergeTripPreferences(
+    {},
+    data.preferences ?? {}
+  );
+
   const persistInput: ResolvedLeadInput = {
     data,
     originLabel: originResolved.label,
     destinationLabel: destinationResolved.label,
     originIata: originResolved.iata,
     destinationIata: destinationResolved.iata,
+    preferences: cleanedPreferences,
   };
 
   const { persisted, row } = await tryPersistLead(persistInput);

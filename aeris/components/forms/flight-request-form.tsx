@@ -11,7 +11,9 @@ import {
   type FlightRequestActionResult,
 } from '@/app/actions/flight-request';
 import { AirportCombobox } from '@/components/ui/airport-combobox';
+import { TripPreferencesFields } from '@/components/forms/trip-preferences-fields';
 import type { AirportRow } from '@/types/database';
+import type { TripPreferences } from '@/lib/validators/trip-preferences';
 
 const ERROR_MESSAGES_AR: Record<string, string> = {
   // Phase 6.0 PR 2 (S3): airport picker error codes.
@@ -84,6 +86,10 @@ export function FlightRequestForm({
     persisted: boolean;
   } | null>(null);
   const [tripType, setTripType] = useState<(typeof TRIP_TYPE_OPTIONS)[number]['value']>('one_way');
+  // Phase 6.1 PR 2: structured preferences. Closed by default
+  // (collapsible <details>); the customer expands when they
+  // care to express preferences. Empty submission stores `{}`.
+  const [preferences, setPreferences] = useState<TripPreferences>({});
 
   const minDate = useMemo(() => todayIso(), []);
 
@@ -104,6 +110,7 @@ export function FlightRequestForm({
           setErrors({});
           formRef.current?.reset();
           setTripType('one_way');
+          setPreferences({});
         }}
       />
     );
@@ -112,6 +119,13 @@ export function FlightRequestForm({
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
+    // Phase 6.1 PR 2: serialize preferences state to JSON
+    // and append as a single FormData field. The Server
+    // Action JSON.parses + runs through the strict
+    // tripPreferencesSchema + mergeTripPreferences before
+    // persisting (canonical key-omission rule enforced
+    // server-side too).
+    formData.append('preferences', JSON.stringify(preferences));
     setErrors({});
 
     startTransition(async () => {
@@ -286,6 +300,24 @@ export function FlightRequestForm({
           error={errors.customerPhone}
           required
         />
+
+        {/* Phase 6.1 PR 2: collapsible preferences section.
+            Closed by default — customers who don't care
+            about specific crew/halal/etc. don't see the
+            extra surface. Opening reveals the 9 fields,
+            none required. Per spec S2. */}
+        <details className="rounded-md border border-border bg-navy-secondary/40 p-4">
+          <summary className="font-ar cursor-pointer text-sm text-ink hover:text-gold-light">
+            تفضيلات (اختياري) — حلال، طاقم، طيار، إلخ
+          </summary>
+          <div className="mt-4">
+            <TripPreferencesFields
+              value={preferences}
+              onChange={setPreferences}
+              disabled={pending}
+            />
+          </div>
+        </details>
 
         <div>
           <label className={fieldLabel} htmlFor="notes">
