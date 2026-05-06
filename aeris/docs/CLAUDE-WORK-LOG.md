@@ -2501,3 +2501,267 @@ separate "Phase 5 — Trip Distribution Engine activation
 and reports back the SQL post-conditions. Do NOT declare
 Phase 5 activated based on this entry alone.
 
+---
+
+## Phase 5 — Trip Distribution Engine activation (2026-05-06)
+
+### Status
+
+**Functionally activated.** Phase 5 (Trip Distribution Engine)
+is live and end-to-end verified on production: the migration is
+applied to the production Supabase project, the
+`PHASE5_ADMIN_UI` env gate is set to `true` with the build
+redeployed, and the full multi-dispatch → parallel-submit →
+comparison → accept → re-dispatch → stale-link → tampered-token
+sequence (`operator-flow-smoke-test.md` Phase 5 runbook
+steps 1–34) executed successfully against
+`https://aeris-flax.vercel.app/`.
+
+The deferred `SUPABASE_SERVICE_ROLE_KEY` rotation + legacy HS256
+revoke from the Phase 4 Production Activation entry **remain
+deferred** per founder decision; Phase 5 introduces no new
+security blockers and no new credential exposure. The Phase 4
+entry's Status framing — "Functionally activated; security
+activation incomplete until rotation + revoke complete" — still
+applies to the underlying production stack.
+
+This entry records the functional activation. No code changed
+in this session. Two operational changes were made on the live
+environment (one env-var edit on Vercel + the Supabase
+migration application); both are captured below.
+
+### Activation parameters
+
+- **Date:** 2026-05-06
+- **Production code:** `main` HEAD `3e41ae5` (Phase 5 PR #6 —
+  Codex P1 follow-up, "fix unsafe rollback claim")
+- **Production deployment:** Vercel `aeris-flax.vercel.app`
+  (Hobby plan, free `*.vercel.app` domain — DNS for `aeris.sa`
+  was retired during this session, see "Operational changes"
+  below)
+- **Production database:** the Phase 4 Supabase production
+  project, with the Phase 5 migration applied on top
+- **Runbook executed:** `aeris/docs/checklists/operator-flow-smoke-test.md`
+  Phase 5 section, all 34 steps
+- **Reporting protocol:** "results matched expected per
+  runbook" — SQL post-conditions are NOT transcribed in this
+  entry; the runbook itself is the canonical specification of
+  the expected post-conditions, and this entry's claim is that
+  every observed result matched
+
+### Steps 1–6 — Migration verification
+
+`aeris/supabase/migrations/20260505000004_phase_5_distribution.sql`
+was pasted into the Supabase SQL Editor on the production
+project and ran cleanly with no errors. SQL Editor reported
+"Success. No rows returned" — expected, since the file is pure
+DDL.
+
+All 6 SQL probes from runbook steps 1–6 returned the expected
+post-conditions:
+
+- `trip_dispatch_rounds` and `trip_dispatch_targets` tables
+  present, both with `relrowsecurity = true` and zero policies
+  (deny-all RLS; service role only).
+- `trip_requests.current_dispatch_round_id` column present (FK
+  to `trip_dispatch_rounds.id`).
+- The 3 Phase 5 RPCs (`open_phase5_dispatch_round`,
+  `submit_phase5_operator_offer`, `accept_offer`) present, each
+  with `prosecdef = true (SECURITY DEFINER)` and `proconfig`
+  containing `search_path=public, pg_temp` (the anti-hijacking
+  pin enforced since Phase 4).
+- RPC EXECUTE privileges via `has_function_privilege()`
+  cross-product: `service_role` → true on all 3,
+  `anon` → false on all 3, `authenticated` → false on all 3.
+
+The Phase 4 EXECUTE-privilege P1 (the regression that bit
+Phase 4's first live verification round, where `REVOKE` was
+missing on the new RPCs) **did not recur**: the migration's
+`REVOKE ... FROM PUBLIC, anon, authenticated` block is correctly
+applied. The hard P1-class gate from the runbook holds.
+
+### Steps 7–8 — Gate-OFF baseline
+
+With `PHASE5_ADMIN_UI` unset (default), `/admin/trips/[id]`
+rendered the Phase 4 view. A full Phase 4-style single-target
+dispatch was not separately re-executed in this session: the
+gate's default-OFF branch is byte-identical (same imports, same
+JSX renders) to what was verified end-to-end in the Phase 4
+Production Activation entry, and the founder elected to proceed
+directly to the gate flip after spot-confirming the Phase 4
+view rendered. This is a deliberate scope cut, not a missed
+step — re-running the full Phase 4 flow on every Phase 5
+activation would be redundant.
+
+### Steps 9–11 — Gate flip
+
+`PHASE5_ADMIN_UI = true` was added to the Vercel project on the
+Production + Preview + Development scopes. Vercel auto-
+redeployed `main` HEAD `3e41ae5`. After the redeploy,
+`/admin/trips/[id]` rendered the Phase 5 view (multi-row
+dispatch panel + unified comparison view that reads from both
+`phase4_operator_offers` and `phase5_operator_offers`).
+
+### Steps 12–28 — Multi-dispatch + parallel submit + comparison + accept
+
+The first activation test trip was created via the public
+`/request` form, promoted to a trip via `/admin/leads/<id>`,
+then dispatched to two operator phone numbers in a single
+`open_phase5_dispatch_round` call. Verified runtime invariants:
+
+- `trip_dispatch_rounds` row + 2 `trip_dispatch_targets` rows
+  inserted in a single transaction, with **byte-identical
+  `sent_at` timestamps across the batch** — the iteration-3 P1
+  fix (single `now()` snapshot reused across the multi-row
+  insert, instead of one `now()` per target) verified at
+  runtime.
+- The dispatch panel rendered **byte-identical operator URL
+  cards after a hard page refresh** — acceptance #14a holds:
+  the refresh-durable rebuild path
+  (`issueOperatorTokenFromTarget` derives `issued_at`
+  exclusively from `sent_at`, never from `now()`) reproduces
+  the same HMAC and therefore the same URL even after the
+  Server Action's response is gone.
+- Two parallel v=2 submissions from two incognito Chrome
+  windows (one per operator) each landed in
+  `phase5_operator_offers` with the expected
+  `dispatch_round_id` and `dispatch_target_id` join columns.
+  The unique `(dispatch_target_id)` constraint correctly
+  prevents a second submit on the same target row.
+- `/admin/trips/<id>` comparison view rendered both Phase 5
+  offers side-by-side with consistent ordering. (This trip
+  carried only Phase 5 offers; the unified view's ability to
+  also surface Phase 4 offers on the same trip is exercised by
+  pre-existing Phase 4 fixtures and is not re-verified here.)
+- Founder accepted one offer via the unified `accept_offer`
+  RPC. Verified post-conditions: chosen offer = `accepted`,
+  sibling offer = `rejected`, round = `closed` with
+  `closed_reason = 'offer_accepted'`, trip = `booked` — all
+  with **identical `decided_at` timestamps**, confirming
+  single-transaction atomicity of the four-row state machine
+  flip.
+
+### Steps 29–33 — Re-dispatch + stale-link probes
+
+A second activation test trip (`AER-2605067924`) was created
+and dispatched once (call this ROUND-A). A second
+`open_phase5_dispatch_round` was then issued on the same trip
+without first accepting either ROUND-A offer. Verified runtime
+invariants:
+
+- ROUND-A `closed` with `closed_reason = 'redispatched'`,
+  ROUND-A's pending targets set to `cancelled`, and ROUND-B
+  `opened` with fresh targets — all in a single transaction
+  with **identical close-at / open-at timestamps**. The
+  iteration-2 P2 fix (re-dispatch must close the prior round
+  AND its pending targets, not just open the new round) holds
+  at runtime.
+- A v=2 URL captured from a cancelled ROUND-A target rendered
+  the friendly `<ExpiredLink />` page in incognito, **not** the
+  offer form. The page-level state re-check in
+  `app/operator/offer/[token]/page.tsx` correctly rejects
+  targets whose `dispatch_round_id` no longer equals the
+  trip's `current_dispatch_round_id`.
+- A new ROUND-B URL rendered the offer form normally. The
+  ROUND-B target is pending, the round is current, and the
+  HMAC verifies — so the page short-circuits past every guard
+  and renders the form.
+
+### Step 34 — Tampered v=2 token rejection
+
+A v=2 token with one base64url character mutated in the
+browser's address bar rendered `<ExpiredLink />`, **not** the
+form. The HMAC verifier (`verifyOperatorToken`) returned
+`valid = false`, the page took the early-return branch
+(`page.tsx:49–51`), and the user-facing surface is identical
+to the expired/cancelled case.
+
+There is intentionally **no separate `<InvalidLink />`
+component** in the codebase: HMAC failures and state failures
+both funnel to `<ExpiredLink />` so that probing an enumerated
+link gives no oracle distinguishing "wrong signature" from
+"valid signature on a stale row". This is a security property,
+not a missing feature — the runbook's expected outcome for
+step 34 is "same friendly page as steps 30–32 stale-link
+probe", and that outcome was observed.
+
+### Operational changes during activation
+
+Two changes were made on the live environment in this session.
+Both are captured here for the historical record because they
+shift the production posture from what the Phase 5 PR #6 entry
+above described.
+
+**1. Supabase migration `20260505000004` applied to production.**
+Documented under "Steps 1–6" above. This is the expected
+activation move; flagged here only because the Phase 5 PR #6
+entry above explicitly noted "the Phase 5 tables and RPCs are
+NOT present" on production at PR-merge time, and that line is
+now stale.
+
+**2. `NEXT_PUBLIC_SITE_URL` changed from `https://aeris.sa`
+to `https://aeris-flax.vercel.app`.** During the runbook's
+first multi-dispatch (steps 12–22), the operator URLs rendered
+with the `aeris.sa` host, which has no DNS configured
+(`DNS_PROBE_FINISHED_NXDOMAIN` in incognito). The founder
+applied the manual host-swap workaround documented in the
+runbook for the first few URLs, then elected to **retire the
+unconfigured custom domain in favor of the free `*.vercel.app`
+domain** that the project actually serves on. The env var was
+edited in the Vercel Environment Variables panel and the build
+auto-redeployed; subsequent dispatches in steps 29–33
+generated URLs with the correct host directly and required no
+manual swap. This change supersedes the Phase 5 PR #6 entry's
+carry-over **"configure DNS for `aeris.sa`"** — that
+carry-over is now closed by founder decision (stay on free
+Vercel domain), not by configuring DNS.
+
+### Production posture (after this entry)
+
+- **Vercel production** serves `main` HEAD `3e41ae5` with
+  `PHASE5_ADMIN_UI = true` and
+  `NEXT_PUBLIC_SITE_URL = https://aeris-flax.vercel.app`.
+  `/admin/trips/[id]` renders the Phase 5 view;
+  `/operator/offer/[token]` accepts both v=1 (Phase 4) and
+  v=2 (Phase 5) tokens via the single-pass branch on
+  `payload.v`.
+- **Supabase production** carries the Phase 4 + Phase 5
+  schema (every table, column, constraint, and index from both
+  migrations) and all 6 RPCs (3 Phase 4 + 3 Phase 5; the
+  `accept_offer` RPC is the unified Phase 5 RPC that
+  supersedes Phase 4's `accept_phase4_offer` for new flows but
+  doesn't drop the old function — Phase 4 offers in flight at
+  activation time can still be accepted via the legacy path).
+- **Operator portal** issues v=2 tokens for all new dispatches
+  on the Phase 5 admin path. Any v=1 tokens from pre-Phase-5
+  Phase 4 dispatches still verify and route through their own
+  page branch (`page.tsx:56–80`), so no in-flight Phase 4
+  link is broken by this activation.
+
+### Carry-overs (open after this entry)
+
+- **`SUPABASE_SERVICE_ROLE_KEY` rotation + legacy HS256
+  revoke** — deferred indefinitely per founder decision
+  recorded in Phase 4 Production Activation. Not re-opened by
+  this entry. The Phase 4 entry's "P0 — Security activation
+  blockers" subsection remains the canonical record; this
+  entry adds nothing to it.
+- **Vercel collaboration-Hobby author restriction** —
+  mitigated since Phase 5 PR #2 by setting the local git
+  author to `alharbib902-del`. Unchanged by this entry; all
+  Phase 5 commits and this docs PR use that author.
+
+### Closing
+
+Phase 5 is **functionally activated on production** as of
+2026-05-06. The full operator dispatch lifecycle —
+multi-dispatch → refresh-durable rebuild → parallel v=2 submit
+→ unified comparison → atomic accept → atomic re-dispatch →
+stale-link rejection → tampered-token rejection — was
+exercised end-to-end against the live system, and every
+observed behavior matched the runbook's expected post-
+conditions. SQL outputs are not transcribed in this entry by
+founder protocol; the runbook is the canonical specification of
+"expected", and the claim of this entry is that results matched
+that specification.
+
