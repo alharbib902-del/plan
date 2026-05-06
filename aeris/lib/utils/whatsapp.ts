@@ -7,7 +7,24 @@ const TRIP_LABEL_AR: Record<FlightRequestInput['tripType'], string> = {
   multi_city: 'متعدد الوجهات',
 };
 
-export function formatFlightRequestMessage(data: FlightRequestInput): string {
+/**
+ * Phase 6.0 PR 2 (S3): the WhatsApp message reads display
+ * labels for origin / destination, not raw form fields. The
+ * Server Action computes the labels from either the picked
+ * IATA (looked up via getAirportByCode → "city_ar (IATA)")
+ * or the freeform fallback string, and passes them in
+ * alongside the validated form data.
+ */
+export interface FlightRequestForMessage {
+  data: FlightRequestInput;
+  originLabel: string;
+  destinationLabel: string;
+}
+
+export function formatFlightRequestMessage(
+  input: FlightRequestForMessage
+): string {
+  const { data, originLabel, destinationLabel } = input;
   const lines = [
     'مرحباً Aeris،',
     'أرغب بطلب رحلة خاصة بالتفاصيل التالية:',
@@ -15,8 +32,8 @@ export function formatFlightRequestMessage(data: FlightRequestInput): string {
     `• الاسم: ${data.customerName}`,
     `• الهاتف: ${data.customerPhone}`,
     `• نوع الرحلة: ${TRIP_LABEL_AR[data.tripType]}`,
-    `• من: ${data.origin}`,
-    `• إلى: ${data.destination}`,
+    `• من: ${originLabel}`,
+    `• إلى: ${destinationLabel}`,
     `• تاريخ المغادرة: ${data.departureDate}`,
   ];
 
@@ -35,7 +52,7 @@ export function formatFlightRequestMessage(data: FlightRequestInput): string {
 }
 
 export function buildFlightRequestWhatsAppLink(
-  data: FlightRequestInput
+  input: FlightRequestForMessage
 ): string {
-  return whatsappLink(formatFlightRequestMessage(data));
+  return whatsappLink(formatFlightRequestMessage(input));
 }

@@ -10,14 +10,25 @@ import {
   submitFlightRequest,
   type FlightRequestActionResult,
 } from '@/app/actions/flight-request';
+import { AirportCombobox } from '@/components/ui/airport-combobox';
+import type { AirportRow } from '@/types/database';
 
 const ERROR_MESSAGES_AR: Record<string, string> = {
-  origin_required: 'من فضلك أدخل مطار أو مدينة المغادرة.',
-  origin_too_short: 'مطار أو مدينة المغادرة قصير جداً.',
-  origin_too_long: 'مطار أو مدينة المغادرة طويل جداً.',
-  destination_required: 'من فضلك أدخل الوجهة.',
-  destination_too_short: 'الوجهة قصيرة جداً.',
-  destination_too_long: 'الوجهة طويلة جداً.',
+  // Phase 6.0 PR 2 (S3): airport picker error codes.
+  origin_required: 'اختر مطاراً أو اكتب يدوياً.',
+  origin_ambiguous: 'اختر إما من القائمة أو اكتب يدوياً، ليس الاثنين.',
+  origin_iata_invalid: 'رمز المطار غير صحيح.',
+  origin_iata_unknown: 'هذا الرمز غير معروف. اختر من القائمة أو اكتب يدوياً.',
+  origin_freeform_too_short: 'الاسم قصير جداً.',
+  origin_freeform_too_long: 'الاسم طويل جداً.',
+  destination_required: 'اختر مطاراً أو اكتب يدوياً.',
+  destination_ambiguous: 'اختر إما من القائمة أو اكتب يدوياً، ليس الاثنين.',
+  destination_iata_invalid: 'رمز المطار غير صحيح.',
+  destination_iata_unknown:
+    'هذا الرمز غير معروف. اختر من القائمة أو اكتب يدوياً.',
+  destination_freeform_too_short: 'الاسم قصير جداً.',
+  destination_freeform_too_long: 'الاسم طويل جداً.',
+  // Pre-existing codes (unchanged).
   departure_required: 'من فضلك اختر تاريخ المغادرة.',
   departure_invalid: 'تاريخ المغادرة غير صالح.',
   departure_in_past: 'تاريخ المغادرة لا يمكن أن يكون في الماضي.',
@@ -59,7 +70,11 @@ const fieldInput =
   'font-ar block w-full rounded-md border border-border bg-navy-secondary/60 px-4 py-3 text-base text-ink placeholder:text-ink-muted/70 transition-colors hover:border-gold/40 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40 disabled:cursor-not-allowed disabled:opacity-60';
 const fieldError = 'font-ar mt-1.5 text-xs text-red-400';
 
-export function FlightRequestForm() {
+export function FlightRequestForm({
+  airports,
+}: {
+  airports: AirportRow[];
+}) {
   const formRef = useRef<HTMLFormElement>(null);
   const [pending, startTransition] = useTransition();
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -151,21 +166,21 @@ export function FlightRequestForm() {
       </div>
 
       <fieldset className="grid gap-6 sm:grid-cols-2" disabled={pending}>
-        <Field
+        <AirportCombobox
           name="origin"
-          label="من (المطار أو المدينة)"
-          placeholder="الرياض — RUH"
-          autoComplete="off"
+          airports={airports}
+          label="من (المطار)"
+          placeholder="اختر مطار المغادرة…"
+          required
           error={errors.origin}
-          required
         />
-        <Field
+        <AirportCombobox
           name="destination"
-          label="إلى (المطار أو المدينة)"
-          placeholder="دبي — DXB"
-          autoComplete="off"
-          error={errors.destination}
+          airports={airports}
+          label="إلى (المطار)"
+          placeholder="اختر مطار الوصول…"
           required
+          error={errors.destination}
         />
       </fieldset>
 

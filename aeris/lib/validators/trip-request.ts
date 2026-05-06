@@ -9,18 +9,44 @@ const todayStart = () => {
   return d;
 };
 
+// Phase 6.0 PR 2 (S3): the form submits `<side>_iata` AND
+// `<side>_freeform` from the AirportCombobox. Exactly one of
+// the two must be present per side, enforced by refinements
+// below. The Server Action looks up the IATA's display label
+// before persisting (so `lead_inquiries.origin` /
+// `destination` continue to carry a human-readable string for
+// back-compat — see the spec's Schema reality section).
+const iataField = (requiredCode: string) =>
+  z
+    .string()
+    .trim()
+    .regex(/^[A-Z]{3}$/, requiredCode)
+    .optional()
+    .nullable()
+    .transform((v) => (v && v.length > 0 ? v : null));
+
+const freeformField = (tooShortCode: string, tooLongCode: string) =>
+  z
+    .string()
+    .trim()
+    .max(120, tooLongCode)
+    .optional()
+    .nullable()
+    .transform((v) => (v && v.length > 0 ? v : null))
+    .refine((v) => v === null || v.length >= 2, { message: tooShortCode });
+
 export const flightRequestSchema = z
   .object({
-    origin: z
-      .string({ required_error: 'origin_required' })
-      .trim()
-      .min(2, 'origin_too_short')
-      .max(120, 'origin_too_long'),
-    destination: z
-      .string({ required_error: 'destination_required' })
-      .trim()
-      .min(2, 'destination_too_short')
-      .max(120, 'destination_too_long'),
+    origin_iata: iataField('origin_iata_invalid'),
+    origin_freeform: freeformField(
+      'origin_freeform_too_short',
+      'origin_freeform_too_long'
+    ),
+    destination_iata: iataField('destination_iata_invalid'),
+    destination_freeform: freeformField(
+      'destination_freeform_too_short',
+      'destination_freeform_too_long'
+    ),
     departureDate: z
       .string({ required_error: 'departure_required' })
       .min(1, 'departure_required')
@@ -66,6 +92,27 @@ export const flightRequestSchema = z
       message: 'return_before_departure',
       path: ['returnDate'],
     }
+  )
+  // Phase 6.0 PR 2 (S3): exactly one of origin_iata /
+  // origin_freeform required. Two refinements per side give
+  // distinct error codes for "neither" vs "both" (acceptance
+  // #4 and #5).
+  .refine((data) => !(data.origin_iata && data.origin_freeform), {
+    message: 'origin_ambiguous',
+    path: ['origin'],
+  })
+  .refine((data) => Boolean(data.origin_iata) || Boolean(data.origin_freeform), {
+    message: 'origin_required',
+    path: ['origin'],
+  })
+  .refine(
+    (data) => !(data.destination_iata && data.destination_freeform),
+    { message: 'destination_ambiguous', path: ['destination'] }
+  )
+  .refine(
+    (data) =>
+      Boolean(data.destination_iata) || Boolean(data.destination_freeform),
+    { message: 'destination_required', path: ['destination'] }
   );
 
 export type FlightRequestInput = z.infer<typeof flightRequestSchema>;
