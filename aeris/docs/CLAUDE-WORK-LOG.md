@@ -3681,3 +3681,208 @@ this entry alone — PR 2 + Codex acceptance + the
 founder's spot-check on PR 2's preview checklist are
 the actual ship signals.
 
+---
+
+## Phase 6.1 — Customer Preferences, PR 2 (2026-05-06)
+
+### Status
+
+**PR 2 of 2 opened. Acceptance pending Codex review +
+founder spot-check on the Vercel preview build.** PR 1
+merged 2026-05-06 (commit `004c6df`); the founder
+applied `20260507000006_phase_6_1_preferences.sql` to
+production Supabase the same day, and all 4 verification
+probes returned the expected post-conditions:
+
+- Probe 1: `lead_inquiries.preferences` = jsonb / NOT
+  NULL / default `'{}'::jsonb`.
+- Probe 2: `promote_lead_to_trip_request` = exactly 2
+  overloads (5-arg compatibility wrapper + 6-arg
+  canonical), both `prosecdef = true` + pinned
+  search_path.
+- Probe 3: EXECUTE — `service_role` true on both
+  signatures, `anon` + `authenticated` false on both.
+- Probe 4: re-runnability — second paste returned
+  "Success. No rows returned"; probe 2 still returned
+  exactly 2 rows.
+
+PR 2 is the runtime half: the customer-facing `/request`
+form gains a collapsible preferences section, the admin
+promote-lead form pre-fills from the lead's preferences
+and lets the founder amend, the operator portal trip
+summary renders the preferences in a new section above
+`special_requests`. All contracts come from the Phase
+6.1 spec iteration 4 (Codex round 4 acceptance 100/100).
+
+### What this PR adds
+
+The 4 spec sections (S1 + S6 already shipped in PR 1 as
+validators + migration; S2/S3/S4 + the i18n table
+helpers land here; S5's keys were dormant in PR 1, now
+consumed):
+
+- **`/request` collapsible section (S2).** Customer
+  picks 0–9 preferences from the new "تفضيلات
+  (اختياري)" section after the phone field. Closed by
+  default. Halal is a tri-state radio (`true` /
+  `false` / no_preference; no_preference → key
+  omitted). Crew gender is a 3-option radio. Pilot
+  nationality is a single-select from a curated list of
+  16 KSA-market countries. Crew nationalities + crew
+  languages are multi-select chips. Child seats is a
+  number input 1-3 (0 forbidden — UI clears). Medical
+  notes is a 200-char textarea. Submitted as a single
+  JSON-string FormData field.
+- **`/request` Server Action wiring (S2).**
+  `app/actions/flight-request.ts` reads the preferences
+  JSON, parses via `tripPreferencesSchema` (.strict() —
+  rejects unknown keys), runs through
+  `mergeTripPreferences` to enforce the canonical rule
+  ("key omission = no preference"), and passes the
+  cleaned blob to `insertLead`.
+  `lead_inquiries.preferences` writes the exact JSONB
+  shape the operator portal will read.
+- **Admin promote-lead pre-fill + edit (S3).**
+  `components/admin/promote-lead-form.tsx` gains an
+  always-expanded "تفضيلات العميل" section pre-filled
+  from `lead.preferences` (minus the legacy
+  `lead_trip_type` key — the RPC re-injects it via the
+  body-side JSONB merge). Founder amends, submit
+  serializes to JSON. The Server Action (committed in
+  the foundation commit) reads the field, runs through
+  `tripPreferencesSchema` + `mergeTripPreferences` over
+  the lead's stored preferences, and passes the merged
+  blob as `p_preferences` to the **6-arg canonical
+  RPC**. The 5-arg compatibility wrapper from PR 1
+  becomes unused after this commit lands (still alive
+  on Supabase as documented backward compat).
+- **Operator portal preferences display (S4).**
+  `components/operator/trip-summary.tsx` renders a new
+  "تفضيلات العميل" / "Customer Preferences" section
+  above `special_requests` when the trip carries any
+  non-empty preference key beyond the legacy
+  `lead_trip_type`. Display order matches the spec:
+  halal, prayer setup, crew gender, pilot nationality,
+  crew nationalities, crew languages, child seats,
+  elderly assistance, medical notes. Boolean
+  preferences render explicit "Yes" / "No" via the i18n
+  keys PR 1 shipped. Country and language codes resolve
+  to display names via two new helpers
+  (`countryDisplayName`, `languageDisplayName`) that
+  read from curated tables in `lib/i18n/operator.ts` —
+  same source of truth the customer + admin forms use.
+
+Plus one **discovery / architectural necessity**: a new
+shared file `aeris/components/forms/trip-preferences-fields.tsx`
+(Client Component) holds the 9-field rendering logic
+both the customer and admin forms reuse. The spec
+described both forms as "gaining the same preference
+fields" but didn't extract a shared component;
+inlining would have duplicated ~150 lines of UI + the
+tri-state halal logic + the picker chip logic across
+two files. Same precedent as Phase 5.1 PR 2's
+`OperatorPortalHeader` discovery (an out-of-fence
+file the spec implied but didn't name explicitly).
+Codex review can fold this back into one of the parent
+forms in a follow-up if the discovery is rejected.
+
+### Files touched
+
+| file | type | change |
+|---|---|---|
+| `aeris/lib/validators/trip-request.ts` | edited | adds `preferences: tripPreferencesSchema.optional()` |
+| `aeris/lib/validators/promote-lead.ts` | edited | same — admin schema |
+| `aeris/types/database.ts` | edited | `PromoteLeadArgs.p_preferences: TripPreferences` (6-arg canonical) |
+| `aeris/app/(admin)/admin/actions/trips.ts` | edited (surgical) | `promoteLead` parses preferences JSON, merges via `mergeTripPreferences`, passes to 6-arg RPC. No dispatch engine touch. |
+| `aeris/components/forms/trip-preferences-fields.tsx` | new (discovered) | shared 9-field Client Component |
+| `aeris/app/actions/flight-request.ts` | edited | reads preferences JSON, merges, persists |
+| `aeris/components/forms/flight-request-form.tsx` | edited | collapsible section + state + serializer |
+| `aeris/app/(admin)/admin/(protected)/leads/[id]/page.tsx` | edited | passes `lead.preferences` as new prop |
+| `aeris/components/admin/promote-lead-form.tsx` | edited | preferences pre-fill + edit + serializer |
+| `aeris/lib/i18n/operator.ts` | edited | adds curated country + language tables and 2 resolver helpers |
+| `aeris/components/operator/trip-summary.tsx` | edited | new "Customer Preferences" section + helper for emptiness check |
+| `aeris/docs/checklists/operator-flow-smoke-test.md` | edited | Phase 6.1 preview checklist (7 steps) |
+| `aeris/docs/CLAUDE-WORK-LOG.md` | edited | this entry (last commit) |
+
+`aeris/docs/CLAUDE-TASK.md` is intentionally NOT in this
+PR; remains a local working-tree draft per the
+established discipline.
+
+### Quality gates (locally on Windows, branch HEAD before push)
+
+| command | exit | notes |
+|---|---|---|
+| `npm --prefix aeris run type-check` | 0 | `tsc --noEmit` clean across all consumers of the new `TripPreferences` type. The single existing reader of `trip.preferences` (admin/trip-detail-card.tsx) keeps its explicit `Record<string, unknown>` cast and compiles unchanged. |
+| `npm --prefix aeris run lint:strict` | 0 | "✔ No ESLint warnings or errors". |
+| `npm --prefix aeris run build` | 0 | Route table preserved. Bundle deltas under the 3 kB-per-route ceiling per spec Risk 4. |
+| Bundle deltas (vs main HEAD before PR 2) | within ceiling | `/request` 6.50 → **7.99 kB** (+1.49 kB); `/admin/leads/[id]` 3.52 → **5.42 kB** (+1.90 kB); `/operator/offer/[token]` 3.55 → **3.79 kB** (+0.24 kB). All routes well under the 3 kB ceiling. |
+| Lockfile diff | empty | No new dependencies. |
+| `package.json` diff | empty | No script change. |
+
+CI (Type-check, build, lint + Vercel) re-runs on the PR
+head; those results land on the PR description, not
+here.
+
+### Acceptance verification
+
+The spec's acceptance criteria #1–#13 (UX) run on the
+**Vercel preview build of this PR**, NOT on production.
+The `aeris/docs/checklists/operator-flow-smoke-test.md`
+"Phase 6.1 — Customer Preferences, PR 2 (preview
+checklist)" section covers them in 7 sequenced steps.
+
+**Vercel preview URL for this PR:** *to be filled in by
+the founder after Vercel deploys the PR head; founder +
+Codex spot-check before merge*. Acceptance #14–#17
+(non-UX) are gated by the build/lint/type checks above
+and the PR-2-scope `git diff main` check.
+
+### What this PR does NOT do
+
+Mirroring the spec's "Out of scope" section, for the
+historical record:
+
+- No DB / RPC / migration changes (PR 1 did all DB
+  work).
+- No DROP of the 5-arg compatibility wrapper —
+  optional PR 3 cleanup handles that any time after PR
+  2 ships and grep confirms no callers remain.
+- No payment / booking_addons / checkout / ZATCA work.
+- No new dependencies. `package.json` and
+  `package-lock.json` untouched.
+- No matching engine — the preferences land in a
+  read-ready JSONB shape future matching code can
+  consume; no consumer is built in PR 2.
+- No `users.preferences` populating — customer accounts
+  don't exist; the user-level column stays empty.
+- No CHECK constraint on `trip_requests.preferences`
+  (Q4 deferred — Zod at app layer is the primary
+  defense).
+
+### Carry-overs (unchanged by this PR)
+
+- **`SUPABASE_SERVICE_ROLE_KEY` rotation + HS256
+  revoke** — deferred indefinitely per founder
+  decision. Not reopened.
+- **NUM (NEOM Bay) ICAO data quality** — `OENG`
+  should be `OENK`. Open Phase 6.0 PR 1 carry-over.
+- **OEPV (Riyadh Executive Aviation Terminal)** —
+  deferred per Phase 6.0 PR 1 Resolved decision.
+- **Phase 4 v=1 deprecation timing** — open question
+  from Phase 5 PR #6, still open.
+- **Optional PR 3 — drop the 5-arg compatibility
+  wrapper** — can ship any time after PR 2 is verified
+  live, or be deferred indefinitely. The wrapper is
+  harmless and documented.
+
+### Closing
+
+PR 2 is **app-wiring complete on the feature branch and
+quality-gates green locally**. Phase 6.1 ships when:
+(a) PR 2 merges, (b) Codex round 2 accepts, and (c) the
+founder runs the Phase 6.1 preview checklist (7 steps)
+on the Vercel preview before merging. Do NOT declare
+Phase 6.1 shipped based on this entry alone — the merge
+of PR 2 + Codex acceptance + the founder's spot-check
+are the actual ship signals.
+
