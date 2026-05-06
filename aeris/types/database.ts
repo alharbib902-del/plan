@@ -22,6 +22,12 @@ export type LeadInquiryRow = {
   trip_type: LeadTripType;
   origin: string;
   destination: string;
+  // Phase 6.0: optional IATA codes when the customer picked
+  // from the airports table. NULL when the customer typed a
+  // freeform city/airport name (the freeform value lives in
+  // `origin` / `destination` above for backwards compat).
+  origin_iata: string | null;
+  destination_iata: string | null;
   departure_date: string;
   return_date: string | null;
   passengers: number;
@@ -42,12 +48,55 @@ export type LeadInquiryInsert = {
   trip_type: LeadTripType;
   origin: string;
   destination: string;
+  // Phase 6.0: optional. Existing callers that pass only
+  // freeform `origin` / `destination` continue to compile.
+  origin_iata?: string | null;
+  destination_iata?: string | null;
   departure_date: string;
   return_date: string | null;
   passengers: number;
   notes: string | null;
   source?: string;
 };
+
+// ============================================================================
+// Phase 6.0: Airports reference table
+// ============================================================================
+
+export type AirportRow = {
+  iata_code: string;
+  icao_code: string | null;
+  name: string;
+  name_ar: string | null;
+  city: string;
+  city_ar: string | null;
+  country: string;
+  country_ar: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  timezone: string | null;
+  is_private_capable: boolean;
+  created_at: string;
+};
+
+export type AirportInsert = {
+  iata_code: string;
+  icao_code?: string | null;
+  name: string;
+  name_ar?: string | null;
+  city: string;
+  city_ar?: string | null;
+  country: string;
+  country_ar?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  timezone?: string | null;
+  is_private_capable?: boolean;
+};
+
+export type AirportUpdate = Partial<
+  Omit<AirportRow, 'iata_code' | 'created_at'>
+>;
 
 // ============================================================================
 // Phase 4: Trip requests, offers, RPC contracts
@@ -405,6 +454,12 @@ export type Database = {
   };
   public: {
     Tables: {
+      airports: {
+        Row: AirportRow;
+        Insert: AirportInsert;
+        Update: AirportUpdate;
+        Relationships: [];
+      };
       lead_inquiries: {
         Row: LeadInquiryRow;
         Insert: LeadInquiryInsert;
