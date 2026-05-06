@@ -3901,3 +3901,211 @@ Phase 6.1 shipped based on this entry alone — the merge
 of PR 2 + Codex acceptance + the founder's spot-check
 are the actual ship signals.
 
+---
+
+## 2026-05-07 — Phase 6.2 PR 1 (schema reshape + catalog seed + CI gate)
+
+### Status
+
+PR 1 of the Phase 6.2 rollout (Priced add-ons +
+Booking-shaped Checkout-prep). Spec was iterated 13
+times with Codex review and accepted 100/100 at
+iteration 13. PR 1 implements the spec's PR 1 surface
+verbatim: three migration files (File A reshape +
+ENUM ADD VALUE; File B SET DEFAULT; File C
+addon_catalog table + 20-row seed), TypeScript
+catalog + Zod validators + customer-token module,
+types/database.ts updates, ~30 i18n keys, the catalog
+parity CI gate (tsx + test + workflow step), and the
+admin-guarded + feature-gated debug smoke route.
+
+### What this PR adds
+
+- **Migrations (3 files, all idempotent)**:
+  - `20260508000007_phase_6_2_addons.sql` — File A:
+    bookings reshape (relax `client_id` /
+    `operator_id` / `aircraft_id` / breakdown
+    columns to nullable; add operator / aircraft /
+    customer / route / passenger snapshot columns;
+    add `trip_request_id` FK ON DELETE RESTRICT;
+    eight new constraints + partial unique index) +
+    `booking_addons` 20-name subtype CHECK +
+    `cancelled_at` column +
+    `booking_payment_status` ENUM ADD VALUE
+    `pending_offline`.
+  - `20260508000008_phase_6_2_payment_default.sql` —
+    File B: SET DEFAULT `pending_offline` on
+    `bookings.payment_status`. Runs in a fresh
+    session.
+  - `20260508000009_phase_6_2_addon_catalog.sql` —
+    File C: CREATE TABLE `addon_catalog` + RLS
+    deny-all + 20-row seed via INSERT ON CONFLICT
+    (subtype) DO UPDATE. Mirrors
+    `lib/addons/catalog.ts` row-for-row.
+
+- **TypeScript modules** (no runtime UI consumer):
+  - `lib/addons/catalog.ts` — `ADDONS_CATALOG` (20
+    entries) + lookups + types.
+  - `lib/addons/types.ts` — type re-exports.
+  - `lib/validators/booking-addons.ts` — three Zod
+    schemas (admin attach, customer remove,
+    customer confirm). NO `booking_id` input on
+    customer schemas (Codex iteration-3 P1 #2 fix).
+  - `lib/checkout/customer-token.ts` — HMAC-SHA256
+    v=2 mint + verify + hash. Lazy secret read.
+    Fail-closed: mint throws
+    `CustomerTokenEnvError`; verify returns null on
+    missing secret. Mirror of Phase 6.0 operator
+    portal token regime with separate
+    `CUSTOMER_CHECKOUT_SECRET`.
+
+- **`types/database.ts`**: new types
+  (`BookingPaymentStatus` widened with
+  `pending_offline`; `BookingFlightStatus`;
+  `AddonTypeValue`; `AddonStatusValue`;
+  `SourceOfferTable`; `BookingRow` + Insert +
+  Update; `BookingAddonRow` + Insert + Update;
+  `AddonCatalogRow` + Insert + Update). Three new
+  tables register in `Database['public']['Tables']`.
+
+- **Admin debug smoke route**:
+  `app/(admin)/admin/(protected)/debug/customer-token-smoke/page.tsx`.
+  Admin-guarded + feature-gated behind
+  `ENABLE_CHECKOUT_TOKEN_DEBUG === 'true'`
+  (otherwise 404). Round-trips a v=2 token using
+  the all-zero UUID v4 sentinel
+  `00000000-0000-4000-8000-000000000000` (Codex
+  iteration-5 P2 #1 fix). Implementation deviation:
+  spec said `_debug/...`; Next.js excludes
+  `_`-prefixed folders from routing, so the path
+  is `debug/...`. Both gates the spec mandated
+  remain in place.
+
+- **CI gate**: `package.json` adds
+  `test:addons` script + `tsx ^4.21.0` devDep.
+  `package-lock.json` updates with bounded `tsx` +
+  `esbuild` ESM tree. `.github/workflows/ci.yml`
+  adds the "Catalog parity" step calling
+  `npm run test:addons` after install + before
+  type-check / build / lint.
+
+- **Test infrastructure**:
+  `lib/addons/__tests__/parse-seed-sql.ts` —
+  small SQL-INSERT-row parser.
+  `lib/addons/__tests__/catalog-vs-seed.test.ts` —
+  Layer 1 parity test (no DB). Asserts deep-equal
+  TS catalog ↔ seed + the
+  `booking_addons_subtype_check` IN clause matches
+  `KNOWN_ADDON_SUBTYPES`.
+
+- **i18n + env**: `lib/i18n/operator.ts` gains
+  ~30 new keys (used by zero PR 1 components;
+  PR 2b consumes). `.env.example` documents
+  `CUSTOMER_CHECKOUT_SECRET` (per-environment
+  values per Codex iteration-5 P2 #2 fix) +
+  `ENABLE_CHECKOUT_TOKEN_DEBUG=false`.
+
+### Files touched
+
+```
+.github/workflows/ci.yml                                                   (modified)
+aeris/.env.example                                                         (modified)
+aeris/app/(admin)/admin/(protected)/debug/customer-token-smoke/page.tsx    (new)
+aeris/lib/addons/__tests__/catalog-vs-seed.test.ts                         (new)
+aeris/lib/addons/__tests__/parse-seed-sql.ts                               (new)
+aeris/lib/addons/catalog.ts                                                (new)
+aeris/lib/addons/types.ts                                                  (new)
+aeris/lib/checkout/customer-token.ts                                       (new)
+aeris/lib/i18n/operator.ts                                                 (modified)
+aeris/lib/validators/booking-addons.ts                                     (new)
+aeris/package.json                                                         (modified)
+aeris/package-lock.json                                                    (modified)
+aeris/supabase/migrations/20260508000007_phase_6_2_addons.sql              (new — File A)
+aeris/supabase/migrations/20260508000008_phase_6_2_payment_default.sql     (new — File B)
+aeris/supabase/migrations/20260508000009_phase_6_2_addon_catalog.sql       (new — File C)
+aeris/types/database.ts                                                    (modified)
+```
+
+`aeris/docs/CLAUDE-TASK.md` is the local working draft
+of the spec and stays in the working tree only — not
+part of this PR diff (Phase 6.0 / 6.1 discipline).
+
+### Quality gates run locally
+
+- `npm run type-check` — clean.
+- `npm run lint:strict` — clean.
+- `npm run test:addons` — OK, 20 catalog rows match
+  seed + CHECK constraint.
+- `npm run build` — green; all 11 routes register
+  including the new dynamic
+  `/admin/debug/customer-token-smoke`.
+
+### Implementation deviation from the iteration-13 spec
+
+- **Smoke route path**: spec said
+  `/admin/(protected)/_debug/customer-token-smoke`;
+  implemented at
+  `/admin/(protected)/debug/customer-token-smoke`
+  (no leading underscore). Next.js App Router treats
+  `_`-prefixed folders as private (excluded from
+  routing). Both spec-mandated gates (admin auth +
+  `ENABLE_CHECKOUT_TOKEN_DEBUG` feature flag) remain
+  in place. Codex round 14 review can validate.
+
+### Acceptance verification
+
+The spec's PR 1 acceptance criteria #1–#26 are
+observable on the PR's CI run + Vercel preview
+build. Founder probe set #1 (probes 1, 2, 2b, 3, 4,
+5, 5b) runs on production Supabase AFTER PR 1
+merges + the three migration files apply in order.
+
+### What this PR does NOT do
+
+Mirroring the iteration-13 spec's Out-of-scope +
+Implementation order:
+
+- No `accept_offer` body extension (PR 2a).
+- No `backfill_booking_from_offer` SQL function
+  (PR 2a).
+- No five mutation RPCs:
+  `attach_booking_addon`,
+  `customer_cancel_booking_addon`,
+  `admin_cancel_booking_addon`,
+  `update_booking_addon_quantity`,
+  `confirm_checkout_prep` (all PR 2a).
+- No `_recompute_booking_totals` private helper
+  (PR 2a).
+- No admin add-ons attach UI / customer
+  checkout-prep page / operator portal add-ons
+  display / legacy-trip backfill button (PR 2b).
+- No HyperPay, Moyasar, ZATCA Phase 2
+  e-invoicing, payment webhook handlers, refund
+  flow, loyalty award, operator payouts
+  (Phase 10 / 11 territory).
+
+### Carry-overs
+
+- `SUPABASE_SERVICE_ROLE_KEY` rotation + HS256
+  revoke — deferred indefinitely per founder.
+- NUM (NEOM Bay) ICAO data quality — Phase 6.0 PR 1
+  carry-over.
+- OEPV (Riyadh Executive Aviation Terminal) —
+  deferred per Phase 6.0 PR 1.
+- Phase 4 v=1 deprecation timing — open from
+  Phase 5 PR #6.
+- Phase 6.1 Optional PR 3 (drop 5-arg compat
+  wrapper) — non-blocking, deferrable.
+
+### Closing
+
+PR 1 is **complete on the feature branch and
+quality-gates green locally**. Phase 6.2 PR 1 ships
+when: (a) PR 1 merges, (b) Codex round 14 accepts,
+and (c) the founder applies the three migration
+files in order on production Supabase + runs probe
+set #1 green. PR 2a does NOT open until probe set #1
+is green; PR 2b does NOT open until probe set #2 is
+green. Do NOT declare Phase 6.2 shipped based on
+this entry alone — three rollout stages remain.
+
