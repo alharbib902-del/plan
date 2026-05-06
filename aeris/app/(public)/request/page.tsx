@@ -7,6 +7,13 @@ import {
   AERIS_CONTACT,
   AERIS_DEFAULT_WHATSAPP_MESSAGE,
 } from '@/lib/config/contact';
+import { listAirports } from '@/lib/supabase/queries/airports';
+
+// Phase 6.0 PR 2 (S3): airports fetched server-side and shipped
+// in the page bundle. Picker is purely client-render with no
+// runtime fetch (RLS-public table; data is small and stable).
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: 'اطلب رحلتك الخاصة',
@@ -33,7 +40,8 @@ const HIGHLIGHTS = [
   },
 ];
 
-export default function RequestPage() {
+export default async function RequestPage() {
+  const airports = await listAirports({ privateCapable: true });
   return (
     <section className="relative pb-24 pt-32">
       <div
@@ -112,7 +120,7 @@ export default function RequestPage() {
           </div>
 
           <div>
-            <FlightRequestForm />
+            <FlightRequestForm airports={airports} />
           </div>
         </div>
       </div>
