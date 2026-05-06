@@ -73,7 +73,10 @@ export const tripPreferencesSchema = z
     // canonical "no preference expressed" signal).
     child_seats: z.number().int().min(1).max(3).optional(),
     elderly_assistance: z.boolean().optional(),
-    medical_notes: z.string().min(1).max(200).optional(),
+    // Trim before min/max so whitespace-only inputs ('   ')
+    // don't sneak past `.min(1)` and store as meaningless
+    // preferences. Per Codex iteration-1 P2 review of PR #17.
+    medical_notes: z.string().trim().min(1).max(200).optional(),
 
     // Pre-existing legacy key — preserved verbatim by
     // mergeTripPreferences. Tolerated on input so round-trip
