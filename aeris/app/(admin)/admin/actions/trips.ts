@@ -88,27 +88,56 @@ export async function promoteLead(formData: FormData): Promise<PromoteResult> {
   redirect(`/admin/trips/${result.trip_request_id}`);
 }
 
+// Phase 6.0 PR 2 (S4) — IATA-aware leg construction.
+//
+// Surgical change inside actions/trips.ts: this function (and
+// only this function) gets the new shape. The dispatch-engine
+// surfaces in this same file (`dispatchTrip`, `acceptOffer`,
+// the Phase 5 helpers) are NOT touched, honoring the spec's
+// "no admin dispatch engine change" Out-of-scope clause —
+// `buildLegsFromLead` is lead-promotion (Phase 4-era), not
+// dispatch.
+//
+// The lead carries `origin` (display label, NOT NULL) AND
+// `origin_iata` (nullable, populated when the customer picked
+// from the AirportCombobox). The mapping into `TripLeg`:
+//   - lead.origin_iata set  → leg.from = IATA, leg.from_freeform = null
+//   - lead.origin_iata null → leg.from = null, leg.from_freeform = lead.origin
+// Same for destination. The promote_lead_to_trip_request RPC
+// (PR 1) reads `legs[0].from` against the airports table and
+// populates `trip_requests.departure_airport` accordingly —
+// freeform legs land with that column NULL.
 function buildLegsFromLead(lead: {
   origin: string;
   destination: string;
+  origin_iata: string | null;
+  destination_iata: string | null;
   departure_date: string;
   return_date: string | null;
   trip_type: 'one_way' | 'round_trip' | 'multi_city';
 }): TripLeg[] {
+  const fromIata = lead.origin_iata;
+  const toIata = lead.destination_iata;
+
   const outbound: TripLeg = {
-    from: lead.origin,
-    to: lead.destination,
+    from: fromIata,
+    to: toIata,
     date: lead.departure_date,
     time: null,
+    from_freeform: fromIata ? null : lead.origin,
+    to_freeform: toIata ? null : lead.destination,
   };
+
   if (lead.trip_type === 'round_trip' && lead.return_date) {
     return [
       outbound,
       {
-        from: lead.destination,
-        to: lead.origin,
+        from: toIata,
+        to: fromIata,
         date: lead.return_date,
         time: null,
+        from_freeform: toIata ? null : lead.destination,
+        to_freeform: fromIata ? null : lead.origin,
       },
     ];
   }
