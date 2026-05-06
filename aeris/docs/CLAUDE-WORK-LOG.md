@@ -2507,15 +2507,22 @@ Phase 5 activated based on this entry alone.
 
 ### Status
 
-**Functionally activated.** Phase 5 (Trip Distribution Engine)
-is live and end-to-end verified on production: the migration is
-applied to the production Supabase project, the
-`PHASE5_ADMIN_UI` env gate is set to `true` with the build
-redeployed, and the full multi-dispatch → parallel-submit →
-comparison → accept → re-dispatch → stale-link → tampered-token
-sequence (`operator-flow-smoke-test.md` Phase 5 runbook
-steps 1–34) executed successfully against
+**Functionally activated, with one runbook step waived by
+founder.** Phase 5 (Trip Distribution Engine) is live on
+production: the migration is applied to the production Supabase
+project, the `PHASE5_ADMIN_UI` env gate is set to `true` with
+the build redeployed, and the multi-dispatch → parallel-submit
+→ comparison → accept → re-dispatch → stale-link →
+tampered-token sequence executed against
 `https://aeris-flax.vercel.app/`.
+
+Of the runbook's 34 steps (`operator-flow-smoke-test.md`
+Phase 5 section): **steps 1–7 and 9–34 matched expected;
+step 8 (full Phase 4 single-target dispatch e2e) was
+intentionally waived by founder after a visual gate-OFF spot
+check.** The waiver is a founder decision, not a test result.
+See "Steps 7–8 — Gate-OFF baseline (step 8 founder-waived)"
+below.
 
 The deferred `SUPABASE_SERVICE_ROLE_KEY` rotation + legacy HS256
 revoke from the Phase 4 Production Activation entry **remain
@@ -2542,12 +2549,14 @@ migration application); both are captured below.
 - **Production database:** the Phase 4 Supabase production
   project, with the Phase 5 migration applied on top
 - **Runbook executed:** `aeris/docs/checklists/operator-flow-smoke-test.md`
-  Phase 5 section, all 34 steps
+  Phase 5 section. Coverage: **steps 1–7 and 9–34 executed
+  live**; **step 8 founder-waived** (see "Steps 7–8" below)
 - **Reporting protocol:** "results matched expected per
   runbook" — SQL post-conditions are NOT transcribed in this
   entry; the runbook itself is the canonical specification of
   the expected post-conditions, and this entry's claim is that
-  every observed result matched
+  every observed result **for the executed steps (1–7 and
+  9–34)** matched. Step 8 contributes no live evidence.
 
 ### Steps 1–6 — Migration verification
 
@@ -2580,18 +2589,20 @@ missing on the new RPCs) **did not recur**: the migration's
 `REVOKE ... FROM PUBLIC, anon, authenticated` block is correctly
 applied. The hard P1-class gate from the runbook holds.
 
-### Steps 7–8 — Gate-OFF baseline
+### Steps 7–8 — Gate-OFF baseline (step 8 founder-waived)
 
-With `PHASE5_ADMIN_UI` unset (default), `/admin/trips/[id]`
-rendered the Phase 4 view. A full Phase 4-style single-target
-dispatch was not separately re-executed in this session: the
-gate's default-OFF branch is byte-identical (same imports, same
-JSX renders) to what was verified end-to-end in the Phase 4
-Production Activation entry, and the founder elected to proceed
-directly to the gate flip after spot-confirming the Phase 4
-view rendered. This is a deliberate scope cut, not a missed
-step — re-running the full Phase 4 flow on every Phase 5
-activation would be redundant.
+**Step 7 — visual gate-OFF spot check (executed).** With
+`PHASE5_ADMIN_UI` unset (default), `/admin/trips/[id]`
+rendered the Phase 4 view (single-target dispatch panel, not
+the multi-row Phase 5 layout).
+
+**Step 8 — full Phase 4 single-target dispatch e2e (waived
+by founder).** The runbook prescribes a complete Phase 4
+dispatch + operator submit + accept on the gate-OFF build.
+The founder elected to skip this step and proceed directly to
+the gate flip. The waiver is a founder decision about
+acceptable verification depth, **not** a test result; this
+entry records the waiver, not a passing outcome.
 
 ### Steps 9–11 — Gate flip
 
@@ -2754,14 +2765,16 @@ Vercel domain), not by configuring DNS.
 ### Closing
 
 Phase 5 is **functionally activated on production** as of
-2026-05-06. The full operator dispatch lifecycle —
+2026-05-06, with **step 8 of the runbook founder-waived**
+(see Status). The Phase 5 lifecycle —
 multi-dispatch → refresh-durable rebuild → parallel v=2 submit
 → unified comparison → atomic accept → atomic re-dispatch →
 stale-link rejection → tampered-token rejection — was
-exercised end-to-end against the live system, and every
-observed behavior matched the runbook's expected post-
-conditions. SQL outputs are not transcribed in this entry by
-founder protocol; the runbook is the canonical specification of
-"expected", and the claim of this entry is that results matched
-that specification.
+exercised end-to-end against the live system, and **every
+observed behavior for the executed steps (runbook steps 1–7
+and 9–34)** matched the runbook's expected post-conditions.
+SQL outputs are not transcribed in this entry by founder
+protocol; the runbook is the canonical specification of
+"expected", and the claim of this entry is that results
+matched that specification for every executed step.
 
