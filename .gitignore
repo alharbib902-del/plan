@@ -1,0 +1,8 @@
+# Claude Code session config (machine-local, never committed)
+.claude/
+
+# advisor-doc/ contains the founder's source-of-truth Word docs +
+# the JS generators that build them. Track those, but ignore the
+# build artifacts and node_modules.
+advisor-doc/node_modules/
+advisor-doc/package-lock.json
