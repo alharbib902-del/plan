@@ -244,6 +244,11 @@ export type PromoteLeadArgs = {
   p_aircraft_category: AircraftCategoryValue;
   p_special_requests: string | null;
   p_lead_trip_type: LeadTripType;
+  // Phase 6.1 PR 2: 6-arg canonical signature. The 5-arg
+  // compatibility wrapper (still alive on Supabase per
+  // PR 1's migration) delegates to this with '{}'::jsonb.
+  // PR 2's app code switches to calling 6-arg directly.
+  p_preferences: TripPreferences;
 };
 
 export type PromoteLeadResult =

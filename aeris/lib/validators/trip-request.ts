@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tripPreferencesSchema } from '@/lib/validators/trip-preferences';
 
 export const TRIP_TYPES = ['one_way', 'round_trip', 'multi_city'] as const;
 export type TripTypeOption = (typeof TRIP_TYPES)[number];
@@ -99,6 +100,15 @@ export const flightRequestSchema = z
       .max(20, 'phone_too_long')
       .regex(/^[+\d\s-]+$/, 'phone_invalid'),
     notes: z.string().trim().max(1000, 'notes_too_long').optional(),
+    // Phase 6.1 PR 2: structured customer preferences from
+    // the /request collapsible "تفضيلات (اختياري)" section.
+    // Optional — empty submission is fine. The Zod inner
+    // schema is .strict() so unknown keys (replay attempts)
+    // are rejected. The Server Action calls
+    // mergeTripPreferences after parse to enforce the
+    // canonical "key omission = no preference" rule before
+    // persisting.
+    preferences: tripPreferencesSchema.optional(),
   })
   .refine(
     (data) => {

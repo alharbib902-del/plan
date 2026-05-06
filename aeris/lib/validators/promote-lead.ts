@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tripPreferencesSchema } from '@/lib/validators/trip-preferences';
 
 export const AIRCRAFT_CATEGORIES = [
   'light',
@@ -23,6 +24,12 @@ export const promoteLeadSchema = z.object({
     .transform((v) => (v.length === 0 ? null : v))
     .nullable()
     .optional(),
+  // Phase 6.1 PR 2: structured customer preferences. The
+  // founder amends customer-pre-filled values (read from
+  // lead_inquiries.preferences) before submitting.
+  // tripPreferencesSchema is .strict() (rejects unknown
+  // keys) and all fields are optional.
+  preferences: tripPreferencesSchema.optional(),
 });
 
 export type PromoteLeadInput = z.infer<typeof promoteLeadSchema>;
