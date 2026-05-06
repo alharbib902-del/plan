@@ -792,3 +792,187 @@ generated.
 > empty-leg engine, the medevac surface, the cargo surface,
 > or the loyalty program. None of those are wired to Phase 5
 > tables.
+
+---
+
+# Phase 5.1 — Operator Experience Polish (preview checklist)
+
+A short visual checklist for the Phase 5.1 implementation PR.
+Runs against the **Vercel preview build of the PR itself**
+(`<preview-url>` in this section), **not** production. Intent:
+prove the new operator UX renders correctly under both v=2 and
+v=1 paths and under both Arabic and English. Per Codex resolved
+decision #6 this lives alongside the Phase 5 runbook above; it
+does not replace any Phase 5 step.
+
+The checklist mirrors `aeris/docs/CLAUDE-TASK.md` Phase 5.1
+acceptance criteria #1–#14, condensed into the smallest
+sequence that exercises every changed surface.
+
+## Setup
+
+Before running the checklist, on the Vercel preview build:
+
+1. Sign in to `<preview-url>/admin/login` with founder
+   credentials (same account used for Phase 5 activation).
+2. Create one fresh test trip via the public form
+   (`<preview-url>/request`) → promote it from
+   `<preview-url>/admin/leads/<id>` → dispatch to **two**
+   operator phone numbers from
+   `<preview-url>/admin/trips/<id>` (Phase 5 multi-row
+   dispatch panel). Capture both v=2 operator URLs.
+
+These two URLs (call them URL-A and URL-B) plus a tampered
+copy of URL-A are the test fixtures used below.
+
+## Steps
+
+### Phase 5.1-1 — Trip summary in Arabic (default)
+
+Open URL-A in incognito (no `?lang=` param).
+
+- [ ] Trip summary card shows departure as
+      `dd/mm/yyyy hh:mm (بتوقيت الرياض)` — Asia/Riyadh time
+      with explicit suffix (acceptance #1).
+- [ ] Trip summary card shows a "هذا الرابط صالح حتى …" row
+      with the token expiry, formatted the same way
+      (acceptance #2).
+- [ ] Form fields render with helper text below the required
+      inputs (acceptance #9).
+- [ ] AERIS header at the top shows the language toggle button
+      labelled "EN" (acceptance #13 chrome).
+
+### Phase 5.1-2 — Toggle to English
+
+Click the "EN" toggle. URL becomes `URL-A?lang=en`.
+
+- [ ] Header tagline switches to "Operator offer submission
+      portal".
+- [ ] Trip summary labels switch to English (Trip Details,
+      Route, Departure, Passengers, Requested aircraft
+      category, This link is valid until).
+- [ ] Departure timestamp stays in Asia/Riyadh, suffix becomes
+      "(Riyadh time)".
+- [ ] Form labels + helper text + submit button switch to
+      English.
+- [ ] Toggle button label flips to "العربية" (acceptance #13).
+
+### Phase 5.1-3 — Per-field validation
+
+Still in English, submit the form **empty** (Submit Offer
+button).
+
+- [ ] Inline red error messages appear under each empty
+      required field (operator name, phone, total price,
+      departure ETA, validity hours) using the English
+      translations (acceptance #10).
+- [ ] No block-level red banner at the bottom of the form
+      while inline errors are present (the `helper` and
+      `error` slots are mutually exclusive per Field
+      component).
+
+Switch back to Arabic via toggle (`?lang=ar` removed).
+
+- [ ] Same empty submit shows the Arabic translations of
+      the same per-field errors.
+
+### Phase 5.1-4 — Successful submit + success panel
+
+Fill the form with valid data: operator name, phone
+(+966500000099), total price 5000, departure ETA = a
+near-future Asia/Riyadh timestamp, validity 24, aircraft
+category Midsize, aircraft type "G650". Submit.
+
+- [ ] Success panel renders with the green border styling.
+- [ ] Summary card inside the success panel shows: request
+      number (mono font), price `5,000 ريال` (or `5,000 SAR`
+      under EN), aircraft `متوسطة — G650` (or
+      `Midsize — G650`), departure ETA in Asia/Riyadh,
+      validity `24 ساعة` (or `24 hours`) (acceptance #8).
+- [ ] "احفظ هذه الصفحة كمرجع" / "Save this page for
+      reference" note visible (per spec Risk 4).
+- [ ] WhatsApp button visible at the bottom of the success
+      panel.
+
+### Phase 5.1-5 — ExpiredLink variants
+
+Open URL-B in a fresh incognito window. Submit the form
+successfully (any valid offer). The target row's status flips
+to `submitted`.
+
+Now reload URL-B in the same window.
+
+- [ ] ExpiredLink renders with the **already_used** variant:
+      title "تم استخدام هذا الرابط" (or English equivalent
+      under `?lang=en`) (acceptance #5).
+
+In the Supabase SQL Editor, run on the URL-A target row
+(URL-A is still pending — URL-A was the form filled out in
+Phase 5.1-4 above, so its target status is `submitted`; if
+that's the case, dispatch a third URL-C from a fresh trip
+and use it here instead, otherwise use URL-A):
+
+```sql
+UPDATE trip_dispatch_targets
+SET expires_at = now() - interval '1 minute'
+WHERE id = '<target id>';
+```
+
+Reload the URL whose target you just expired.
+
+- [ ] ExpiredLink renders with the **expired** variant: title
+      "انتهت مدة صلاحية هذا الرابط" (or English equivalent)
+      (acceptance #3).
+
+(Optional, if you have time and a third URL: trigger
+re-dispatch from the admin UI on a fresh trip → reload an
+old URL → ExpiredLink renders the **cancelled** variant.
+This mirrors Phase 5 activation step 32.)
+
+### Phase 5.1-6 — HMAC-fail still generic
+
+Take any URL from above, mutate one base64url character in
+the URL bar (same probe as Phase 5 activation step 34),
+reload.
+
+- [ ] ExpiredLink renders the **generic** title and body
+      ("هذا الرابط منتهي الصلاحية" / "This link is no longer
+      valid"), **not** any of the three variants
+      (acceptance #6 — preserves the no-oracle property).
+
+### Phase 5.1-7 — v=1 backwards compat (code-review-only acceptable)
+
+Per Codex resolved decision #7: a live v=1 probe is generated
+**only if practical** in the preview environment.
+
+If you can dispatch a v=1 (Phase 4) test link from the legacy
+path against a separate test trip:
+
+- [ ] v=1 URL opens the same form + summary chrome as v=2.
+- [ ] v=1 submit succeeds and renders the same SuccessPanel.
+- [ ] Both Arabic and English render correctly under v=1.
+
+If the legacy Phase 4 dispatch path isn't easily reachable
+on the preview, **acceptance #11 is satisfied by code review**
+of `app/operator/offer/[token]/page.tsx` v=1 branch confirming
+the new prop surfaces (lang + operatorContext +
+tripRequestNumber) are passed through unchanged. Note this in
+the PR description.
+
+## Pass criteria
+
+All checked boxes above. The preview URL the boxes were
+checked against goes into the Phase 5.1 work-log entry.
+
+## What this checklist does NOT cover
+
+- Real production traffic on `aeris-flax.vercel.app` —
+  production verification is a **founder follow-up after merge**,
+  not a PR acceptance gate (per spec Acceptance criteria
+  header).
+- DB / RPC / admin changes — Phase 5.1 touches none of these
+  (per spec Out of scope).
+- Phase 5 invariants (multi-dispatch atomicity, refresh-
+  durable rebuild, accept atomicity, re-dispatch atomicity,
+  tampered-token rejection at the security level) — those are
+  the Phase 5 runbook above and are unchanged by Phase 5.1.
