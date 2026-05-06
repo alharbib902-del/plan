@@ -89,16 +89,25 @@ export type TripPreferences = z.infer<typeof tripPreferencesSchema>;
 
 /**
  * Merge two `TripPreferences` objects, stripping null /
- * undefined / empty-string / empty-array values from
- * `incoming` BEFORE merging. `incoming` keys win on
- * collision (last-write-wins).
+ * undefined / empty-string / whitespace-only-string /
+ * empty-array values from `incoming` BEFORE merging.
+ * Strings are trimmed in place so the stored value matches
+ * what the user actually intended to type (and matches the
+ * server-side Zod `.trim()` on `medical_notes`).
+ * `incoming` keys win on collision (last-write-wins).
  *
  * Used by:
- *   - The /request Server Action when submitting a
- *     preferences payload to `lead_inquiries.preferences`.
- *   - The admin promote-lead Server Action when the
- *     founder amends the customer's preferences before
- *     promotion.
+ *   - The /request form's submit handler (client-side) AND
+ *     the /request Server Action (server-side) — both call
+ *     this helper, so any transient whitespace state from
+ *     mid-edit gets normalized before reaching the DB.
+ *     Per Codex iteration-1 P2 review of PR 2: the form has
+ *     no error slot for individual preference fields, so
+ *     whitespace-only inputs that the server's strict Zod
+ *     would reject must be silently normalized (strings
+ *     trimmed, empties dropped) on the client first.
+ *   - The admin promote-lead form's submit handler + the
+ *     admin Server Action — same client + server pattern.
  *
  * The `lead_trip_type` key is treated like any other:
  * if `existing` has it and `incoming` doesn't override it,
@@ -115,7 +124,12 @@ export function mergeTripPreferences(
 
   for (const [key, value] of Object.entries(incoming)) {
     if (value === null || value === undefined) continue;
-    if (typeof value === 'string' && value.length === 0) continue;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length === 0) continue;
+      result[key] = trimmed;
+      continue;
+    }
     if (Array.isArray(value) && value.length === 0) continue;
     result[key] = value;
   }

@@ -8,7 +8,10 @@ import {
   AIRCRAFT_CATEGORY_LABEL_AR,
   type AircraftCategoryValue,
 } from '@/lib/validators/promote-lead';
-import type { TripPreferences } from '@/lib/validators/trip-preferences';
+import {
+  mergeTripPreferences,
+  type TripPreferences,
+} from '@/lib/validators/trip-preferences';
 import { TripPreferencesFields } from '@/components/forms/trip-preferences-fields';
 import { cn } from '@/lib/utils/cn';
 
@@ -63,11 +66,15 @@ export function PromoteLeadForm({
       formData.append('special_requests', specialRequests);
     }
     // Phase 6.1 PR 2: serialize preferences as a single
-    // JSON-string field. The Server Action JSON.parses +
-    // tripPreferencesSchema.safeParse +
-    // mergeTripPreferences before passing to the 6-arg
-    // RPC. Empty object (no edits) → '{}', the default.
-    formData.append('preferences', JSON.stringify(preferences));
+    // JSON-string field. Run mergeTripPreferences({},
+    // state) on the CLIENT first to strip transient
+    // empties / trim whitespace-only strings — the form
+    // has no error slot for individual preference fields
+    // (per Codex iteration-1 P2 review of PR 2). The
+    // Server Action calls mergeTripPreferences again as
+    // defense-in-depth.
+    const cleanedPreferences = mergeTripPreferences({}, preferences);
+    formData.append('preferences', JSON.stringify(cleanedPreferences));
 
     startTransition(async () => {
       const result = await promoteLead(formData);
