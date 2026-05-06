@@ -126,10 +126,24 @@ export type OfferStatus =
   | 'expired';
 
 export type TripLeg = {
-  from: string;
-  to: string;
+  /**
+   * IATA airport code (3 letters, uppercase). Phase 6.0: NULL
+   * when the lead/admin chose the freeform path; the visible
+   * value lives in `from_freeform` on the new shape, OR — for
+   * legacy rows promoted before Phase 6.0 — `from` itself
+   * carries the freeform Arabic city/airport string. The
+   * operator portal display helper detects which shape it's
+   * looking at via `isIataFormat(from)`.
+   */
+  from: string | null;
+  to: string | null;
   date: string;
   time: string | null;
+  // Phase 6.0 (PR 2): freeform fallback for unlisted airports.
+  // Optional on the type so legacy `legs[]` JSONB rows
+  // (created before this iteration) continue to type-check.
+  from_freeform?: string | null;
+  to_freeform?: string | null;
 };
 
 export type TripRequestRow = {
