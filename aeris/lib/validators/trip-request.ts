@@ -10,30 +10,48 @@ const todayStart = () => {
 };
 
 // Phase 6.0 PR 2 (S3): the form submits `<side>_iata` AND
-// `<side>_freeform` from the AirportCombobox. Exactly one of
-// the two must be present per side, enforced by refinements
-// below. The Server Action looks up the IATA's display label
-// before persisting (so `lead_inquiries.origin` /
-// `destination` continue to carry a human-readable string for
-// back-compat — see the spec's Schema reality section).
-const iataField = (requiredCode: string) =>
-  z
-    .string()
-    .trim()
-    .regex(/^[A-Z]{3}$/, requiredCode)
-    .optional()
-    .nullable()
-    .transform((v) => (v && v.length > 0 ? v : null));
+// `<side>_freeform` from the AirportCombobox — both hidden
+// inputs are always rendered, so the unselected side arrives
+// as an empty string. We MUST preprocess empty/whitespace-only
+// strings to `null` BEFORE any regex / min-length check runs;
+// otherwise picking freeform produces `origin_iata = ''` which
+// fails the IATA regex with `origin_iata_invalid` and the
+// "exactly one of" refinement never gets a chance to surface
+// the real signal. The form only renders `errors.origin` /
+// `errors.destination` (refinement-path errors), so the
+// origin_iata_invalid would also be invisible to the user.
+// Per Codex P1 review of PR #16.
+//
+// The Server Action looks up the IATA's display label before
+// persisting (so `lead_inquiries.origin` / `destination`
+// continue to carry a human-readable string for back-compat —
+// see the spec's Schema reality section).
+const stripEmpty = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
+const iataField = (invalidCode: string) =>
+  z.preprocess(
+    stripEmpty,
+    z
+      .string()
+      .regex(/^[A-Z]{3}$/, invalidCode)
+      .nullable()
+      .optional()
+  );
 
 const freeformField = (tooShortCode: string, tooLongCode: string) =>
-  z
-    .string()
-    .trim()
-    .max(120, tooLongCode)
-    .optional()
-    .nullable()
-    .transform((v) => (v && v.length > 0 ? v : null))
-    .refine((v) => v === null || v.length >= 2, { message: tooShortCode });
+  z.preprocess(
+    stripEmpty,
+    z
+      .string()
+      .min(2, tooShortCode)
+      .max(120, tooLongCode)
+      .nullable()
+      .optional()
+  );
 
 export const flightRequestSchema = z
   .object({
