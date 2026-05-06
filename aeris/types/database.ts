@@ -483,6 +483,210 @@ export type UnifiedOfferRow = {
   is_current_round: boolean | null;
 };
 
+// ============================================================================
+// Phase 6.2: bookings + booking_addons + addon_catalog
+//
+// Migration files (PR 1):
+//   - File A `20260508000007_phase_6_2_addons.sql` — bookings
+//     schema reshape (nullability flips, snapshot columns,
+//     paired CHECKs, trip-link FK, route + passenger
+//     snapshots, partial unique index) + booking_addons
+//     subtype CHECK + cancelled_at + booking_payment_status
+//     ENUM ADD VALUE 'pending_offline'.
+//   - File B `20260508000008_phase_6_2_payment_default.sql`
+//     — SET DEFAULT 'pending_offline' on bookings.payment_status.
+//   - File C `20260508000009_phase_6_2_addon_catalog.sql` —
+//     CREATE TABLE addon_catalog + RLS deny-all + 20-row seed
+//     mirroring `lib/addons/catalog.ts` row-for-row.
+// ============================================================================
+
+export type BookingPaymentStatus =
+  | 'pending'
+  | 'paid'
+  | 'refunded'
+  // Phase 6.2 ADD VALUE. Default for every Phase 6.2 booking
+  // until Phase 11 wires HyperPay.
+  | 'pending_offline';
+
+export type BookingFlightStatus =
+  | 'confirmed'
+  | 'boarding'
+  | 'in_flight'
+  | 'completed'
+  | 'cancelled';
+
+export type AddonTypeValue =
+  | 'ground_transfer'
+  | 'crew'
+  | 'catering'
+  | 'special';
+
+export type AddonStatusValue =
+  | 'pending'
+  | 'confirmed'
+  | 'delivered'
+  | 'cancelled';
+
+/**
+ * Discriminator on `bookings.source_offer_table`. Paired with
+ * `source_offer_id` (UUID). The `bookings_source_offer_pair_check`
+ * constraint enforces that both are NULL or both populated.
+ */
+export type SourceOfferTable = 'phase4' | 'phase5';
+
+export type BookingRow = {
+  id: string;
+  booking_number: string;
+  // Legacy FK to unused `offers` table. Phase 6.2 leaves
+  // NULL on every row; the real linkage uses
+  // source_offer_table + source_offer_id.
+  offer_id: string | null;
+  // Phase 4 PR #6 made trip_requests.client_id nullable for
+  // guest mode. Phase 6.2 PR 1 File A does the same on
+  // bookings.client_id; identity preserved via the snapshot
+  // columns + bookings_identity_check constraint.
+  client_id: string | null;
+  customer_name_snapshot: string | null;
+  customer_phone_snapshot: string | null;
+  // Operator FK relaxed to nullable in PR 1 File A. PR 2a's
+  // accept_offer body populates the snapshot columns from
+  // the chosen Phase 4 / Phase 5 offer row.
+  operator_id: string | null;
+  operator_name_snapshot: string | null;
+  operator_phone_snapshot: string | null;
+  operator_email_snapshot: string | null;
+  // Aircraft FK relaxed to nullable in PR 1 File A. PR 2a
+  // populates aircraft_snapshot from the offer's freeform
+  // aircraft fields.
+  aircraft_id: string | null;
+  aircraft_snapshot: string | null;
+  // Trip linkage + route + passenger snapshot fields (PR 1
+  // File A step 11). trip_request_id is a real FK with ON
+  // DELETE RESTRICT; route_*_iata / freeform pairs cover
+  // both Phase 6.0 freeform-fallback and IATA-resolved
+  // trips. The bookings_route_*_present_check constraints
+  // enforce at-least-one per side once trip_request_id is
+  // set.
+  trip_request_id: string | null;
+  route_origin_iata: string | null;
+  route_destination_iata: string | null;
+  route_origin_freeform_snapshot: string | null;
+  route_destination_freeform_snapshot: string | null;
+  passengers_count_snapshot: number | null;
+  return_scheduled: string | null;
+  // Pricing.
+  base_amount: number;
+  addons_amount: number;
+  // PR 1 File A relaxed these to nullable. PR 2a's
+  // accept_offer body leaves them NULL (Phase 11 territory).
+  vat_amount: number | null;
+  total_amount: number;
+  commission_amount: number | null;
+  operator_payout: number | null;
+  // State.
+  payment_status: BookingPaymentStatus;
+  flight_status: BookingFlightStatus;
+  // ZATCA columns are pre-allocated in the initial schema.
+  // Phase 6.2 leaves them NULL on every row; Phase 11 wires
+  // them.
+  zatca_invoice_url: string | null;
+  zatca_qr_code: string | null;
+  zatca_uuid: string | null;
+  // Schedule.
+  departure_scheduled: string;
+  departure_actual: string | null;
+  arrival_actual: string | null;
+  // Source-offer linkage (no FK; one-of-two target tables).
+  source_offer_table: SourceOfferTable | null;
+  source_offer_id: string | null;
+  // Customer checkout-prep token. Both NULL by default;
+  // founder mints + writes both via the admin "Issue
+  // checkout link" action. Paired CHECK enforces both-or-
+  // neither.
+  checkout_token_hash: string | null;
+  checkout_token_expires_at: string | null;
+  // Loyalty: Phase 10 territory; stays 0 for Phase 6.2.
+  loyalty_points_earned: number;
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * `bookings` Insert / Update shapes are not exposed via
+ * direct table writes in Phase 6.2 — every mutation goes
+ * through the SECURITY DEFINER RPCs in PR 2a (accept_offer,
+ * backfill_booking_from_offer, attach_booking_addon, etc.).
+ * The Insert shape below is declared for type-checking
+ * completeness only; no Server Action calls supabase
+ * .from('bookings').insert(...).
+ */
+export type BookingInsert = Partial<BookingRow> & {
+  base_amount: number;
+  total_amount: number;
+  departure_scheduled: string;
+};
+
+export type BookingUpdate = Partial<Omit<BookingRow, 'id' | 'created_at'>>;
+
+export type BookingAddonRow = {
+  id: string;
+  booking_id: string;
+  addon_type: AddonTypeValue;
+  addon_subtype: string;
+  details: Record<string, unknown>;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  commission_rate: number;
+  supplier_id: string | null;
+  status: AddonStatusValue;
+  // PR 1 File A added cancelled_at for the soft-cancel path
+  // (customer_cancel_booking_addon + admin_cancel_booking_addon).
+  cancelled_at: string | null;
+  created_at: string;
+};
+
+export type BookingAddonInsert = Partial<BookingAddonRow> & {
+  booking_id: string;
+  addon_type: AddonTypeValue;
+  addon_subtype: string;
+  unit_price: number;
+  total_price: number;
+};
+
+export type BookingAddonUpdate = Partial<
+  Omit<BookingAddonRow, 'id' | 'created_at'>
+>;
+
+/**
+ * `addon_catalog` is the seeded reference table from PR 1
+ * File C. RLS deny-all; service-role-only reads. Mirrors
+ * `lib/addons/catalog.ts` row-for-row; parity enforced at
+ * CI by `lib/addons/__tests__/catalog-vs-seed.test.ts` and
+ * post-deploy by founder Probe 2b.
+ */
+export type AddonCatalogRow = {
+  subtype: string;
+  addon_type: AddonTypeValue;
+  label_ar: string;
+  label_en: string;
+  description_ar: string;
+  description_en: string;
+  unit_price_sar: number;
+  unit_price_min_sar: number;
+  unit_price_max_sar: number;
+  per_passenger: boolean;
+  commission_rate_pct: number;
+  allow_quantity: boolean;
+  free: boolean;
+  advisor_ref: string | null;
+};
+
+export type AddonCatalogInsert = AddonCatalogRow;
+export type AddonCatalogUpdate = Partial<Omit<AddonCatalogRow, 'subtype'>>;
+
 export type Database = {
   __InternalSupabase: {
     PostgrestVersion: '12';
@@ -559,6 +763,30 @@ export type Database = {
         Update: Partial<Omit<Phase5OperatorOfferRow, 'id' | 'created_at'>>;
         Relationships: [];
       };
+      // Phase 6.2 PR 1: bookings + booking_addons +
+      // addon_catalog. Direct table writes from app code are
+      // intentionally not used in Phase 6.2; every mutation
+      // goes through PR 2a's SECURITY DEFINER RPCs. The
+      // Insert / Update shapes are declared for type-checking
+      // completeness so list / get queries type-check.
+      bookings: {
+        Row: BookingRow;
+        Insert: BookingInsert;
+        Update: BookingUpdate;
+        Relationships: [];
+      };
+      booking_addons: {
+        Row: BookingAddonRow;
+        Insert: BookingAddonInsert;
+        Update: BookingAddonUpdate;
+        Relationships: [];
+      };
+      addon_catalog: {
+        Row: AddonCatalogRow;
+        Insert: AddonCatalogInsert;
+        Update: AddonCatalogUpdate;
+        Relationships: [];
+      };
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -598,13 +826,12 @@ export type Database = {
       loyalty_tier: 'silver' | 'gold' | 'platinum' | 'diamond';
       user_status: 'active' | 'suspended' | 'deleted';
       trip_type: TripTypeValue;
-      booking_payment_status: 'pending' | 'paid' | 'refunded';
-      booking_flight_status:
-        | 'confirmed'
-        | 'boarding'
-        | 'in_flight'
-        | 'completed'
-        | 'cancelled';
+      // Phase 6.2 PR 1 File A: ADD VALUE 'pending_offline'.
+      // 'partial_paid' and 'failed' are explicitly NOT
+      // added — they ship in Phase 11 alongside the webhook
+      // handlers that consume them.
+      booking_payment_status: BookingPaymentStatus;
+      booking_flight_status: BookingFlightStatus;
       aircraft_category: AircraftCategoryValue;
       aircraft_status: 'active' | 'maintenance' | 'retired';
       crew_role: 'captain' | 'first_officer' | 'flight_attendant';
@@ -615,7 +842,8 @@ export type Database = {
       dispatch_target_status: DispatchTargetStatus;
       dispatch_round_status: DispatchRoundStatus;
       empty_leg_status: 'available' | 'reserved' | 'sold' | 'expired';
-      addon_type: 'ground_transfer' | 'crew' | 'catering' | 'special';
+      addon_type: AddonTypeValue;
+      addon_status: AddonStatusValue;
       medevac_service_level: 'BMT' | 'ALS' | 'CCT' | 'repatriation';
       medevac_severity: 'stable' | 'moderate' | 'critical';
       medevac_status:

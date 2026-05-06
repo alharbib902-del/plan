@@ -357,6 +357,164 @@ const dictionary = {
     ar: 'ملاحظات طبية',
     en: 'Medical notes',
   },
+
+  // ========================================================================
+  // Phase 6.2 PR 1 — booking add-ons + customer checkout-prep
+  //
+  // Keys exported here so that PR 2b's admin attach UI +
+  // customer checkout-prep page + operator portal display
+  // can use them without an i18n bump in PR 2b. PR 1 has
+  // zero runtime consumer of these keys; the dictionary is
+  // stable, not gated.
+  // ========================================================================
+
+  // Add-on type group headers (the four addon_type ENUM values).
+  addon_type_ground_transfer: {
+    ar: 'النقل البري',
+    en: 'Ground transfer',
+  },
+  addon_type_crew: {
+    ar: 'تخصيص الطاقم',
+    en: 'Crew customization',
+  },
+  addon_type_catering: {
+    ar: 'الوجبات',
+    en: 'Catering',
+  },
+  addon_type_special: {
+    ar: 'خدمات خاصة',
+    en: 'Special services',
+  },
+
+  // Customer checkout-prep page (PR 2b consumer).
+  checkout_prep_page_title: {
+    ar: 'مراجعة الحجز',
+    en: 'Booking review',
+  },
+  checkout_prep_flight_summary_heading: {
+    ar: 'ملخص الرحلة',
+    en: 'Flight summary',
+  },
+  checkout_prep_addons_heading: {
+    ar: 'الخدمات الإضافية',
+    en: 'Add-ons',
+  },
+  checkout_prep_totals_heading: {
+    ar: 'الإجمالي',
+    en: 'Totals',
+  },
+  checkout_prep_subtotal_label: {
+    ar: 'إجمالي الرحلة',
+    en: 'Subtotal',
+  },
+  checkout_prep_addons_subtotal_label: {
+    ar: 'إجمالي الإضافات',
+    en: 'Add-ons subtotal',
+  },
+  checkout_prep_grand_total_label: {
+    ar: 'الإجمالي النهائي',
+    en: 'Grand total',
+  },
+  checkout_prep_remove_button: {
+    ar: 'إزالة',
+    en: 'Remove',
+  },
+  checkout_prep_confirm_button: {
+    ar: 'مراجعتُ التفاصيل وأؤكّد',
+    en: 'I have reviewed and confirm',
+  },
+  checkout_prep_whatsapp_button: {
+    ar: 'أكّد الحجز عبر واتساب',
+    en: 'Confirm via WhatsApp',
+  },
+  checkout_prep_payment_offline_notice: {
+    ar: 'سيتواصل معك المؤسس عبر واتساب لإكمال الدفع',
+    en: 'The founder will contact you on WhatsApp to finalize payment',
+  },
+  checkout_prep_confirm_success_message: {
+    ar: 'شكراً، سيتواصل معك المؤسس عبر واتساب لإكمال الدفع',
+    en: 'Thank you. The founder will reach out on WhatsApp to finalize payment.',
+  },
+  checkout_prep_link_personal_notice: {
+    ar: 'هذا الرابط شخصي. لا تشاركه مع أحد.',
+    en: 'This link is personal. Do not share it.',
+  },
+
+  // Customer checkout-prep error / not-issued surface (the
+  // single "expired or not-issued" surface that all three
+  // token-validation failures collapse into — defense in
+  // depth per Codex iteration-3 P1 #3).
+  checkout_prep_expired_title: {
+    ar: 'هذا الرابط منتهي الصلاحية أو لم يُصدَر بعد',
+    en: 'This link has expired or has not been issued yet',
+  },
+  checkout_prep_expired_body: {
+    ar: 'تواصل مع المؤسس عبر واتساب للحصول على رابط جديد.',
+    en: 'Contact the founder on WhatsApp to receive a new link.',
+  },
+
+  // Route fallback used by lib/checkout/route-display.ts
+  // when both iata + freeform are NULL (unreachable when the
+  // route-presence CHECK constraints are active, but
+  // defensive).
+  checkout_prep_route_unspecified: {
+    ar: 'غير محدد',
+    en: 'Unspecified',
+  },
+
+  // Admin add-ons attach surface (PR 2b consumer).
+  admin_addons_tab_label: {
+    ar: 'الخدمات الإضافية',
+    en: 'Add-ons',
+  },
+  admin_addons_pre_accept_message: {
+    ar: 'بعد قبول العرض ستتمكن من إضافة الخدمات.',
+    en: 'You can attach add-ons after accepting the offer.',
+  },
+  admin_addons_legacy_no_booking_message: {
+    ar: 'هذه رحلة محجوزة قبل Phase 6.2 — لا يوجد سجل حجز مرتبط. أنشئ السجل لإضافة الخدمات.',
+    en: 'This trip was booked before Phase 6.2 — no booking row is linked yet. Create the booking record to attach add-ons.',
+  },
+  admin_addons_create_booking_button: {
+    ar: 'إنشاء سجل الحجز',
+    en: 'Create booking record',
+  },
+  admin_addons_attach_button: {
+    ar: 'إضافة خدمة',
+    en: 'Attach add-on',
+  },
+  admin_addons_suggestions_heading: {
+    ar: 'اقتراحات بناءً على تفضيلات العميل',
+    en: 'Suggestions based on customer preferences',
+  },
+  admin_addons_price_override_label: {
+    ar: 'تعديل السعر (ريال)',
+    en: 'Price override (SAR)',
+  },
+  admin_addons_quantity_label: {
+    ar: 'الكمية',
+    en: 'Quantity',
+  },
+  admin_addons_note_label: {
+    ar: 'ملاحظة (اختياري)',
+    en: 'Note (optional)',
+  },
+  admin_addons_per_passenger_hint: {
+    ar: 'تُحسب الكمية تلقائياً من عدد الركاب.',
+    en: 'Quantity is computed automatically from passenger count.',
+  },
+  admin_addons_free_label: {
+    ar: 'مجاني',
+    en: 'Complimentary',
+  },
+  admin_addons_issue_checkout_link_button: {
+    ar: 'إصدار رابط مراجعة الحجز للعميل',
+    en: 'Issue customer checkout link',
+  },
+  admin_addons_secret_not_set_error: {
+    ar: 'secret غير مهيأ — راجع متغيرات Vercel قبل المحاولة مجدداً',
+    en: 'Secret not configured — review the Vercel environment variables and retry.',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 // ============================================================================
