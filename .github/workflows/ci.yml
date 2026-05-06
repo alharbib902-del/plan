@@ -40,6 +40,15 @@ jobs:
       - name: Install dependencies (clean)
         run: npm ci
 
+      # Phase 6.2 PR 1 (Codex iteration-9 P1 #2 +
+      # iteration-10 P1 fix): catalog parity test runs
+      # BEFORE the slower checks so a drift between
+      # `lib/addons/catalog.ts` and the seeded
+      # `addon_catalog` migration short-circuits the
+      # workflow. Static parse, no DB needed.
+      - name: Catalog parity
+        run: npm run test:addons
+
       - name: Type-check
         run: npm run type-check
 
