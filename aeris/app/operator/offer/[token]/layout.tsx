@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 
+import { OperatorPortalHeader } from '@/components/operator/operator-portal-header';
+
 export const metadata: Metadata = {
   title: 'عرض رحلة',
   robots: { index: false, follow: false },
@@ -21,14 +23,7 @@ export default function OperatorOfferLayout({
         }}
       />
       <div className="relative mx-auto max-w-3xl px-4 py-10 sm:px-6 lg:px-8">
-        <header className="mb-8 text-center">
-          <span className="font-display text-2xl tracking-[0.28em] text-gold-light">
-            AERIS
-          </span>
-          <p className="font-ar mt-2 text-xs uppercase tracking-tagged text-ink-muted">
-            بوابة تقديم العروض للمشغّلين
-          </p>
-        </header>
+        <OperatorPortalHeader />
         {children}
       </div>
     </div>
