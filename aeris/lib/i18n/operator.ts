@@ -359,6 +359,73 @@ const dictionary = {
   },
 } as const satisfies Record<string, Record<Lang, string>>;
 
+// ============================================================================
+// Phase 6.1 PR 2 — country / language display helpers for the
+// operator-portal preferences section. The same curated tables
+// drive the customer-facing /request picker (in
+// components/forms/trip-preferences-fields.tsx via re-export)
+// and the operator-portal display, so labels stay in sync.
+// ============================================================================
+
+interface CountryEntry {
+  code: string;
+  ar: string;
+  en: string;
+}
+
+export const PREFERENCE_COUNTRY_OPTIONS: readonly CountryEntry[] = [
+  { code: 'SA', ar: 'السعودية', en: 'Saudi Arabia' },
+  { code: 'AE', ar: 'الإمارات', en: 'United Arab Emirates' },
+  { code: 'KW', ar: 'الكويت', en: 'Kuwait' },
+  { code: 'QA', ar: 'قطر', en: 'Qatar' },
+  { code: 'BH', ar: 'البحرين', en: 'Bahrain' },
+  { code: 'OM', ar: 'عُمان', en: 'Oman' },
+  { code: 'EG', ar: 'مصر', en: 'Egypt' },
+  { code: 'JO', ar: 'الأردن', en: 'Jordan' },
+  { code: 'LB', ar: 'لبنان', en: 'Lebanon' },
+  { code: 'SY', ar: 'سوريا', en: 'Syria' },
+  { code: 'IQ', ar: 'العراق', en: 'Iraq' },
+  { code: 'YE', ar: 'اليمن', en: 'Yemen' },
+  { code: 'SD', ar: 'السودان', en: 'Sudan' },
+  { code: 'PK', ar: 'باكستان', en: 'Pakistan' },
+  { code: 'IN', ar: 'الهند', en: 'India' },
+  { code: 'PH', ar: 'الفلبين', en: 'Philippines' },
+] as const;
+
+interface LanguageEntry {
+  code: string;
+  ar: string;
+  en: string;
+}
+
+export const PREFERENCE_LANGUAGE_OPTIONS: readonly LanguageEntry[] = [
+  { code: 'ar', ar: 'العربية', en: 'Arabic' },
+  { code: 'en', ar: 'الإنجليزية', en: 'English' },
+  { code: 'ur', ar: 'الأردية', en: 'Urdu' },
+  { code: 'fr', ar: 'الفرنسية', en: 'French' },
+  { code: 'hi', ar: 'الهندية', en: 'Hindi' },
+] as const;
+
+/**
+ * Resolve an ISO 3166-1 alpha-2 country code to its display
+ * name in the active language. Falls back to the bare code
+ * if the country isn't in the curated list (e.g. an admin
+ * override added a code outside the picker's options).
+ */
+export function countryDisplayName(code: string, lang: Lang): string {
+  const found = PREFERENCE_COUNTRY_OPTIONS.find((c) => c.code === code);
+  return found ? found[lang] : code;
+}
+
+/**
+ * Resolve an ISO 639-1 language code to its display name in
+ * the active language. Falls back to the bare code on miss.
+ */
+export function languageDisplayName(code: string, lang: Lang): string {
+  const found = PREFERENCE_LANGUAGE_OPTIONS.find((l) => l.code === code);
+  return found ? found[lang] : code;
+}
+
 export type StringKey = keyof typeof dictionary;
 
 export function t(key: StringKey, lang: Lang): string {

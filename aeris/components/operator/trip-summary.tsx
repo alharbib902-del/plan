@@ -1,9 +1,12 @@
 import type { AirportRow, TripRequestRow } from '@/types/database';
+import type { TripPreferences } from '@/lib/validators/trip-preferences';
 import {
   aircraftCategoryLabel,
   airportLabel,
+  countryDisplayName,
   formatRiyadhDate,
   formatRiyadhDateTime,
+  languageDisplayName,
   type Lang,
   t,
 } from '@/lib/i18n/operator';
@@ -101,6 +104,16 @@ export function OperatorTripSummary({
             {aircraftCategoryLabel(trip.aircraft_category_preference, lang)}
           </Row>
         )}
+        {/* Phase 6.1 PR 2 (S4): structured customer preferences.
+            Section renders iff at least one preference key
+            beyond the legacy `lead_trip_type` injection is
+            present. Per spec display order: halal, prayer,
+            crew gender, pilot nationality, crew nationalities,
+            crew languages, child seats, elderly assistance,
+            medical notes. */}
+        {hasDisplayablePreferences(trip.preferences) && (
+          <PreferencesRows preferences={trip.preferences!} lang={lang} />
+        )}
         {trip.special_requests && (
           <Row label={t('special_requests_label', lang)}>
             <span className="whitespace-pre-wrap">{trip.special_requests}</span>
@@ -113,5 +126,149 @@ export function OperatorTripSummary({
         </Row>
       </dl>
     </div>
+  );
+}
+
+// ============================================================
+// Phase 6.1 PR 2 (S4) — preferences display
+// ============================================================
+
+/**
+ * Returns true iff the trip's preferences blob contains at
+ * least one key other than the legacy `lead_trip_type`
+ * injection. The legacy key is always present on
+ * promote-flow trips (the RPC injects it on every promote);
+ * displaying a "Customer Preferences" section that contains
+ * only that key would be misleading — the section should
+ * appear only when the customer or admin actually
+ * expressed something.
+ */
+function hasDisplayablePreferences(
+  preferences: TripPreferences | null
+): boolean {
+  if (!preferences) return false;
+  const keys = Object.keys(preferences).filter(
+    (k) => k !== 'lead_trip_type'
+  );
+  return keys.length > 0;
+}
+
+function PreferencesRows({
+  preferences,
+  lang,
+}: {
+  preferences: TripPreferences;
+  lang: Lang;
+}) {
+  // Display order matches Phase 6.1 spec iteration 4 S4
+  // (halal first because it's the most operationally
+  // critical signal for the operator's prep).
+  const rows: Array<{ label: string; value: React.ReactNode }> = [];
+
+  if (preferences.halal === true) {
+    rows.push({
+      label: t('preferences_section_title', lang),
+      value: t('pref_halal_required', lang),
+    });
+  } else if (preferences.halal === false) {
+    rows.push({
+      label: t('preferences_section_title', lang),
+      value: t('pref_halal_no', lang),
+    });
+  }
+
+  if (preferences.prayer_setup === true) {
+    rows.push({
+      label: '',
+      value: t('pref_prayer_setup', lang),
+    });
+  } else if (preferences.prayer_setup === false) {
+    rows.push({
+      label: '',
+      value: t('pref_prayer_setup_no', lang),
+    });
+  }
+
+  if (preferences.crew_gender_preference) {
+    const key =
+      preferences.crew_gender_preference === 'male'
+        ? 'pref_crew_gender_male'
+        : preferences.crew_gender_preference === 'female'
+          ? 'pref_crew_gender_female'
+          : 'pref_crew_gender_no_preference';
+    rows.push({ label: '', value: t(key, lang) });
+  }
+
+  if (preferences.pilot_nationality) {
+    rows.push({
+      label: t('pref_pilot_nationality_label', lang),
+      value: countryDisplayName(preferences.pilot_nationality, lang),
+    });
+  }
+
+  if (preferences.crew_nationalities && preferences.crew_nationalities.length > 0) {
+    rows.push({
+      label: t('pref_crew_nationalities_label', lang),
+      value: preferences.crew_nationalities
+        .map((c) => countryDisplayName(c, lang))
+        .join('، '),
+    });
+  }
+
+  if (preferences.crew_languages && preferences.crew_languages.length > 0) {
+    rows.push({
+      label: t('pref_crew_languages_label', lang),
+      value: preferences.crew_languages
+        .map((l) => languageDisplayName(l, lang))
+        .join('، '),
+    });
+  }
+
+  if (
+    typeof preferences.child_seats === 'number' &&
+    preferences.child_seats > 0
+  ) {
+    rows.push({
+      label: t('pref_child_seats_label', lang),
+      value: preferences.child_seats,
+    });
+  }
+
+  if (preferences.elderly_assistance === true) {
+    rows.push({ label: '', value: t('pref_elderly_assistance', lang) });
+  } else if (preferences.elderly_assistance === false) {
+    rows.push({ label: '', value: t('pref_elderly_assistance_no', lang) });
+  }
+
+  if (preferences.medical_notes) {
+    rows.push({
+      label: t('pref_medical_notes_label', lang),
+      value: (
+        <span className="whitespace-pre-wrap">{preferences.medical_notes}</span>
+      ),
+    });
+  }
+
+  // Render: first row gets the "Customer Preferences"
+  // section title in its label slot; subsequent rows have
+  // empty labels (visually grouped under the first label).
+  // If the first matched preference happens to be one that
+  // already used the title label (halal), no special-case
+  // needed — the title only emits once.
+  return (
+    <>
+      {rows.map((row, idx) => (
+        <Row
+          key={idx}
+          label={
+            idx === 0 && row.label === ''
+              ? t('preferences_section_title', lang)
+              : row.label
+          }
+        >
+          {row.value}
+        </Row>
+      ))}
+    </>
   );
 }
