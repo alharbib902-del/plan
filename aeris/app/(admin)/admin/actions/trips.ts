@@ -11,6 +11,10 @@ import {
   OperatorTokenEnvError,
 } from '@/lib/operator/token';
 import { promoteLeadSchema } from '@/lib/validators/promote-lead';
+import {
+  mergeTripPreferences,
+  tripPreferencesSchema,
+} from '@/lib/validators/trip-preferences';
 import { dispatchTripSchema } from '@/lib/validators/dispatch';
 import { dispatchTripV2Schema } from '@/lib/validators/dispatch-v2';
 import { getLeadById } from '@/lib/supabase/queries/leads';
@@ -48,6 +52,24 @@ export type PromoteResult =
 export async function promoteLead(formData: FormData): Promise<PromoteResult> {
   requireAdminSession();
 
+  // Phase 6.1 PR 2: read the preferences JSON blob the
+  // admin form serializes from its preference fields.
+  // Empty string (no preferences entered) becomes `{}`.
+  const preferencesRaw = formData.get('preferences');
+  let preferencesParsed: ReturnType<typeof tripPreferencesSchema.safeParse>;
+  try {
+    const candidate =
+      typeof preferencesRaw === 'string' && preferencesRaw.trim().length > 0
+        ? JSON.parse(preferencesRaw)
+        : {};
+    preferencesParsed = tripPreferencesSchema.safeParse(candidate);
+  } catch {
+    return { ok: false, error: 'invalid_input' };
+  }
+  if (!preferencesParsed.success) {
+    return { ok: false, error: 'invalid_input' };
+  }
+
   const parsed = promoteLeadSchema.safeParse({
     lead_id: formData.get('lead_id'),
     aircraft_category: formData.get('aircraft_category'),
@@ -64,6 +86,19 @@ export async function promoteLead(formData: FormData): Promise<PromoteResult> {
 
   const legs = buildLegsFromLead(lead);
 
+  // Phase 6.1 PR 2: merge admin-edited preferences over the
+  // lead's pre-existing preferences (read from
+  // lead_inquiries.preferences). The merge helper strips
+  // null/undefined/empty values from the admin overlay so
+  // the canonical "key omission = no preference" rule
+  // holds. The legacy lead_trip_type key is injected by
+  // the RPC body itself (last-write-wins on JSONB || in
+  // SQL); we don't need to inject it here.
+  const mergedPreferences = mergeTripPreferences(
+    lead.preferences,
+    preferencesParsed.data
+  );
+
   let result;
   try {
     result = await promoteLeadToTripRequest({
@@ -72,6 +107,7 @@ export async function promoteLead(formData: FormData): Promise<PromoteResult> {
       p_aircraft_category: parsed.data.aircraft_category,
       p_special_requests: parsed.data.special_requests ?? null,
       p_lead_trip_type: lead.trip_type,
+      p_preferences: mergedPreferences,
     });
   } catch (err) {
     console.error('[trips-action] promoteLead RPC failed', err);
