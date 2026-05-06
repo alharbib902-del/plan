@@ -106,12 +106,22 @@ ON CONFLICT (iata_code) DO NOTHING;
 --
 -- Signature, SECURITY DEFINER, search_path pin, REVOKE/GRANT
 -- block all preserved byte-for-byte from the Phase 4 PR #6
--- version. Only the INSERT column list and VALUES change to
--- populate `departure_airport` / `arrival_airport` from
--- `p_legs` when the values match a known IATA.
+-- version. Only the INSERT column list and the body's local-
+-- variable derivation change, to populate
+-- `departure_airport` / `arrival_airport` from `p_legs` when
+-- the values match a known IATA.
 --
--- The CASE-guarded subqueries:
---   - Return NULL when p_legs is missing, not an array, or
+-- Defensive shape (Codex P2 patch on PR #15):
+--   - The body uses LOCAL variables `v_legs_len`,
+--     `v_departure_iata`, `v_arrival_iata` and a NESTED
+--     `IF jsonb_typeof(p_legs) = 'array' THEN ...` block.
+--     SQL standard does not guarantee short-circuit
+--     evaluation of `AND` in CASE WHEN, so an inline
+--     `WHEN jsonb_typeof = 'array' AND jsonb_array_length > 0`
+--     could let `jsonb_array_length` execute on a non-array
+--     payload and raise. The nested form removes that
+--     ambiguity.
+--   - Returns NULL when p_legs is missing, not an array, or
 --     empty (defensive against future caller shape drift).
 --   - upper(NULLIF(..., '')) normalizes case and treats empty
 --     strings as NULL so the subquery returns no rows cleanly.
@@ -134,9 +144,22 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_lead    RECORD;
-  v_now     TIMESTAMPTZ := NOW();
-  v_trip_id UUID;
+  v_lead             RECORD;
+  v_now              TIMESTAMPTZ := NOW();
+  v_trip_id          UUID;
+  -- Phase 6.0 P2 patch (Codex review of PR #15): SQL standard
+  -- does NOT guarantee short-circuit evaluation of `AND` in a
+  -- CASE WHEN, so the previous inline form
+  --   `WHEN jsonb_typeof(p_legs) = 'array'
+  --         AND jsonb_array_length(p_legs) > 0`
+  -- could let `jsonb_array_length` execute on a non-array
+  -- payload (object, scalar, NULL) and raise. Computing the
+  -- length once into a variable, GUARDED by `jsonb_typeof`,
+  -- guarantees the order and lets the IATA derivation read
+  -- the variable instead of recomputing it for arrival.
+  v_legs_len         INTEGER := 0;
+  v_departure_iata   TEXT;
+  v_arrival_iata     TEXT;
 BEGIN
   -- Lock the lead row to serialize concurrent promote attempts.
   SELECT * INTO v_lead
@@ -152,6 +175,25 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'lead_not_promotable');
   END IF;
 
+  -- Phase 6.0: derive trip_requests.departure_airport /
+  -- arrival_airport from p_legs[0].from / p_legs[last].to when
+  -- they match a known IATA. The two IF blocks are nested so
+  -- jsonb_array_length and the JSONB index lookups never run
+  -- on a non-array payload.
+  IF jsonb_typeof(p_legs) = 'array' THEN
+    v_legs_len := jsonb_array_length(p_legs);
+    IF v_legs_len > 0 THEN
+      SELECT iata_code INTO v_departure_iata
+        FROM airports
+        WHERE iata_code = upper(NULLIF(p_legs->0->>'from', ''));
+
+      SELECT iata_code INTO v_arrival_iata
+        FROM airports
+        WHERE iata_code = upper(NULLIF(
+          p_legs->(v_legs_len - 1)->>'to', ''));
+    END IF;
+  END IF;
+
   INSERT INTO trip_requests (
     client_id, customer_name, customer_phone, customer_source,
     trip_type, legs,
@@ -163,24 +205,7 @@ BEGIN
     NULL,
     v_lead.customer_name, v_lead.customer_phone, 'lead',
     'charter', p_legs,
-    -- Phase 6.0: derive departure_airport from p_legs[0].from
-    -- when it matches a known IATA. NULL otherwise (legacy
-    -- freeform strings, empty arrays, missing field).
-    CASE WHEN jsonb_typeof(p_legs) = 'array'
-              AND jsonb_array_length(p_legs) > 0
-         THEN (SELECT iata_code FROM airports
-                 WHERE iata_code = upper(NULLIF(p_legs->0->>'from', '')))
-         ELSE NULL
-    END,
-    -- Phase 6.0: derive arrival_airport from the LAST leg's `to`
-    -- field, same logic.
-    CASE WHEN jsonb_typeof(p_legs) = 'array'
-              AND jsonb_array_length(p_legs) > 0
-         THEN (SELECT iata_code FROM airports
-                 WHERE iata_code = upper(NULLIF(
-                   p_legs->(jsonb_array_length(p_legs) - 1)->>'to', '')))
-         ELSE NULL
-    END,
+    v_departure_iata, v_arrival_iata,
     v_lead.departure_date::timestamptz,
     v_lead.return_date::timestamptz,
     v_lead.passengers,
