@@ -3,6 +3,10 @@
 import { useId } from 'react';
 
 import { cn } from '@/lib/utils/cn';
+import {
+  PREFERENCE_COUNTRY_OPTIONS,
+  PREFERENCE_LANGUAGE_OPTIONS,
+} from '@/lib/i18n/operator';
 import type { TripPreferences } from '@/lib/validators/trip-preferences';
 
 /**
@@ -43,40 +47,12 @@ import type { TripPreferences } from '@/lib/validators/trip-preferences';
  *     only "no preference" signal.
  */
 
-// Curated KSA-market list of countries + GCC + common
-// crew-supplier nations. Per Phase 6.1 spec iteration 4
-// Q3 (my read): hard-coded for 6.1; matching engine
-// doesn't exist yet, no real crew_members data to query.
-// Codex iteration 1 review of PR 2 will likely tune this
-// list.
-type CountryOption = { code: string; ar: string; en: string };
-const COUNTRY_OPTIONS: CountryOption[] = [
-  { code: 'SA', ar: 'السعودية', en: 'Saudi Arabia' },
-  { code: 'AE', ar: 'الإمارات', en: 'United Arab Emirates' },
-  { code: 'KW', ar: 'الكويت', en: 'Kuwait' },
-  { code: 'QA', ar: 'قطر', en: 'Qatar' },
-  { code: 'BH', ar: 'البحرين', en: 'Bahrain' },
-  { code: 'OM', ar: 'عُمان', en: 'Oman' },
-  { code: 'EG', ar: 'مصر', en: 'Egypt' },
-  { code: 'JO', ar: 'الأردن', en: 'Jordan' },
-  { code: 'LB', ar: 'لبنان', en: 'Lebanon' },
-  { code: 'SY', ar: 'سوريا', en: 'Syria' },
-  { code: 'IQ', ar: 'العراق', en: 'Iraq' },
-  { code: 'YE', ar: 'اليمن', en: 'Yemen' },
-  { code: 'SD', ar: 'السودان', en: 'Sudan' },
-  { code: 'PK', ar: 'باكستان', en: 'Pakistan' },
-  { code: 'IN', ar: 'الهند', en: 'India' },
-  { code: 'PH', ar: 'الفلبين', en: 'Philippines' },
-];
-
-type LanguageOption = { code: string; ar: string };
-const LANGUAGE_OPTIONS: LanguageOption[] = [
-  { code: 'ar', ar: 'العربية' },
-  { code: 'en', ar: 'الإنجليزية' },
-  { code: 'ur', ar: 'الأردية' },
-  { code: 'fr', ar: 'الفرنسية' },
-  { code: 'hi', ar: 'الهندية' },
-];
+// The curated KSA-market lists (countries + languages)
+// live in `lib/i18n/operator.ts` so the operator-portal
+// display can resolve labels from the same source. This
+// component imports them above as `PREFERENCE_COUNTRY_OPTIONS`
+// + `PREFERENCE_LANGUAGE_OPTIONS`. Single source of truth
+// across customer form + admin form + operator portal.
 
 const fieldLabel = 'font-ar mb-2 block text-sm text-ink';
 const fieldHint = 'font-ar mt-1 block text-xs text-ink-muted';
@@ -374,7 +350,7 @@ function CountrySingleSelect({
         <option value="" className="bg-navy">
           — لا تفضيل —
         </option>
-        {COUNTRY_OPTIONS.map((opt) => (
+        {PREFERENCE_COUNTRY_OPTIONS.map((opt) => (
           <option key={opt.code} value={opt.code} className="bg-navy">
             {opt.ar} ({opt.code})
           </option>
@@ -407,7 +383,7 @@ function CountryChipSelect({
         data-name={name}
         className="flex flex-wrap gap-2"
       >
-        {COUNTRY_OPTIONS.map((opt) => {
+        {PREFERENCE_COUNTRY_OPTIONS.map((opt) => {
           const active = selected.includes(opt.code);
           return (
             <button
@@ -454,7 +430,7 @@ function LanguageChipSelect({
         data-name={name}
         className="flex flex-wrap gap-2"
       >
-        {LANGUAGE_OPTIONS.map((opt) => {
+        {PREFERENCE_LANGUAGE_OPTIONS.map((opt) => {
           const active = selected.includes(opt.code);
           return (
             <button
