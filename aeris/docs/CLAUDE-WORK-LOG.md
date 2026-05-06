@@ -3218,3 +3218,217 @@ based on this entry alone — PR 2 + Codex acceptance + the
 founder spot-check on PR 2's preview are the actual ship
 signals for Phase 6.0 as a whole.
 
+---
+
+## Phase 6.0 — Airports Foundation, PR 2 (2026-05-06)
+
+### Status
+
+**PR 2 of 2 opened. Acceptance pending Codex review +
+founder spot-check on the Vercel preview build.** PR 1
+merged 2026-05-06 (commit `b5617d8`); the founder applied
+`20260506000005_phase_6_airports.sql` to production
+Supabase the same day and all 5 verification probes
+returned the expected post-conditions:
+
+- Probe 1: `airports` count = 16 (12 initial + 4 PR 1 KSA additions).
+- Probe 2: `lead_inquiries.origin_iata` / `destination_iata` are nullable VARCHAR(3).
+- Probe 3: FK constraints on both columns reference `airports(iata_code)`.
+- Probe 4: `promote_lead_to_trip_request` SECURITY DEFINER + `search_path=public, pg_temp`.
+- Probe 4b: EXECUTE — `service_role` true, `anon` false, `authenticated` false.
+- Probe 5: re-runnability — second paste returned `Success. No rows returned`.
+
+PR 2 is the runtime half: picker UI, Server Action wiring,
+admin lead-promotion update, operator-portal display. All
+contracts come from the Phase 6.0 spec at
+`aeris/docs/CLAUDE-TASK.md` iteration 3 (Codex 100/100,
+founder-accepted).
+
+### What this PR adds
+
+The four spec sections (S1 already shipped in PR 1 as
+helpers; S2/S3/S4/S6 land here; S5 was the migration in
+PR 1; S7 was the seed strategy executed in PR 1):
+
+- **`<AirportCombobox />` component (S2).** Hand-rolled
+  Client Component, no new dependencies. IATA mode shows
+  a styled trigger button + dropdown grouped by country
+  (KSA first, alphabetical otherwise). Search filters
+  across IATA / ICAO / EN+AR name / city / country.
+  Freeform mode swaps in a text input with a "↺" return
+  button. Two hidden form inputs (`${name}_iata` and
+  `${name}_freeform`) carry the values; the server
+  validator enforces "exactly one of".
+- **`/request` form wiring (S3).** Validator widened with
+  4 new fields + 4 new refinements (origin / destination,
+  each with neither + both refinement). Server Action
+  reads the new fields, calls `assertKnownAirport` for the
+  IATA path (rejects unknown codes per acceptance #6), and
+  derives a display label (`city_ar (IATA)` for picker
+  mode, freeform string for fallback). Both legacy
+  `lead_inquiries.origin / destination` (display label)
+  and the new `origin_iata / destination_iata` columns are
+  populated. Form replaces the two text inputs with
+  `<AirportCombobox />`. Page becomes async and fetches
+  the airports list server-side.
+- **Admin promote-lead (S4).** Surgical change inside
+  `app/(admin)/admin/actions/trips.ts`: `buildLegsFromLead`
+  is now IATA-aware. The admin `PromoteLeadForm` itself
+  has no legs builder UI to swap (discovery during PR 2 —
+  see "Discovery" below); the IATA awareness lives in the
+  helper that constructs the JSONB payload from the lead
+  row.
+- **Operator portal display (S6).** New
+  `airportLabel(value, freeform, lang, airports)` helper
+  in `lib/i18n/operator.ts` implementing the 3-shape
+  contract from the spec: new IATA, new freeform, legacy
+  raw string. Trip summary widens props with
+  `airports: AirportRow[]` and uses the helper for both
+  legs' from / to fields. `app/operator/offer/[token]/page.tsx`
+  fetches the airports list in parallel with the trip /
+  target reads (Promise.all) on both v=1 and v=2 branches.
+
+Plus one **utility split**: `isIataFormat` moved from
+`lib/supabase/queries/airports.ts` (which is `'server-only'`)
+to `lib/utils/iata.ts` (universal) so the operator portal
+client surface can import it without dragging server-only
+along. PR 1's `airports.ts` re-exports `isIataFormat` for
+back-compat.
+
+### Discovery
+
+Per spec Resolved decision #5, the implementer locates the
+admin legs-builder client component during PR 2's first
+commit and adds the discovered path to the file fence.
+
+**Discovery:** there is no separate legs-builder client
+component. The admin's `PromoteLeadForm` (at
+`aeris/components/admin/promote-lead-form.tsx`) collects only
+`aircraft_category` + `special_requests`. The legs payload
+is auto-built from the lead's stored `origin` / `destination`
+by the `buildLegsFromLead` helper inside
+`aeris/app/(admin)/admin/actions/trips.ts`.
+
+**File-fence note for PR 2:** `actions/trips.ts` is listed
+in the spec's "Not touched (explicit fence)" list with the
+reason "no admin dispatch engine change". The PR 2 change
+inside `actions/trips.ts` is **surgical**: only
+`buildLegsFromLead` is modified. `dispatchTrip`,
+`acceptOffer`, the Phase 5 helpers, and every other
+function in the file stay byte-identical. The fence intent
+("don't touch dispatch engine") is honored;
+`buildLegsFromLead` is lead-promotion (Phase 4-era) which
+is exactly what S4 needs. Codex review should weigh this
+discovery and confirm the surgical interpretation is
+acceptable.
+
+### Files touched
+
+| file | type | change |
+|---|---|---|
+| `aeris/types/database.ts` | edited | TripLeg widened: `from`/`to` → `string \| null`, optional `from_freeform`/`to_freeform` |
+| `aeris/components/ui/airport-combobox.tsx` | new | the picker (~290 lines, hand-rolled) |
+| `aeris/lib/utils/iata.ts` | new | sync `isIataFormat` (universal import) |
+| `aeris/lib/supabase/queries/airports.ts` | edited | re-exports `isIataFormat` from new utils location |
+| `aeris/lib/validators/trip-request.ts` | edited | new IATA + freeform fields + 4 refinements |
+| `aeris/app/actions/flight-request.ts` | edited | `resolveAirportSide` + `assertKnownAirport` + label derivation |
+| `aeris/lib/utils/whatsapp.ts` | edited | message builder takes `{ data, originLabel, destinationLabel }` |
+| `aeris/components/forms/flight-request-form.tsx` | edited | swaps text inputs for `<AirportCombobox />`; new error codes |
+| `aeris/app/(public)/request/page.tsx` | edited | async; calls `listAirports`; threads to form |
+| `aeris/app/(admin)/admin/actions/trips.ts` | edited (surgical) | `buildLegsFromLead` IATA-aware; nothing else touched |
+| `aeris/lib/i18n/operator.ts` | edited | `airportLabel` 3-shape helper + 2 new dictionary keys |
+| `aeris/components/operator/trip-summary.tsx` | edited | `airports` prop + `airportLabel` calls |
+| `aeris/app/operator/offer/[token]/page.tsx` | edited | parallel airports fetch + threading on both v=1 / v=2 branches |
+| `aeris/docs/checklists/operator-flow-smoke-test.md` | edited | Phase 6.0 preview checklist (8 steps) |
+| `aeris/docs/CLAUDE-WORK-LOG.md` | edited | this entry (last commit) |
+
+`aeris/docs/CLAUDE-TASK.md` is intentionally NOT in this PR;
+remains a local working-tree draft per the established PR
+discipline.
+
+### Quality gates (locally on Windows, branch HEAD before push)
+
+| command | exit | notes |
+|---|---|---|
+| `npm --prefix aeris run type-check` | 0 | `tsc --noEmit` clean. `TripLeg.from` / `to` widening to `string \| null` ripples cleanly through every consumer. |
+| `npm --prefix aeris run lint:strict` | 0 | "✔ No ESLint warnings or errors". Initial round flagged jsx-a11y `aria-invalid` on a button + unescaped `"`; both fixed in the operator-display commit. |
+| `npm --prefix aeris run build` | 0 | Route table preserved. `/request` flips from ○ (static) to ƒ (dynamic) because the airports fetch is server-side per request — expected. |
+| Bundle deltas | within ceiling | `/request` 4.36 → **6.44 kB** (+2.08 kB); `/operator/offer/[token]` 6.83 → **6.87 kB** (+0.04 kB); `/admin/leads/[id]` 3.52 kB unchanged; `/admin/trips/[id]` 5.38 kB unchanged. All under the 5 kB-per-route ceiling per spec Risk 1. |
+| Lockfile diff | empty | No new dependencies (the picker is hand-rolled). |
+| `package.json` diff | empty | No script change. |
+
+CI (Type-check, build, lint + Vercel) re-runs on the PR
+head; those results land on the PR description, not here.
+
+### Acceptance verification
+
+The spec's acceptance criteria #1–#13 (UX) run on the
+**Vercel preview build of this PR**, NOT on production.
+The `aeris/docs/checklists/operator-flow-smoke-test.md`
+"Phase 6.0 — Airports Foundation, PR 2 (preview checklist)"
+section covers them in 8 sequenced steps.
+
+**Vercel preview URL for this PR:** *to be filled in by the
+founder after Vercel deploys the PR head; founder + Codex
+spot-check before merge*. Acceptance #14–#17 (non-UX) are
+gated by the build/lint/type checks above and the
+PR-2-scope `git diff main` check.
+
+Acceptance #11 (English mode under v=1): the v=1 branch
+currently has no live in-flight tokens to probe. Per Codex
+resolved decision #7 (mirroring Phase 5.1), satisfied by
+**code review** of the page's v=1 branch confirming the new
+`airports` prop threads correctly. The display path is
+shared between v=1 and v=2 (same `OperatorTripSummary`
+component, same `airportLabel` helper), so a passing v=2
+spot-check is strong evidence the v=1 branch also works.
+
+### What this PR does NOT do
+
+Mirroring the spec's "Out of scope" section, for the
+historical record:
+
+- No DB schema, RLS, RPC, or migration changes (PR 1 did
+  all DB-side work; PR 2 is app-side only).
+- No admin dispatch engine changes — the surgical change
+  inside `actions/trips.ts` is `buildLegsFromLead` only.
+- No payment, ZATCA, WhatsApp Business API, or operator
+  account work.
+- No new dependencies. `package.json` and
+  `package-lock.json` unchanged.
+- No new airports table columns, no removal of the
+  freeform `lead_inquiries.origin / destination` columns,
+  no removal of the freeform notes field on `/request`.
+- No translation of the picker or the `/request` form into
+  English — the picker is Arabic-only per Out-of-scope (the
+  Phase 5.1 toggle covers the operator portal; the
+  `/request` form is a separate surface that stays Arabic).
+
+### Carry-overs (unchanged by this PR)
+
+- **`SUPABASE_SERVICE_ROLE_KEY` rotation + legacy HS256
+  revoke** — deferred indefinitely per founder decision
+  recorded in Phase 4 Production Activation. Not reopened.
+- **NUM (NEOM Bay) ICAO data quality** — currently seeded
+  as `OENG` but the real ICAO is `OENK`. Documented in
+  PR 1's work-log entry as a follow-up; PR 2 does NOT
+  touch the seed data.
+- **OEPV (Riyadh Executive Aviation Terminal)** — deferred
+  per Resolved decision #1; needs operational confirmation
+  before adding.
+- **Phase 4 v=1 deprecation timing** — open question from
+  the Phase 5 PR #6 entry, still open. PR 2's v=1 branch
+  changes are read-only (display label) so deprecation
+  timing is unaffected by this PR.
+
+### Closing
+
+PR 2 is **app-wiring complete on the feature branch and
+quality-gates green locally**. Phase 6.0 ships when: (a)
+PR 2 merges, (b) Codex round 2 accepts, and (c) the founder
+runs the Phase 6.0 preview checklist (8 steps) on the
+Vercel preview before merging. Do NOT declare Phase 6.0
+shipped based on this entry alone — the merge of PR 2 +
+Codex acceptance + the founder's spot-check are the
+actual ship signals.
+
