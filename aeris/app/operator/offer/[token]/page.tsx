@@ -1,10 +1,15 @@
 import type { Metadata } from 'next';
-import { verifyOperatorToken } from '@/lib/operator/token';
-import { getTripById } from '@/lib/supabase/queries/trips';
-import { getTargetById } from '@/lib/supabase/queries/phase5-targets';
-import { OperatorTripSummary } from '@/components/operator/trip-summary';
+
 import { OperatorOfferForm } from '@/components/operator/offer-form';
-import { ExpiredLink } from '@/components/operator/expired-link';
+import { ExpiredLink, type ExpiredReason } from '@/components/operator/expired-link';
+import {
+  OperatorTripSummary,
+  type OperatorContext,
+} from '@/components/operator/trip-summary';
+import { parseLang } from '@/lib/i18n/operator';
+import { verifyOperatorToken } from '@/lib/operator/token';
+import { getTargetById } from '@/lib/supabase/queries/phase5-targets';
+import { getTripById } from '@/lib/supabase/queries/trips';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,6 +21,7 @@ export const metadata: Metadata = {
 
 interface OperatorOfferPageProps {
   params: { token: string };
+  searchParams?: { lang?: string | string[] };
 }
 
 /**
@@ -38,17 +44,40 @@ interface OperatorOfferPageProps {
  *         entire prior round's targets at the SQL level; this
  *         page mirrors that for the visible flow).
  *
+ * Phase 5.1 (S2): when the page already knows the failure cause
+ * (state-fail on a HMAC-VALID token), it threads a `reason` prop
+ * to ExpiredLink so the friendly page can show a more specific
+ * body. **HMAC-fail (the early-return at line `verified.valid`
+ * check) MUST NOT pass a reason** — that branch stays generic to
+ * preserve the no-oracle property documented in the Phase 5
+ * activation entry.
+ *
  * The submit RPCs re-verify all of this under FOR UPDATE on
  * insert, so this page's checks are necessary but never
  * sufficient.
  */
 export default async function OperatorOfferPage({
   params,
+  searchParams,
 }: OperatorOfferPageProps) {
+  const lang = parseLang(searchParams?.lang);
+
   const verified = verifyOperatorToken(params.token);
   if (!verified.valid) {
-    return <ExpiredLink />;
+    // HMAC-fail / shape-fail / expiry-from-payload-fail.
+    // Do NOT pass `reason` — see Phase 5 activation entry's
+    // "Tampered v=2 token rejection" note: probing an enumerated
+    // link must give no oracle.
+    return <ExpiredLink lang={lang} />;
   }
+
+  const tokenExpiresAtIso = new Date(
+    verified.payload.expires_at * 1000
+  ).toISOString();
+  const operatorContext: OperatorContext = {
+    tokenExpiresAt: tokenExpiresAtIso,
+    tokenVersion: verified.version,
+  };
 
   // ──────────────────────────────────────────────────────────
   // v=1 (Phase 4) — trip-level dispatch state
@@ -56,25 +85,44 @@ export default async function OperatorOfferPage({
   if (verified.version === 1) {
     const trip = await getTripById(verified.payload.trip_request_id);
     if (!trip) {
-      return <ExpiredLink />;
+      return <ExpiredLink lang={lang} />;
     }
 
-    const nonceMatches =
-      trip.dispatch_nonce !== null &&
-      trip.dispatch_nonce === verified.payload.nonce;
     const dispatchAlive =
       trip.dispatch_expires_at !== null &&
       Date.parse(trip.dispatch_expires_at) > Date.now();
+    const nonceMatches =
+      trip.dispatch_nonce !== null &&
+      trip.dispatch_nonce === verified.payload.nonce;
     const tripOpen = trip.status !== 'booked' && trip.status !== 'cancelled';
 
-    if (!nonceMatches || !dispatchAlive || !tripOpen) {
-      return <ExpiredLink />;
+    if (!dispatchAlive || !nonceMatches || !tripOpen) {
+      // v=1 reason is best-effort. The trip-level signals don't
+      // carry per-target precision, but the most common causes
+      // map cleanly:
+      //   - dispatch expired           → link_expired
+      //   - nonce no longer matches    → link_cancelled (re-dispatch)
+      //   - trip booked / cancelled    → link_already_used
+      const reason: ExpiredReason = !dispatchAlive
+        ? 'link_expired'
+        : !nonceMatches
+          ? 'link_cancelled'
+          : 'link_already_used';
+      return <ExpiredLink reason={reason} lang={lang} />;
     }
 
     return (
       <div className="space-y-6">
-        <OperatorTripSummary trip={trip} />
-        <OperatorOfferForm token={params.token} />
+        <OperatorTripSummary
+          trip={trip}
+          operatorContext={operatorContext}
+          lang={lang}
+        />
+        <OperatorOfferForm
+          token={params.token}
+          tripRequestNumber={trip.request_number}
+          lang={lang}
+        />
       </div>
     );
   }
@@ -90,7 +138,7 @@ export default async function OperatorOfferPage({
   ]);
 
   if (!trip || !target) {
-    return <ExpiredLink />;
+    return <ExpiredLink lang={lang} />;
   }
 
   // Belt-and-suspenders: the HMAC verifier already proved the
@@ -104,22 +152,46 @@ export default async function OperatorOfferPage({
   //   - re-dispatch happened, so target.dispatch_round_id no
   //     longer equals trip.current_dispatch_round_id
   //   - trip was booked or cancelled
-  const nonceMatches = target.nonce === verified.payload.nonce;
-  const targetActive = target.status === 'pending';
   const targetAlive = Date.parse(target.expires_at) > Date.now();
+  const targetStatus = target.status;
   const roundCurrent =
     trip.current_dispatch_round_id !== null &&
     target.dispatch_round_id === trip.current_dispatch_round_id;
+  const nonceMatches = target.nonce === verified.payload.nonce;
   const tripOpen = trip.status !== 'booked' && trip.status !== 'cancelled';
 
-  if (!nonceMatches || !targetActive || !targetAlive || !roundCurrent || !tripOpen) {
-    return <ExpiredLink />;
+  if (
+    !nonceMatches ||
+    targetStatus !== 'pending' ||
+    !targetAlive ||
+    !roundCurrent ||
+    !tripOpen
+  ) {
+    // v=2 has the per-target row, so the reason is precise.
+    // Order matches the user's mental model: "is the link
+    // expired? was it cancelled? was it already used?".
+    const reason: ExpiredReason = !targetAlive
+      ? 'link_expired'
+      : targetStatus === 'submitted'
+        ? 'link_already_used'
+        : targetStatus === 'cancelled' || !roundCurrent || !nonceMatches
+          ? 'link_cancelled'
+          : 'link_already_used'; // tripOpen=false fallback (booked/cancelled)
+    return <ExpiredLink reason={reason} lang={lang} />;
   }
 
   return (
     <div className="space-y-6">
-      <OperatorTripSummary trip={trip} />
-      <OperatorOfferForm token={params.token} />
+      <OperatorTripSummary
+        trip={trip}
+        operatorContext={operatorContext}
+        lang={lang}
+      />
+      <OperatorOfferForm
+        token={params.token}
+        tripRequestNumber={trip.request_number}
+        lang={lang}
+      />
     </div>
   );
 }
