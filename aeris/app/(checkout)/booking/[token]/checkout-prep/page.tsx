@@ -12,6 +12,7 @@ import {
 } from '@/lib/supabase/queries/bookings';
 import { ADDONS_BY_SUBTYPE } from '@/lib/addons/catalog';
 import { formatRouteEndpoint } from '@/lib/checkout/route-display';
+import { resolveSiteUrl } from '@/lib/checkout/site-url';
 import { buildWhatsappConfirmMessage } from '@/lib/checkout/whatsapp-message';
 import { formatRiyadhDateTime, t } from '@/lib/i18n/operator';
 import type { AirportRow, BookingAddonRow, BookingRow } from '@/types/database';
@@ -30,55 +31,6 @@ interface CheckoutPrepPageProps {
 }
 
 const WHATSAPP_NUMBER = '966558048004';
-
-/**
- * Site URL used to build the personal review URL embedded in
- * the WhatsApp confirm-message body. Three-layer resolution:
- *
- *   1. Explicit per-environment override
- *      (`NEXT_PUBLIC_SITE_URL`). Production and Preview can
- *      each set their own value (typically `https://aeris.sa`
- *      on Production once DNS lands; distinct preview
- *      hostnames on Preview).
- *
- *   2. Vercel-injected current-deployment hostname
- *      (`VERCEL_URL`). Critical for Preview deploys: the
- *      customer token is signed with the Preview-environment
- *      `CUSTOMER_CHECKOUT_SECRET` and its SHA-256 hash is
- *      written into the Preview database instance. If the
- *      WhatsApp message routes the customer to Production via
- *      a hardcoded fallback, the layer-1 signature check
- *      fails (different secret) and the layer-2 hash check
- *      fails (different DB row) — the customer sees the
- *      "expired or not-issued" surface even though the token
- *      is valid against the deploy that minted it. Reading
- *      `VERCEL_URL` keeps the link bound to whatever deploy
- *      served this request, so the three-layer validation
- *      always lines up.
- *
- *   3. Static last-resort fallback. Only reachable on `npm
- *      run dev` or other non-Vercel hosts (Vercel always
- *      injects `VERCEL_URL` on both Production and Preview).
- *      Production hostname is the safest default for those
- *      paths since it never breaks a real customer flow.
- *
- * The value is read on each request — server component, no
- * build-time inlining gotchas.
- *
- * (Codex PR #24 review P2 fix: layer 2 added to prevent
- * Preview tokens from being routed to Production.)
- */
-function resolveSiteUrl(): string {
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL;
-  if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) {
-    return fromEnv.replace(/\/+$/, '');
-  }
-  const vercelUrl = process.env.VERCEL_URL;
-  if (typeof vercelUrl === 'string' && vercelUrl.trim().length > 0) {
-    return `https://${vercelUrl.replace(/\/+$/, '')}`;
-  }
-  return 'https://aeris-flax.vercel.app';
-}
 
 /**
  * Phase 6.2 PR 2b: customer checkout-prep page.

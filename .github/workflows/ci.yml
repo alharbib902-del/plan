@@ -55,6 +55,14 @@ jobs:
       - name: WhatsApp confirm-message builder
         run: npm run test:checkout-whatsapp
 
+      # Phase 6.2 PR 2c (Codex round-2 P2 fix): site URL
+      # resolver. Pure-function unit tests covering the
+      # NEXT_PUBLIC_SITE_URL / VERCEL_URL / VERCEL_ENV
+      # interaction matrix that keeps Preview tokens bound
+      # to the Preview deploy.
+      - name: Site URL resolver
+        run: npm run test:checkout-site-url
+
       - name: Type-check
         run: npm run type-check
 
