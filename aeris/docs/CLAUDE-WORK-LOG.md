@@ -4366,3 +4366,265 @@ probe set #2 green BEFORE PR 2b opens. Do NOT declare
 Phase 6.2 shipped based on this entry alone — PR 2b
 remains.
 
+---
+
+## 2026-05-07 — Phase 6.2 PR 2b (UI wiring: admin attach + customer checkout-prep + operator extension + Case C backfill)
+
+### Status
+
+PR 2b of the Phase 6.2 rollout. PR 1 + PR 2a already
+landed on `main` (commits `aa16586` and `9bd9ffc`); the
+three migration files + the `accept_offer` body extension
++ the 6 mutation RPCs + the `_recompute_booking_totals`
+helper are all live on production Supabase. Founder
+probe set #2 (probes 6, 7, 8, 8b, 8c) is green.
+
+PR 2b ships **UI + thin Server Actions only — zero
+migration, zero DB/RPC change**. Every booking-state
+mutation goes through PR 2a's seven SECURITY DEFINER
+public functions; PR 2b's Server Actions parse Zod input,
+run admin or three-layer-token auth, and call
+`supabase.rpc(...)`. No raw INSERT / UPDATE on
+`booking_addons` or `bookings.addons_amount` /
+`total_amount` — atomicity lives at the DB layer.
+
+### What this PR adds
+
+- **`aeris/lib/checkout/route-display.ts`** — pure
+  helper `formatRouteEndpoint(iata, freeform, airports,
+  lang)` mirroring the operator portal's 3-shape contract
+  from Phase 6.0 PR 2 `airportLabel`. Renders IATA-resolved
+  city + code when present, freeform string verbatim
+  otherwise, "غير محدد" placeholder as the unreachable
+  third branch (Codex iteration-3 P1 #1 + iteration-4 P1
+  fix).
+- **`aeris/lib/supabase/queries/bookings.ts`** — read
+  helpers (`getBookingByTripId`, `getBookingById`,
+  `listBookingAddons`) + the `resolveAddonsGate` helper
+  that maps `(trip.status, booking presence)` to the
+  3-case discriminator: `'pre_accept'` /
+  `'booked_no_record'` / `'booked_with_record'` /
+  `'closed'`.
+- **`aeris/app/(admin)/admin/actions/booking-addons.ts`**
+  — four admin Server Actions:
+  - `attachAddon(input)` — wraps PR 2a's
+    `attach_booking_addon` RPC.
+  - `detachAddon(input)` — wraps
+    `admin_cancel_booking_addon` (allows BOTH `'pending'`
+    AND `'confirmed'`; Codex iteration-6 P1 fix).
+  - `updateAddonQuantity(input)` — wraps
+    `update_booking_addon_quantity` (rejects per_passenger
+    with `quantity_locked_by_passenger_count`).
+  - `backfillBookingFromAcceptedOffer(input)` — wraps
+    `backfill_booking_from_offer` (Case C escape valve).
+  All four call `requireAdminSession()` first, parse via
+  Zod, then `supabase.rpc(...)`. Each revalidates both
+  `/admin/trips/[id]` and `/admin/trips/[id]/addons`.
+- **`aeris/app/(admin)/admin/actions/checkout-token.ts`**
+  — admin "Issue customer checkout link" Server Action.
+  Catches `CustomerTokenEnvError` from
+  `mintCheckoutToken` (fail-closed posture from Codex
+  iteration-3 P1 #3) and surfaces `secret_not_set` to the
+  founder UI. Persists hash + expiry as a paired UPDATE
+  (the `bookings_checkout_token_pair_check` constraint
+  enforces that they appear together).
+- **`aeris/app/actions/checkout-prep.ts`** — two customer
+  Server Actions wrapped in a shared
+  `validateCustomerToken` helper that runs the
+  **three-layer validation** (signature + payload exp +
+  DB hash + DB expiry; Codex iteration-4 P2 #3 fix). Both
+  actions take **only the token** as their auth-relevant
+  input (Codex iteration-3 P1 #2 fix); no `booking_id`
+  input to confuse a crafted request.
+  - `removeCustomerAddon(input)` — wraps
+    `customer_cancel_booking_addon` (allows ONLY
+    `'pending'` → `'cancelled'`; Codex iteration-6 P1
+    fix). Asserts `booking_addon.booking_id ===
+    payload.booking_id` before calling the RPC.
+  - `confirmCheckoutPrep(input)` — wraps
+    `confirm_checkout_prep` (idempotent flip
+    `'pending'` → `'confirmed'`; does NOT touch
+    `payment_status`).
+- **`aeris/app/(admin)/admin/(protected)/trips/[id]/addons/page.tsx`**
+  — admin add-ons surface implementing the **3-case
+  gate** per spec S4.1:
+  - **Case A** pre-accept: tab disabled with
+    "بعد قبول العرض ستتمكن من إضافة الخدمات".
+  - **Case B** post-PR-2a accepted: catalog browse
+    grouped by `addon_type` + suggestion banner +
+    attached-addons table + issue-checkout-link button.
+  - **Case C** legacy booked: "إنشاء سجل الحجز" button
+    that calls `backfillBookingFromAcceptedOffer`.
+  - **Closed** (cancelled trip): read-only.
+- **`aeris/components/admin/addons-suggestion-banner.tsx`**
+  — preferences-driven highlights. Reads
+  `trip_requests.preferences` (Phase 6.1 JSONB) and
+  surfaces every catalog entry whose `suggested_for` array
+  matches at least one set preference. Non-blocking.
+- **`aeris/components/admin/addons-attach-form.tsx`** —
+  one card per catalog entry with quantity + price-override
+  + note inputs. Per_passenger entries display a hint and
+  disable the quantity input (RPC overrides it
+  server-side anyway). Free entries hide the price-override
+  input. Suggested entries get a gold ring + "مُقترحة"
+  badge.
+- **`aeris/components/admin/attached-addons-table.tsx`** —
+  read+mutate table. Shows every booking_addons row
+  (cancelled rows greyed). Per-row Cancel button (calls
+  `detachAddon`) + inline quantity edit (calls
+  `updateAddonQuantity`). Disabled for cancelled /
+  delivered rows.
+- **`aeris/components/admin/legacy-booking-backfill-button.tsx`**
+  — Case C button. Surfaces founder-relevant errors
+  (`no_accepted_offer`,
+  `ambiguous_accepted_offer:N`,
+  `booking_already_exists`).
+- **`aeris/components/admin/issue-checkout-link-button.tsx`**
+  — surfaces the minted URL once + 14-day expiry
+  (Asia/Riyadh formatted). Re-clicking re-mints; the
+  OLD token's hash check fails (Layer 2 of the
+  three-layer customer-side validation) so it's
+  effectively revoked.
+- **`aeris/app/(checkout)/layout.tsx`** + **`page.tsx`**
+  — customer checkout-prep route under the
+  `(checkout)` route group. Public path is
+  `/booking/<token>/checkout-prep` (no `(checkout)` in
+  the URL). Page runs the three-layer token validation
+  itself; on any failure renders the "expired or
+  not-issued" surface (no 5xx, no stack trace, no
+  failure-mode disclosure). On success renders flight
+  summary via `formatRouteEndpoint` + addons table +
+  totals + WhatsApp deep link + confirm button.
+- **`aeris/components/checkout/checkout-prep-client.tsx`**
+  — client component owning the customer's interactive
+  surfaces (per-pending-addon Remove buttons + Confirm
+  button). All Server Actions take only the token; no
+  `booking_id` leaks into client-controlled input.
+- **`aeris/components/operator/trip-summary.tsx`**
+  (extended) — new optional `addons` prop. When supplied
+  + non-empty (filtered to non-cancelled rows), renders
+  a "الخدمات الإضافية" section beneath the preferences
+  section. Operator-relevant subset of `details` is
+  shown (the customer-supplied note is included for
+  ground-prep coordination); the customer's WhatsApp
+  phone is NEVER shown (privacy invariant).
+- **`aeris/app/operator/offer/[token]/page.tsx`**
+  (extended) — best-effort fetches the booking + addons
+  for the trip and passes them to `OperatorTripSummary`.
+  Wrapped in try/catch so a transient DB error does not
+  break the offer-submission flow.
+- **`aeris/app/(admin)/admin/(protected)/trips/[id]/page.tsx`**
+  (extended) — small "الخدمات الإضافية ←" inline link
+  in both Phase 4 and Phase 5 views' page header.
+- **`aeris/lib/i18n/operator.ts`** — additional UI
+  strings: status labels (`addon_status_*`), error codes
+  (`err_*`), admin column headers
+  (`admin_addons_status_label`, `admin_addons_total_label`,
+  etc.), backfill / checkout-link success copy, and the
+  operator portal section heading
+  (`operator_addons_section_heading`). Most checkout-prep
+  + admin keys were already added in PR 1.
+
+### Files touched
+
+```
+aeris/lib/checkout/route-display.ts                              (new)
+aeris/lib/supabase/queries/bookings.ts                           (new)
+aeris/app/(admin)/admin/actions/booking-addons.ts                (new)
+aeris/app/(admin)/admin/actions/checkout-token.ts                (new)
+aeris/app/actions/checkout-prep.ts                               (new)
+aeris/app/(admin)/admin/(protected)/trips/[id]/addons/page.tsx   (new)
+aeris/components/admin/addons-suggestion-banner.tsx              (new)
+aeris/components/admin/addons-attach-form.tsx                    (new)
+aeris/components/admin/attached-addons-table.tsx                 (new)
+aeris/components/admin/legacy-booking-backfill-button.tsx        (new)
+aeris/components/admin/issue-checkout-link-button.tsx            (new)
+aeris/app/(checkout)/layout.tsx                                  (new)
+aeris/app/(checkout)/booking/[token]/checkout-prep/page.tsx      (new)
+aeris/components/checkout/checkout-prep-client.tsx               (new)
+aeris/components/operator/trip-summary.tsx                       (modified — addons prop)
+aeris/app/operator/offer/[token]/page.tsx                        (modified — fetch addons)
+aeris/app/(admin)/admin/(protected)/trips/[id]/page.tsx          (modified — addons tab link)
+aeris/lib/i18n/operator.ts                                       (modified — additional keys)
+```
+
+### Quality gates run locally
+
+- `npm run type-check` — clean (zero errors).
+- `npm run lint:strict` — clean (zero warnings).
+- `npm run test:addons` — `[catalog-vs-seed] OK — 20
+  catalog rows match seed + CHECK constraint.`
+- `npm run build` — green; **13 routes** (was 11 before
+  PR 2b). Two new routes:
+  - `ƒ /admin/trips/[id]/addons` (6.13 kB)
+  - `ƒ /booking/[token]/checkout-prep` (3.9 kB)
+
+### What this PR does NOT do
+
+- No migration; no DB/RPC change. Production schema is
+  untouched.
+- No payment integration (HyperPay / Moyasar / Apple Pay /
+  mada / STC Pay) — Phase 11 territory.
+- No ZATCA invoice generation / QR code / UUID. The
+  `bookings.zatca_*` columns stay NULL.
+- No webhook handlers.
+- No refund flow. `payment_status='refunded'` is reachable
+  in the ENUM but no code path sets it.
+- No loyalty point award.
+- No operator-portal post-accept gate relaxation. The
+  `OperatorTripSummary` component's `addons` prop is
+  ready for it but the v=2 ExpiredLink gate currently
+  blocks the chosen operator after their target flips to
+  `'cancelled'`. A future Codex iteration may P1 this if
+  deemed essential.
+
+### Smoke test (between PR 2b merge and acceptance)
+
+Per spec Quality gates section + the new
+`PR 2b — UI wiring smoke test` checklist appended to
+`aeris/docs/checklists/operator-flow-smoke-test.md`. The
+10-step flow runs on the **Vercel preview URL** (NOT
+production). Pre-flight gate ensures
+`CUSTOMER_CHECKOUT_SECRET` is set in Preview +
+`ENABLE_CHECKOUT_TOKEN_DEBUG=true` for the smoke route +
+`/admin/debug/customer-token-smoke` returns OK. After
+PR 2b ships, the founder flips
+`ENABLE_CHECKOUT_TOKEN_DEBUG` back to `false`.
+
+### Carry-overs
+
+- **Customer accounts** — Phase 6.2 stays guest-mode;
+  customer auth lands in a future phase that needs
+  persistent customer history (likely Phase 10 for
+  Privilege).
+- **Real-time updates (Supabase Realtime)** — admin
+  pages refresh manually; same as Phase 6.0/6.1.
+- **E2E tests (Playwright)** — advisor's Week-8 marker;
+  becomes high-priority around Phase 8 / Phase 9.
+- **Mobile / PWA hardening** — Lighthouse > 90 target;
+  same as before.
+- **Operator-portal post-accept view** — see "What this
+  PR does NOT do".
+- **Legacy backfill of trip `9ff1bc06`** — the second
+  legacy trip Probe 5b counted; founder backfills it
+  via PR 2b's UI (Case C button) post-merge. Trip
+  `3eb10713` was already backfilled during Probe 8b on
+  production.
+
+### Closing
+
+PR 2b is **complete on the feature branch and
+quality-gates green locally**. After Codex review +
+merge + Vercel production deploy, the founder runs the
+10-step smoke test on the production URL (or the Preview
+URL if smoke-on-prod is not appropriate) and confirms
+all 10 steps pass. Then **Phase 6.2 ships** — the full
+priced-add-ons + booking-shaped checkout-prep surface is
+live for the founder + customers, without payment +
+without ZATCA per the locked roadmap. Phase 11's bundled
+HyperPay + Moyasar + ZATCA wiring is the next major
+milestone; intermediate phases (Empty Legs / MedEvac /
+Cargo / Privilege) ship without payment using the same
+`status` ENUM (operational) + `payment_status` ENUM
+(financial) split this phase established.
+
