@@ -4109,3 +4109,260 @@ is green; PR 2b does NOT open until probe set #2 is
 green. Do NOT declare Phase 6.2 shipped based on
 this entry alone — three rollout stages remain.
 
+---
+
+## 2026-05-07 — Phase 6.2 PR 2a (`accept_offer` body extension + backfill + 5 mutation RPCs + helper)
+
+### Status
+
+PR 2a of the Phase 6.2 rollout. Founder ran probe set #1
+(probes 1, 2, 2b, 3, 4, 5, 5b) on production Supabase
+after PR 1 merged + the three migration files applied
+(File A → File B → File C). All probes green; Probe 5b
+sized the legacy backfill at 2 trips (handled
+post-PR-2b via the admin "إنشاء سجل الحجز" button).
+
+PR 2a ships a **single migration file** with 7 public
+functions + 1 internal helper, no UI, no Server Actions
+runtime, no checkout page (per the iteration-13 spec
+Acceptance #27-32 + the founder's explicit scope on
+PR 2a kickoff).
+
+### What this PR adds
+
+- `aeris/supabase/migrations/20260509000008_phase_6_2_accept_offer.sql`
+  (new — 1345 lines):
+  - **`accept_offer(p_source TEXT, p_offer_id UUID)
+    RETURNS JSON`** — UNCHANGED signature, `CREATE OR
+    REPLACE` on the existing function. Body extends
+    Phase 5's step 4 (lock chosen offer + read status
+    + expires_at) to ALSO capture the offer's
+    `total_price_sar` + composed aircraft text
+    (`aircraft_type` + ` (` + `aircraft_registration`
+    + `)`) + `operator_name` / `operator_phone` /
+    `operator_email`. Step 9 extends from a single
+    `UPDATE trip_requests SET status = 'booked'` to
+    that UPDATE + a `RETURNING * INTO v_trip` capture
+    + a full `INSERT INTO bookings (...)` populating
+    every PR 1 reshape column. Calls
+    `_recompute_booking_totals(v_booking_id)` as
+    defense-in-depth uniformity. JSON return now
+    includes `booking_id` alongside the existing
+    `ok` + `trip_request_id`; existing operator-portal
+    accept buttons that read only the older fields
+    keep working unchanged.
+  - **`backfill_booking_from_offer(p_trip_id UUID)
+    RETURNS JSON`** — Case C escape valve per spec
+    S4.1. Locks the trip, rejects if a bookings row
+    already exists, **counts accepted offers across
+    BOTH Phase 4 + Phase 5 tables** (Codex
+    iteration-3 P2 #1 fix: returns
+    `ambiguous_accepted_offer` with `accepted_count`
+    when > 1, `no_accepted_offer` when 0). On the
+    unique-accepted happy path uses the EXACT same
+    INSERT shape as `accept_offer`'s step 9 (both
+    functions stay in lockstep). Used by the admin
+    "إنشاء سجل الحجز" button in PR 2b for the 2
+    legacy booked trips identified in Probe 5b.
+  - **`attach_booking_addon(p_trip_id, p_addon_subtype,
+    p_quantity, p_unit_price_override, p_note)`** —
+    admin attach. Locks bookings row by
+    `trip_request_id`, reads catalog from
+    `addon_catalog` table (no hardcoded CASE; Codex
+    iteration-6 P2 #2 fix). Loads
+    `commission_rate_pct` (Codex iteration-7 P1 #2
+    fix). Range-checks `p_unit_price_override`
+    against catalog `[min, max]`; rejects override on
+    free entries unless override is also 0.
+    `COALESCE(p_quantity, 1)` NULL-safe normalize
+    BEFORE any IF (Codex iteration-7 P1 #1 fix).
+    Per-passenger subtypes derive quantity from
+    `bookings.passengers_count_snapshot` (Codex
+    iteration-6 P2 #1 fix). JSONB `details` field
+    stores `'{}'` when `p_note` is NULL or
+    whitespace-only; `{"note": "<trimmed>"}`
+    otherwise (Codex iteration-7 P2 #1 fix). Calls
+    `_recompute_booking_totals` after INSERT.
+  - **`customer_cancel_booking_addon(p_booking_addon_id
+    UUID)`** — customer remove path ONLY. Allows
+    ONLY `'pending'` → `'cancelled'`. Rejects
+    `'confirmed'` / `'cancelled'` / `'delivered'`
+    with `addon_not_cancellable` (Codex iteration-6
+    P1 fix — a crafted request reusing a valid token
+    AFTER `confirm_checkout_prep` flipped rows to
+    `'confirmed'` cannot cancel a confirmed row).
+  - **`admin_cancel_booking_addon(p_booking_addon_id
+    UUID)`** — admin path ONLY. Allows BOTH
+    `'pending'` AND `'confirmed'` → `'cancelled'`
+    (the founder may cancel a customer-confirmed
+    add-on after a follow-up WhatsApp call). Rejects
+    `'cancelled'` (`addon_already_cancelled`) and
+    `'delivered'` (`addon_terminal`).
+  - **`update_booking_addon_quantity(p_booking_addon_id,
+    p_quantity)`** — admin quantity adjustment.
+    Per-passenger subtypes return
+    `quantity_locked_by_passenger_count` (the only
+    way to change catering quantity is to cancel +
+    re-attach after the booking's
+    `passengers_count_snapshot` changes).
+    `COALESCE`-normalized quantity range check
+    `[1, 50]` + `allow_quantity` rule. Recomputes
+    `total_price = quantity * unit_price` on the
+    addon row and booking totals via the helper.
+  - **`confirm_checkout_prep(p_booking_id UUID)`** —
+    customer-side confirm. Locks the booking, flips
+    every `'pending'` addon to `'confirmed'` via a
+    single `UPDATE ... RETURNING id` wrapped in a
+    CTE so the result includes `confirmed_count` +
+    `confirmed_addon_ids`. Idempotent. Does NOT
+    touch `payment_status` (stays
+    `'pending_offline'`).
+  - **`_recompute_booking_totals(p_booking_id UUID)
+    RETURNS VOID`** — internal helper. REVOKEd from
+    PUBLIC + anon + authenticated + service_role.
+    Callable only inside the seven SECURITY DEFINER
+    public functions above (which run as the
+    function-owner role). Computes
+    `addons_amount = SUM(booking_addons.total_price
+    WHERE status IN ('pending', 'confirmed',
+    'delivered'))` + `total_amount = base_amount +
+    addons_amount`. Cancelled rows drop OUT of the
+    sum.
+
+  All seven public functions: SECURITY DEFINER +
+  `SET search_path = public, pg_temp` + service-role-
+  only EXECUTE, mirroring `accept_offer`'s Phase 5
+  posture.
+
+- `aeris/types/database.ts` — `AcceptOfferResult.ok`
+  shape now includes `booking_id`; six new RPC
+  type pairs (`BackfillBookingFromOfferArgs/Result`,
+  `AttachBookingAddonArgs/Result`,
+  `CustomerCancelBookingAddonArgs/Result`,
+  `AdminCancelBookingAddonArgs/Result`,
+  `UpdateBookingAddonQuantityArgs/Result`,
+  `ConfirmCheckoutPrepArgs/Result`); all six RPCs
+  registered in `Database['public']['Functions']`
+  with strict Args + Returns types so PR 2b's
+  Server Actions get full type-checking on
+  `supabase.rpc(...)` calls. The internal
+  `_recompute_booking_totals` helper is NOT
+  registered (REVOKEd from service_role; not
+  callable from app code).
+
+### Files touched
+
+```
+aeris/supabase/migrations/20260509000008_phase_6_2_accept_offer.sql  (new)
+aeris/types/database.ts                                              (modified)
+```
+
+`aeris/docs/CLAUDE-TASK.md` stays as the local
+working draft — not part of this PR's diff
+(Phase 6.0 / 6.1 / 6.2-PR-1 discipline).
+
+### Quality gates run locally
+
+- `npm run type-check` — clean (zero errors).
+- `npm run lint:strict` — clean (zero warnings).
+- `npm run test:addons` — `[catalog-vs-seed] OK —
+  20 catalog rows match seed + CHECK constraint.`
+- `npm run build` — green; **11 routes**, NO new
+  routes from PR 2a (no UI consumer per spec).
+
+### What this PR does NOT do
+
+Mirroring the iteration-13 spec's Out-of-scope +
+Implementation order:
+
+- No UI of any kind (PR 2b territory): no admin
+  add-ons attach surface, no customer checkout-prep
+  page, no operator portal add-ons display, no
+  Case C backfill button.
+- No Server Actions runtime (PR 2b territory):
+  `attachAddon`, `removeCustomerAddon`,
+  `confirmCheckoutPrep`, `detachAddon`,
+  `updateAddonQuantity`,
+  `backfillBookingFromAcceptedOffer` are all
+  unwritten.
+- No customer-token issuance Server Action
+  (PR 2b territory).
+- No `lib/checkout/route-display.ts` helper
+  (PR 2b territory).
+- No HyperPay, Moyasar, ZATCA Phase 2 e-invoicing,
+  payment webhook handlers, refund flow, loyalty
+  award, operator payouts (Phase 10/11 territory).
+
+### Founder verification probe set #2 (between PR 2a and PR 2b)
+
+Per spec Quality gates section. Run on production
+Supabase AFTER PR 2a's migration applies:
+
+- **Probe 6**: trigger an `accept_offer` flow on a
+  real Phase 5 (preferred) or Phase 4 offer; verify
+  the new bookings row has the correct snapshot
+  population + `payment_status = 'pending_offline'`
+  + `flight_status = 'confirmed'` +
+  `source_offer_table` + `source_offer_id` (paired
+  CHECK) + `checkout_token_hash` /
+  `checkout_token_expires_at` both NULL (paired
+  CHECK) + `trip_request_id` matches + route +
+  passenger + return snapshots populated. Test on
+  TWO trips: one IATA-resolved + one freeform.
+- **Probe 7**: `accept_offer(TEXT, UUID)` signature
+  still unchanged; JSON return now includes
+  `booking_id`; SECURITY DEFINER + service-role-only
+  EXECUTE preserved.
+- **Probe 8**: a second accept on the same trip
+  returns the pre-existing error (`trip_not_open` or
+  `offer_not_pending`); no leak of new INSERT
+  failure modes upward.
+- **Probe 8b**: pick one legacy booked trip from
+  Probe 5b's count of 2; call
+  `backfill_booking_from_offer(p_trip_id)` directly
+  via psql; verify the bookings row + idempotent
+  re-call returns `booking_already_exists`; on a
+  synthetic 2-accepted-offers trip the function
+  returns `ambiguous_accepted_offer`; partial unique
+  index race-protection holds.
+- **Probe 8c**: exercise the five mutation RPCs
+  end-to-end via psql against the bookings row
+  from Probe 6:
+  - `attach_booking_addon` (catering + limousine) →
+    rows created; per_passenger derives quantity;
+    commission_rate matches catalog; details JSONB
+    normalizes NULL/whitespace; NULL p_quantity → 1.
+  - `update_booking_addon_quantity` →
+    `quantity_not_allowed` for `allow_quantity =
+    false` rows; `quantity_locked_by_passenger_count`
+    for per_passenger.
+  - `customer_cancel_booking_addon` on `'pending'`
+    → soft-cancel; on `'confirmed'` →
+    `addon_not_cancellable`, row stays.
+  - `admin_cancel_booking_addon` on `'confirmed'` →
+    soft-cancel succeeds; on already-cancelled →
+    `addon_already_cancelled`.
+  - `confirm_checkout_prep` → all `'pending'` rows
+    flip to `'confirmed'`; `payment_status`
+    UNCHANGED.
+  - Direct service-role call to
+    `_recompute_booking_totals` returns
+    permission-denied.
+
+### Carry-overs
+
+Same as PR 1 entry above; PR 2a does not change any
+of them.
+
+### Closing
+
+PR 2a is **complete on the feature branch and
+quality-gates green locally**. PR 2a is stacked on
+`phase-6.2/pr-1` (which the founder may merge any
+time after Codex round 15 acceptance — the migration
+files are already applied to production Supabase).
+PR 2a merges + Codex round-N accepts + founder runs
+probe set #2 green BEFORE PR 2b opens. Do NOT declare
+Phase 6.2 shipped based on this entry alone — PR 2b
+remains.
+
