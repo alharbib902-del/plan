@@ -435,7 +435,17 @@ export type AcceptOfferArgs = {
 };
 
 export type AcceptOfferResult =
-  | { ok: true; trip_request_id: string }
+  | {
+      ok: true;
+      trip_request_id: string;
+      // Phase 6.2 PR 2a: accept_offer body extension now
+      // creates a bookings row alongside flipping the trip
+      // to 'booked'. The new booking_id is returned so
+      // callers (admin UI) can navigate to the new row.
+      // Existing callers that read only `ok` /
+      // `trip_request_id` keep working.
+      booking_id: string;
+    }
   | {
       ok: false;
       error:
@@ -687,6 +697,180 @@ export type AddonCatalogRow = {
 export type AddonCatalogInsert = AddonCatalogRow;
 export type AddonCatalogUpdate = Partial<Omit<AddonCatalogRow, 'subtype'>>;
 
+// ============================================================================
+// Phase 6.2 PR 2a: 6 new SECURITY DEFINER RPCs
+//
+// Migration file: 20260509000008_phase_6_2_accept_offer.sql.
+// All seven public functions (the existing accept_offer +
+// these six) are SECURITY DEFINER + service-role-only
+// EXECUTE; the internal _recompute_booking_totals helper is
+// REVOKEd from every role (callable only inside the seven
+// SECURITY DEFINER functions).
+//
+// The six RPC types below are exported so PR 2b's Server
+// Actions get strict typing on `supabase.rpc(...)` calls.
+// PR 2a itself ships zero callers.
+// ============================================================================
+
+// --- backfill_booking_from_offer (Case C escape valve) ---
+
+export type BackfillBookingFromOfferArgs = {
+  p_trip_id: string;
+};
+
+export type BackfillBookingFromOfferResult =
+  | {
+      ok: true;
+      booking_id: string;
+      source: OfferSource;
+    }
+  | {
+      ok: false;
+      error: 'trip_not_found' | 'trip_not_booked' | 'booking_already_exists';
+    }
+  | {
+      ok: false;
+      error: 'no_accepted_offer';
+    }
+  | {
+      ok: false;
+      error: 'ambiguous_accepted_offer';
+      accepted_count: number;
+    };
+
+// --- attach_booking_addon (admin attach) ---
+
+export type AttachBookingAddonArgs = {
+  p_trip_id: string;
+  p_addon_subtype: string;
+  /**
+   * NULL → defaulted to 1 server-side via COALESCE BEFORE
+   * any IF check (Codex iteration-7 P1 #1 fix). Per_passenger
+   * subtypes ignore this entirely and derive quantity from
+   * `bookings.passengers_count_snapshot`.
+   */
+  p_quantity: number | null;
+  /** NULL → use the catalog default. Range-checked when supplied. */
+  p_unit_price_override: number | null;
+  /** NULL or whitespace-only → stored as `'{}'::jsonb` (no `note` key). */
+  p_note: string | null;
+};
+
+export type AttachBookingAddonResult =
+  | {
+      ok: true;
+      addon: BookingAddonRow;
+    }
+  | {
+      ok: false;
+      error:
+        | 'booking_not_found'
+        | 'addon_subtype_unknown'
+        | 'price_override_on_free_addon'
+        | 'unit_price_out_of_range'
+        | 'quantity_not_allowed'
+        | 'quantity_out_of_range';
+    };
+
+// --- customer_cancel_booking_addon (customer remove path) ---
+//
+// Only allows 'pending' → 'cancelled'. 'confirmed' /
+// 'cancelled' / 'delivered' all return
+// `addon_not_cancellable` (Codex iteration-6 P1 fix —
+// prevents a crafted request from cancelling a confirmed
+// row after the customer hit confirm).
+
+export type CustomerCancelBookingAddonArgs = {
+  p_booking_addon_id: string;
+};
+
+export type CustomerCancelBookingAddonResult =
+  | {
+      ok: true;
+      addon: BookingAddonRow;
+    }
+  | {
+      ok: false;
+      error: 'addon_not_found' | 'addon_not_cancellable';
+    };
+
+// --- admin_cancel_booking_addon (admin detach path) ---
+//
+// Allows BOTH 'pending' AND 'confirmed' → 'cancelled' (the
+// founder may cancel after a customer confirmation, e.g.
+// follow-up WhatsApp). Rejects 'cancelled' /
+// 'delivered'.
+
+export type AdminCancelBookingAddonArgs = {
+  p_booking_addon_id: string;
+};
+
+export type AdminCancelBookingAddonResult =
+  | {
+      ok: true;
+      addon: BookingAddonRow;
+    }
+  | {
+      ok: false;
+      error:
+        | 'addon_not_found'
+        | 'addon_already_cancelled'
+        | 'addon_terminal'
+        | 'addon_not_cancellable';
+    };
+
+// --- update_booking_addon_quantity (admin quantity adjustment) ---
+//
+// Per_passenger subtypes are quantity-locked to the
+// booking's passengers_count_snapshot — any update attempt
+// returns `quantity_locked_by_passenger_count` (the only way
+// to change catering quantity is to cancel + re-attach).
+
+export type UpdateBookingAddonQuantityArgs = {
+  p_booking_addon_id: string;
+  p_quantity: number | null;
+};
+
+export type UpdateBookingAddonQuantityResult =
+  | {
+      ok: true;
+      addon: BookingAddonRow;
+    }
+  | {
+      ok: false;
+      error:
+        | 'addon_not_found'
+        | 'addon_subtype_unknown'
+        | 'quantity_locked_by_passenger_count'
+        | 'quantity_not_allowed'
+        | 'quantity_out_of_range';
+    };
+
+// --- confirm_checkout_prep (customer confirm) ---
+//
+// Idempotent: flips every 'pending' addon on the booking to
+// 'confirmed'. Returns the count + list of confirmed addon
+// IDs so the caller can render a "you confirmed N services"
+// summary. Does NOT touch payment_status (stays
+// `'pending_offline'`).
+
+export type ConfirmCheckoutPrepArgs = {
+  p_booking_id: string;
+};
+
+export type ConfirmCheckoutPrepResult =
+  | {
+      ok: true;
+      booking_id: string;
+      confirmed_count: number;
+      confirmed_addon_ids: string[];
+      confirmed_at: string;
+    }
+  | {
+      ok: false;
+      error: 'booking_not_found';
+    };
+
 export type Database = {
   __InternalSupabase: {
     PostgrestVersion: '12';
@@ -818,6 +1002,38 @@ export type Database = {
       accept_offer: {
         Args: AcceptOfferArgs;
         Returns: AcceptOfferResult;
+      };
+      // Phase 6.2 PR 2a — booking + add-ons mutation RPCs.
+      // All SECURITY DEFINER + service-role-only EXECUTE.
+      // PR 2b's Server Actions are thin wrappers that call
+      // these via supabase.rpc(...). The internal helper
+      // _recompute_booking_totals is REVOKEd from every
+      // role (callable only inside these seven public
+      // functions, which run as the function-owner role)
+      // and therefore not exposed in this Functions map.
+      backfill_booking_from_offer: {
+        Args: BackfillBookingFromOfferArgs;
+        Returns: BackfillBookingFromOfferResult;
+      };
+      attach_booking_addon: {
+        Args: AttachBookingAddonArgs;
+        Returns: AttachBookingAddonResult;
+      };
+      customer_cancel_booking_addon: {
+        Args: CustomerCancelBookingAddonArgs;
+        Returns: CustomerCancelBookingAddonResult;
+      };
+      admin_cancel_booking_addon: {
+        Args: AdminCancelBookingAddonArgs;
+        Returns: AdminCancelBookingAddonResult;
+      };
+      update_booking_addon_quantity: {
+        Args: UpdateBookingAddonQuantityArgs;
+        Returns: UpdateBookingAddonQuantityResult;
+      };
+      confirm_checkout_prep: {
+        Args: ConfirmCheckoutPrepArgs;
+        Returns: ConfirmCheckoutPrepResult;
       };
     };
     CompositeTypes: { [_ in never]: never };
