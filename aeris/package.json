@@ -11,6 +11,8 @@
     "lint:strict": "next lint --max-warnings 0",
     "type-check": "tsc --noEmit",
     "test:addons": "tsx lib/addons/__tests__/catalog-vs-seed.test.ts",
+    "test:checkout-whatsapp": "tsx lib/checkout/__tests__/whatsapp-message.test.ts",
+    "test:checkout-site-url": "tsx lib/checkout/__tests__/site-url.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

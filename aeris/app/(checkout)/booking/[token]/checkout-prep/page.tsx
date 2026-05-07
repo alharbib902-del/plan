@@ -12,6 +12,8 @@ import {
 } from '@/lib/supabase/queries/bookings';
 import { ADDONS_BY_SUBTYPE } from '@/lib/addons/catalog';
 import { formatRouteEndpoint } from '@/lib/checkout/route-display';
+import { resolveSiteUrl } from '@/lib/checkout/site-url';
+import { buildWhatsappConfirmMessage } from '@/lib/checkout/whatsapp-message';
 import { formatRiyadhDateTime, t } from '@/lib/i18n/operator';
 import type { AirportRow, BookingAddonRow, BookingRow } from '@/types/database';
 import { CheckoutPrepClient } from '@/components/checkout/checkout-prep-client';
@@ -136,12 +138,40 @@ function CheckoutPrepView({
   const addonsAmount = Number(booking.addons_amount);
   const totalAmount = Number(booking.total_amount);
 
-  // WhatsApp link payload — the founder uses the trip
-  // booking_number as the conversation key.
-  const whatsappBody = encodeURIComponent(
-    `أكّد الحجز ${booking.booking_number}`
-  );
-  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${whatsappBody}`;
+  // PR 2c: WhatsApp prefilled body uses the rich confirm-
+  // message template (greeting, booking details, totals,
+  // personal review URL). The builder is a pure helper in
+  // `lib/checkout/whatsapp-message.ts` (unit-tested via
+  // `npm run test:checkout-whatsapp`).
+  const siteUrl = resolveSiteUrl();
+  const reviewUrl = `${siteUrl}/booking/${token}/checkout-prep`;
+
+  const whatsappMessageBody = buildWhatsappConfirmMessage({
+    customerName: booking.customer_name_snapshot,
+    bookingNumber: booking.booking_number,
+    routeFormatted: `${origin} ← ${destination}`,
+    departureFormatted: formatRiyadhDateTime(
+      booking.departure_scheduled,
+      lang
+    ),
+    returnFormatted: booking.return_scheduled
+      ? formatRiyadhDateTime(booking.return_scheduled, lang)
+      : null,
+    passengersCount: booking.passengers_count_snapshot,
+    baseAmount: baseAmount,
+    addonsAmount: addonsAmount,
+    totalAmount: totalAmount,
+    activeAddons: activeAddons.map((addon) => {
+      const catalogEntry = ADDONS_BY_SUBTYPE.get(addon.addon_subtype);
+      return {
+        labelAr: catalogEntry?.label_ar ?? addon.addon_subtype,
+        quantity: addon.quantity,
+        totalPrice: Number(addon.total_price),
+      };
+    }),
+    reviewUrl,
+  });
+  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(whatsappMessageBody)}`;
 
   return (
     <div className="space-y-6">
