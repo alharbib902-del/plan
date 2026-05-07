@@ -92,7 +92,10 @@ async function Phase4TripView({ trip }: { trip: TripRequestRow }) {
 
   return (
     <section>
-      <BackLink />
+      <div className="flex items-center justify-between gap-3">
+        <BackLink />
+        <AddonsTabLink tripId={trip.id} />
+      </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.6fr,1fr] lg:items-start">
         <div className="space-y-6">
@@ -211,7 +214,10 @@ async function Phase5TripView({ trip }: { trip: TripRequestRow }) {
 
   return (
     <section>
-      <BackLink />
+      <div className="flex items-center justify-between gap-3">
+        <BackLink />
+        <AddonsTabLink tripId={trip.id} />
+      </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.6fr,1fr] lg:items-start">
         <div className="space-y-6">
@@ -269,6 +275,23 @@ function BackLink() {
         aria-hidden
       />
       العودة لقائمة الرحلات
+    </Link>
+  );
+}
+
+/**
+ * Phase 6.2 PR 2b: small inline navigation to the per-trip
+ * add-ons surface. Renders unconditionally; the addons page
+ * itself handles the 3-case gate (pre-accept / Case B /
+ * Case C / closed).
+ */
+function AddonsTabLink({ tripId }: { tripId: string }) {
+  return (
+    <Link
+      href={`/admin/trips/${tripId}/addons`}
+      className="font-ar group inline-flex items-center gap-2 rounded-md border border-gold/40 bg-gold/10 px-3 py-1.5 text-xs text-gold-light transition-colors hover:bg-gold/20"
+    >
+      الخدمات الإضافية ←
     </Link>
   );
 }
