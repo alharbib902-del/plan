@@ -1327,3 +1327,129 @@ entry.
 - Phase 5 / Phase 5.1 / Phase 6.0 invariants — those are
   unchanged by Phase 6.1 and covered by their own
   checklists above.
+
+---
+
+# Phase 6.2 PR 2b — UI wiring smoke test
+
+PR 2b adds **no migration and no DB/RPC change**. Every
+booking-state mutation goes through PR 2a's seven SECURITY
+DEFINER public functions; PR 2b's Server Actions are
+**thin wrappers** that parse Zod input, run admin or
+three-layer-token auth, and call `supabase.rpc(...)`.
+Probe set #2 (probes 6, 7, 8, 8b, 8c) already verified
+the RPCs end-to-end on production; this smoke test
+verifies the UI layer.
+
+Run on the Vercel preview URL of PR 2b's commit — NOT on
+production. A real `accept_offer` call is required to
+exercise the end-to-end happy path; the founder reaches
+that by submitting `/request`, promoting the lead, having
+a Phase 5 operator submit an offer, and accepting it from
+the admin trip page (none of these steps are new in PR 2b).
+
+## Pre-flight gate (Codex iteration-3 P1 #3 fix)
+
+1. `CUSTOMER_CHECKOUT_SECRET` is set in Vercel **Preview**.
+   May differ from Production (Codex iteration-5 P2 #2 —
+   per-environment values reduce blast radius).
+2. `ENABLE_CHECKOUT_TOKEN_DEBUG=true` in Preview.
+3. `/admin/debug/customer-token-smoke` returns
+   "OK — secret hooked up correctly".
+4. After PR 2b ships, flip `ENABLE_CHECKOUT_TOKEN_DEBUG`
+   back to `false`.
+
+## Steps (10 total)
+
+1. **Customer submits `/request`** with `halal=true`,
+   `crew_languages=['ar','en']`, 4 passengers, IATA
+   `RUH → JED` (run a second time later with freeform
+   to test that path on step 8).
+2. **Admin promotes the lead** at `/admin/leads/[id]`.
+   Trip lands at `/admin/trips/[id]` (status=`pending` →
+   `distributed`).
+3. **Operator submits a Phase 5 offer** at 80,000 SAR
+   via the v=2 dispatch URL. Trip flips to `offered`.
+4. **Admin accepts the offer** from `/admin/trips/[id]`.
+   Trip flips to `booked`. PR 2a's `accept_offer` body
+   creates the bookings row (verified by Probe 6).
+5. **Admin → Add-ons tab**: click "الخدمات الإضافية"
+   button at the page header. Lands on
+   `/admin/trips/[id]/addons` in **Case B**.
+6. **Admin attaches**:
+   - `arabic_premium` (per_passenger=true, quantity
+     auto = 4, total = 2200, suggested by halal).
+   - `limousine_business` (quantity=1, total=1200, no
+     suggestion match).
+   - `prayer_kit` (free, total=0, suggested by
+     prayer_setup).
+   Total: 80,000 + 2,200 + 1,200 + 0 = **83,400 SAR**.
+7. **Admin issues checkout link**: click the "إصدار
+   رابط مراجعة الحجز للعميل" button. Server Action mints
+   v=2 token, persists hash + 14-day expiry to the
+   bookings row (paired CHECK enforced). Raw URL shown
+   once.
+8. **Customer opens URL** on a separate browser profile.
+   Lands on `/booking/[token]/checkout-prep`. Renders:
+   - Flight summary via `formatRouteEndpoint` (IATA on
+     IATA-mode trip, freeform on freeform-mode trip).
+   - Departure + return in Asia/Riyadh time.
+   - Each addon row + WhatsApp deep link
+     (`wa.me/966558048004?text=أكّد الحجز AER-B-...`).
+   - "سيتواصل معك المؤسس عبر واتساب لإكمال الدفع".
+   - Per-pending-addon "إزالة" + "I confirm" button.
+9. **Customer removes `limousine_business`**: three-layer
+   token validation runs; addon flips to `cancelled`;
+   totals re-render: 80,000 + 2,200 = **82,200 SAR**.
+10. **Case C backfill**: founder navigates to a legacy
+    booked trip (Probe 5b counted 2 in production;
+    `9ff1bc06` is still pending backfill at PR 2b time).
+    The add-ons tab renders **Case C** with "إنشاء سجل
+    الحجز" button. Click → `backfill_booking_from_offer`
+    creates the bookings row. Page reloads in **Case B**
+    with empty add-ons list. Idempotency: click the
+    button a second time on the freshly backfilled trip
+    → `booking_already_exists`.
+
+## Pass criteria
+
+- All 10 steps complete without 5xx errors / runtime
+  exceptions / unhandled promise rejections.
+- Step 8: every field renders **without joining to
+  trip_requests** — the bookings row's snapshot columns
+  carry everything (Codex iteration-3 P1 #1 fix).
+- Step 8: freeform variant renders the freeform strings
+  (Codex iteration-4 P1 fix).
+- Step 8: NO "ادفع الآن" button. NO HyperPay / Moyasar
+  / payment-method UI. NO ZATCA QR code.
+- Step 9: a tampered token, a rotated DB hash, and a
+  shortened DB expiry all render the same "expired or
+  not-issued" surface (Codex iteration-4 P2 #3
+  three-layer-validation fix).
+- Step 9 sub-step: customer_cancel on a `'confirmed'`
+  row returns `addon_not_cancellable`; the row stays
+  `'confirmed'` (Codex iteration-6 P1 customer/admin
+  cancel split fix verified at the UI layer).
+- Step 10: backfill button is idempotent;
+  `booking_already_exists` on second click.
+
+## What this checklist does NOT cover
+
+- The full automated CI matrix (`tsc --noEmit` +
+  `eslint` + `next build` + `npm run test:addons`) —
+  CI runs on every PR push and blocks merge. CI is
+  necessary but not sufficient for this checklist.
+- ZATCA / payment integration — Phase 11.
+- Loyalty point earn — Phase 10.
+- Customer accounts / auth — Phase 6.2 stays guest-mode.
+- Operator portal "post-accept" view — the spec smoke
+  test step 9 (operator opens their portal URL after
+  accept and sees the addons) requires a relaxation of
+  the v=2 ExpiredLink gate that PR 2b does NOT ship.
+  The OperatorTripSummary component's `addons` prop is
+  ready for it; the operator portal page passes the
+  prop in best-effort mode, but the gate currently
+  blocks the chosen operator post-accept (target.status
+  flips to `'cancelled'`). A future Codex iteration may
+  P1 the gate-relaxation if deemed essential.
+
