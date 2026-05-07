@@ -49,6 +49,12 @@ jobs:
       - name: Catalog parity
         run: npm run test:addons
 
+      # Phase 6.2 PR 2c: WhatsApp confirm-message builder.
+      # Pure-function unit tests, zero deps beyond Node's
+      # built-in assert + tsx. Static — no DB, no network.
+      - name: WhatsApp confirm-message builder
+        run: npm run test:checkout-whatsapp
+
       - name: Type-check
         run: npm run type-check
 

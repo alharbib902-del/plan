@@ -12,6 +12,7 @@ import {
 } from '@/lib/supabase/queries/bookings';
 import { ADDONS_BY_SUBTYPE } from '@/lib/addons/catalog';
 import { formatRouteEndpoint } from '@/lib/checkout/route-display';
+import { buildWhatsappConfirmMessage } from '@/lib/checkout/whatsapp-message';
 import { formatRiyadhDateTime, t } from '@/lib/i18n/operator';
 import type { AirportRow, BookingAddonRow, BookingRow } from '@/types/database';
 import { CheckoutPrepClient } from '@/components/checkout/checkout-prep-client';
@@ -29,6 +30,23 @@ interface CheckoutPrepPageProps {
 }
 
 const WHATSAPP_NUMBER = '966558048004';
+
+/**
+ * Site URL used to build the personal review URL embedded in
+ * the WhatsApp confirm-message body. Falls back to the
+ * current Vercel production hostname when
+ * `NEXT_PUBLIC_SITE_URL` isn't set (so the link still works
+ * during the aeris.sa DNS migration). The value is read on
+ * each request — server component, no build-time inlining
+ * gotchas.
+ */
+function resolveSiteUrl(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL;
+  if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) {
+    return fromEnv.replace(/\/+$/, '');
+  }
+  return 'https://aeris-flax.vercel.app';
+}
 
 /**
  * Phase 6.2 PR 2b: customer checkout-prep page.
@@ -136,12 +154,40 @@ function CheckoutPrepView({
   const addonsAmount = Number(booking.addons_amount);
   const totalAmount = Number(booking.total_amount);
 
-  // WhatsApp link payload — the founder uses the trip
-  // booking_number as the conversation key.
-  const whatsappBody = encodeURIComponent(
-    `أكّد الحجز ${booking.booking_number}`
-  );
-  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${whatsappBody}`;
+  // PR 2c: WhatsApp prefilled body uses the rich confirm-
+  // message template (greeting, booking details, totals,
+  // personal review URL). The builder is a pure helper in
+  // `lib/checkout/whatsapp-message.ts` (unit-tested via
+  // `npm run test:checkout-whatsapp`).
+  const siteUrl = resolveSiteUrl();
+  const reviewUrl = `${siteUrl}/booking/${token}/checkout-prep`;
+
+  const whatsappMessageBody = buildWhatsappConfirmMessage({
+    customerName: booking.customer_name_snapshot,
+    bookingNumber: booking.booking_number,
+    routeFormatted: `${origin} ← ${destination}`,
+    departureFormatted: formatRiyadhDateTime(
+      booking.departure_scheduled,
+      lang
+    ),
+    returnFormatted: booking.return_scheduled
+      ? formatRiyadhDateTime(booking.return_scheduled, lang)
+      : null,
+    passengersCount: booking.passengers_count_snapshot,
+    baseAmount: baseAmount,
+    addonsAmount: addonsAmount,
+    totalAmount: totalAmount,
+    activeAddons: activeAddons.map((addon) => {
+      const catalogEntry = ADDONS_BY_SUBTYPE.get(addon.addon_subtype);
+      return {
+        labelAr: catalogEntry?.label_ar ?? addon.addon_subtype,
+        quantity: addon.quantity,
+        totalPrice: Number(addon.total_price),
+      };
+    }),
+    reviewUrl,
+  });
+  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(whatsappMessageBody)}`;
 
   return (
     <div className="space-y-6">
