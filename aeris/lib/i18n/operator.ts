@@ -515,6 +515,140 @@ const dictionary = {
     ar: 'secret غير مهيأ — راجع متغيرات Vercel قبل المحاولة مجدداً',
     en: 'Secret not configured — review the Vercel environment variables and retry.',
   },
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase 6.2 PR 2b — additional UI strings (admin + customer + operator)
+  // ──────────────────────────────────────────────────────────────────────
+
+  // Add-on status labels (booking_addons.status). Used by
+  // both the admin add-ons table and the customer checkout-
+  // prep page.
+  addon_status_pending: { ar: 'قيد الانتظار', en: 'Pending' },
+  addon_status_confirmed: { ar: 'مؤكَّد', en: 'Confirmed' },
+  addon_status_cancelled: { ar: 'ملغًى', en: 'Cancelled' },
+  addon_status_delivered: { ar: 'مُنفَّذ', en: 'Delivered' },
+
+  // (`addon_type_*` group-heading keys live earlier in the
+  // dictionary — added in PR 1.)
+
+  // Common error codes from PR 2a's mutation RPCs, surfaced
+  // as user-facing copy. Both customer and admin paths use
+  // these. Codes that are admin-only (subtype_unknown,
+  // override_on_free) keep their internal phrasing because
+  // the customer never sees them.
+  err_booking_not_found: { ar: 'سجل الحجز غير موجود.', en: 'Booking not found.' },
+  err_addon_not_found: { ar: 'الخدمة المطلوبة غير موجودة.', en: 'Add-on not found.' },
+  err_addon_not_in_booking: {
+    ar: 'الخدمة المحدّدة لا تنتمي لهذا الحجز.',
+    en: 'The selected add-on does not belong to this booking.',
+  },
+  err_addon_not_cancellable: {
+    ar: 'لا يمكن إلغاء هذه الخدمة من هذه الحالة.',
+    en: 'This add-on cannot be cancelled from its current state.',
+  },
+  err_addon_already_cancelled: {
+    ar: 'هذه الخدمة ملغاة مسبقاً.',
+    en: 'This add-on is already cancelled.',
+  },
+  err_addon_terminal: {
+    ar: 'هذه الخدمة في حالة نهائية ولا يمكن إلغاؤها.',
+    en: 'This add-on is in a terminal state and cannot be cancelled.',
+  },
+  err_quantity_locked_by_passenger_count: {
+    ar: 'الكمية مرتبطة بعدد الركاب ولا يمكن تعديلها.',
+    en: 'Quantity is locked to passenger count and cannot be changed.',
+  },
+  err_quantity_not_allowed: {
+    ar: 'لا يمكن تغيير الكمية لهذه الخدمة.',
+    en: 'Quantity changes are not allowed for this add-on.',
+  },
+  err_quantity_out_of_range: {
+    ar: 'الكمية خارج النطاق المسموح (1 إلى 50).',
+    en: 'Quantity is out of the allowed range (1 to 50).',
+  },
+  err_unit_price_out_of_range: {
+    ar: 'السعر خارج النطاق المسموح.',
+    en: 'Price is outside the allowed range.',
+  },
+  err_price_override_on_free_addon: {
+    ar: 'لا يمكن إضافة سعر لخدمة مجانية.',
+    en: 'Cannot set a price on a complimentary add-on.',
+  },
+  err_no_accepted_offer: {
+    ar: 'لا يوجد عرض مقبول مرتبط بهذه الرحلة.',
+    en: 'No accepted offer is linked to this trip.',
+  },
+  err_ambiguous_accepted_offer: {
+    ar: 'يوجد أكثر من عرض مقبول لهذه الرحلة — راجع البيانات قبل الإنشاء.',
+    en: 'More than one accepted offer exists for this trip — review the data before creating.',
+  },
+  err_booking_already_exists: {
+    ar: 'سجل الحجز مُنشأ بالفعل لهذه الرحلة.',
+    en: 'A booking record already exists for this trip.',
+  },
+  err_trip_not_booked: {
+    ar: 'لم يتم قبول عرض لهذه الرحلة بعد.',
+    en: 'No offer has been accepted on this trip yet.',
+  },
+  err_trip_not_found: { ar: 'الرحلة غير موجودة.', en: 'Trip not found.' },
+  err_invalid_token: {
+    ar: 'هذا الرابط منتهي الصلاحية أو لم يُصدَر بعد. تواصل مع المؤسس عبر واتساب.',
+    en: 'This link has expired or has not been issued. Contact the founder on WhatsApp.',
+  },
+  err_validation_failed: {
+    ar: 'مدخلات غير صالحة.',
+    en: 'Invalid input.',
+  },
+  err_rpc_failed: {
+    ar: 'حدث خطأ غير متوقع. حاول مرة أخرى.',
+    en: 'An unexpected error occurred. Please try again.',
+  },
+
+  // Admin: status / column / column-header labels for the
+  // attached add-ons table.
+  admin_addons_status_label: { ar: 'الحالة', en: 'Status' },
+  admin_addons_total_label: { ar: 'الإجمالي', en: 'Total' },
+  admin_addons_unit_price_label: { ar: 'سعر الوحدة', en: 'Unit price' },
+  admin_addons_subtotal_label: { ar: 'الإجمالي الفرعي', en: 'Subtotal' },
+  admin_addons_attached_heading: {
+    ar: 'الخدمات المُلحقة',
+    en: 'Attached add-ons',
+  },
+  admin_addons_no_attached: {
+    ar: 'لم تُضَف خدمات لهذه الرحلة بعد.',
+    en: 'No add-ons attached to this trip yet.',
+  },
+  admin_addons_catalog_heading: {
+    ar: 'كتالوج الخدمات',
+    en: 'Add-ons catalog',
+  },
+  admin_addons_remove_button: { ar: 'إلغاء', en: 'Cancel' },
+  admin_addons_save_quantity_button: { ar: 'حفظ', en: 'Save' },
+
+  // Admin: backfill / checkout-link button success / details.
+  admin_backfill_success: {
+    ar: 'تم إنشاء سجل الحجز.',
+    en: 'Booking record created.',
+  },
+  admin_checkout_link_issued_heading: {
+    ar: 'تم إصدار رابط مراجعة الحجز.',
+    en: 'Checkout link issued.',
+  },
+  admin_checkout_link_copy_hint: {
+    ar: 'انسخ الرابط وأرسله للعميل عبر واتساب. لن يُعرَض مرة أخرى.',
+    en: 'Copy the link and send it to the customer on WhatsApp. It will not be shown again.',
+  },
+  admin_checkout_link_expires_at_label: {
+    ar: 'صالح حتى',
+    en: 'Valid until',
+  },
+
+  // Operator portal: read-only add-ons section heading
+  // (Phase 6.2 PR 2b S6).
+  operator_addons_section_heading: {
+    ar: 'الخدمات الإضافية',
+    en: 'Add-ons',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 // ============================================================================
