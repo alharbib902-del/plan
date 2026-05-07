@@ -4578,17 +4578,23 @@ aeris/lib/i18n/operator.ts                                       (modified — a
   `'cancelled'`. A future Codex iteration may P1 this if
   deemed essential.
 
-### Smoke test (between PR 2b merge and acceptance)
+### Preview smoke test (PR acceptance gate, BEFORE merge)
 
 Per spec Quality gates section + the new
 `PR 2b — UI wiring smoke test` checklist appended to
 `aeris/docs/checklists/operator-flow-smoke-test.md`. The
-10-step flow runs on the **Vercel preview URL** (NOT
-production). Pre-flight gate ensures
-`CUSTOMER_CHECKOUT_SECRET` is set in Preview +
-`ENABLE_CHECKOUT_TOKEN_DEBUG=true` for the smoke route +
-`/admin/debug/customer-token-smoke` returns OK. After
-PR 2b ships, the founder flips
+10-step flow runs on the **Vercel Preview URL** of this
+PR's commit head — NOT production. Codex round-1 P2 #2
+fix to a prior heading that placed the smoke
+"between merge and acceptance" (the smoke is the
+acceptance gate, BEFORE the merge command — see the
+Closing section below for the full 5-step protocol).
+
+Pre-flight gate ensures `CUSTOMER_CHECKOUT_SECRET` is
+set in Preview + `ENABLE_CHECKOUT_TOKEN_DEBUG=true` for
+the smoke route + `/admin/debug/customer-token-smoke`
+returns OK. After PR 2b ships and the post-merge
+production deploy lands, the founder flips
 `ENABLE_CHECKOUT_TOKEN_DEBUG` back to `false`.
 
 ### Carry-overs
