@@ -1407,9 +1407,30 @@ the admin trip page (none of these steps are new in PR 2b).
     The add-ons tab renders **Case C** with "إنشاء سجل
     الحجز" button. Click → `backfill_booking_from_offer`
     creates the bookings row. Page reloads in **Case B**
-    with empty add-ons list. Idempotency: click the
-    button a second time on the freshly backfilled trip
-    → `booking_already_exists`.
+    with empty add-ons list (the "إنشاء سجل الحجز"
+    button is **gone** — that's the expected post-
+    backfill UI; the Case C copy is replaced by the
+    catalog browse + suggestion banner + attached
+    table).
+
+    **Idempotency note (Codex round-1 P2 #3 fix):** at
+    the UI layer the second click is impossible because
+    the button is removed once the page transitions to
+    Case B. The function-level idempotency contract
+    (`booking_already_exists` on a second call) was
+    already verified by **founder probe 8b** on
+    production via direct psql before PR 2b opened —
+    that's the real acceptance for the idempotency
+    guarantee. If the founder wants to verify it again
+    at the UI layer, the only practical path is a
+    **stale page reload race**: open two browser tabs
+    to the Case C state, click the button in tab A,
+    then in tab B. Tab B sees the same Case C copy
+    (because tab B's render predates the backfill);
+    its click hits `backfillBookingFromAcceptedOffer`,
+    which surfaces the `booking_already_exists` error
+    in the legacy-backfill button's red error banner.
+    Optional — not required for PR 2b acceptance.
 
 ## Pass criteria
 
@@ -1430,8 +1451,17 @@ the admin trip page (none of these steps are new in PR 2b).
   row returns `addon_not_cancellable`; the row stays
   `'confirmed'` (Codex iteration-6 P1 customer/admin
   cancel split fix verified at the UI layer).
-- Step 10: backfill button is idempotent;
-  `booking_already_exists` on second click.
+- Step 10: backfill button transitions the page from
+  Case C to Case B on success (the "إنشاء سجل الحجز"
+  button is removed; catalog + suggestion banner
+  appear). UI-layer idempotency is unverifiable in a
+  single-tab flow because the button is gone — the
+  function-level idempotency contract
+  (`booking_already_exists` on a second call) was
+  verified by founder probe 8b on production pre-PR-2b.
+  Optional stale-page-reload race verification path
+  documented in step 10 above; not required for
+  acceptance.
 
 ## What this checklist does NOT cover
 

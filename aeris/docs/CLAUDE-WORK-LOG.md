@@ -4614,17 +4614,41 @@ PR 2b ships, the founder flips
 ### Closing
 
 PR 2b is **complete on the feature branch and
-quality-gates green locally**. After Codex review +
-merge + Vercel production deploy, the founder runs the
-10-step smoke test on the production URL (or the Preview
-URL if smoke-on-prod is not appropriate) and confirms
-all 10 steps pass. Then **Phase 6.2 ships** — the full
-priced-add-ons + booking-shaped checkout-prep surface is
-live for the founder + customers, without payment +
-without ZATCA per the locked roadmap. Phase 11's bundled
-HyperPay + Moyasar + ZATCA wiring is the next major
-milestone; intermediate phases (Empty Legs / MedEvac /
-Cargo / Privilege) ship without payment using the same
-`status` ENUM (operational) + `payment_status` ENUM
-(financial) split this phase established.
+quality-gates green locally**. The acceptance protocol
+mirrors PR 1 + PR 2a's pre-merge discipline (Codex
+round-1 P2 #2 fix to an earlier version of this entry
+that placed the smoke after the merge):
+
+1. **Codex review** on this PR's commit head.
+2. **Founder Preview pre-flight gate** —
+   `CUSTOMER_CHECKOUT_SECRET` set in Vercel Preview;
+   `ENABLE_CHECKOUT_TOKEN_DEBUG=true` in Preview;
+   `/admin/debug/customer-token-smoke` returns OK on
+   the preview URL.
+3. **Founder runs the 10-step smoke test on the Vercel
+   Preview URL** (the checklist appended to
+   `aeris/docs/checklists/operator-flow-smoke-test.md`).
+   This is the acceptance gate — the smoke must pass
+   on Preview BEFORE the merge command.
+4. **Merge command** from the founder.
+5. **Vercel production deploy** runs automatically.
+
+Post-merge **production verification is a founder
+follow-up, NOT an acceptance gate**. The founder may
+optionally repeat parts of the smoke test on production
+for sanity, backfill the remaining legacy trip
+(`9ff1bc06`) via the Case C UI button, and flip
+`ENABLE_CHECKOUT_TOKEN_DEBUG` back to `false` in
+Preview.
+
+Once steps 1-4 are green, **Phase 6.2 ships** — the
+full priced-add-ons + booking-shaped checkout-prep
+surface is live for the founder + customers, without
+payment + without ZATCA per the locked roadmap.
+Phase 11's bundled HyperPay + Moyasar + ZATCA wiring
+is the next major milestone; intermediate phases
+(Empty Legs / MedEvac / Cargo / Privilege) ship
+without payment using the same `status` ENUM
+(operational) + `payment_status` ENUM (financial)
+split this phase established.
 

@@ -92,26 +92,32 @@ export async function issueCheckoutLink(input: {
   // write both in the same UPDATE. SHA-256 hex of the raw
   // token (defense in depth: DB stores only the hash; the
   // raw token never persists).
+  //
+  // The `.select('trip_request_id')` chain returns the
+  // updated row so we can revalidate the correct admin
+  // trip path. Codex round-1 P2 #1 fix: prior version
+  // revalidated `/admin/trips/${booking_id}` which is the
+  // wrong UUID — the admin trip page is keyed by
+  // trip_request_id, not booking_id.
   const tokenHash = hashCheckoutToken(minted.token);
   const expiresAtIso = new Date(minted.payload.exp * 1000).toISOString();
 
   const client = createAdminClient();
-  const { error: updateError, count } = await client
+  const { data: updatedRow, error: updateError } = await client
     .from('bookings')
-    .update(
-      {
-        checkout_token_hash: tokenHash,
-        checkout_token_expires_at: expiresAtIso,
-      },
-      { count: 'exact' }
-    )
-    .eq('id', parsed.data.booking_id);
+    .update({
+      checkout_token_hash: tokenHash,
+      checkout_token_expires_at: expiresAtIso,
+    })
+    .eq('id', parsed.data.booking_id)
+    .select('id, trip_request_id')
+    .maybeSingle();
 
   if (updateError) {
     console.error('[admin/checkout-token] UPDATE error', updateError);
     return { ok: false, error: 'rpc_failed' };
   }
-  if (count === 0) {
+  if (!updatedRow) {
     return { ok: false, error: 'booking_not_found' };
   }
 
@@ -123,7 +129,13 @@ export async function issueCheckoutLink(input: {
     process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '') ?? '';
   const checkoutUrl = `${baseUrl}/booking/${minted.token}/checkout-prep`;
 
-  revalidatePath(`/admin/trips/${parsed.data.booking_id}`);
+  // Revalidate by trip_request_id (the admin URL key), not
+  // by booking_id. Both the trip detail page and its
+  // add-ons tab are at `/admin/trips/<trip_request_id>`.
+  if (updatedRow.trip_request_id) {
+    revalidatePath(`/admin/trips/${updatedRow.trip_request_id}`);
+    revalidatePath(`/admin/trips/${updatedRow.trip_request_id}/addons`);
+  }
 
   return {
     ok: true,
