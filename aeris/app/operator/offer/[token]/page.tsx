@@ -11,6 +11,18 @@ import { verifyOperatorToken } from '@/lib/operator/token';
 import { listAirports } from '@/lib/supabase/queries/airports';
 import { getTargetById } from '@/lib/supabase/queries/phase5-targets';
 import { getTripById } from '@/lib/supabase/queries/trips';
+// Phase 6.2 PR 2b S6: best-effort fetch of attached add-ons
+// for the trip-summary's read-only "الخدمات الإضافية"
+// section. Returns [] when the trip has no bookings row yet
+// (pre-PR-2a-accept), and the trip-summary then skips the
+// section. Full visibility for the chosen operator post-
+// accept depends on a future relaxation of the gate logic;
+// the component is ready for it.
+import {
+  getBookingByTripId,
+  listBookingAddons,
+} from '@/lib/supabase/queries/bookings';
+import type { BookingAddonRow } from '@/types/database';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -119,6 +131,8 @@ export default async function OperatorOfferPage({
       return <ExpiredLink reason={reason} lang={lang} />;
     }
 
+    const v1Addons = await fetchTripAddons(trip.id);
+
     return (
       <div className="space-y-6">
         <OperatorTripSummary
@@ -126,6 +140,7 @@ export default async function OperatorOfferPage({
           operatorContext={operatorContext}
           airports={airports}
           lang={lang}
+          addons={v1Addons}
         />
         <OperatorOfferForm
           token={params.token}
@@ -192,6 +207,8 @@ export default async function OperatorOfferPage({
     return <ExpiredLink reason={reason} lang={lang} />;
   }
 
+  const v2Addons = await fetchTripAddons(trip.id);
+
   return (
     <div className="space-y-6">
       <OperatorTripSummary
@@ -199,6 +216,7 @@ export default async function OperatorOfferPage({
         operatorContext={operatorContext}
         airports={airports}
         lang={lang}
+        addons={v2Addons}
       />
       <OperatorOfferForm
         token={params.token}
@@ -207,4 +225,27 @@ export default async function OperatorOfferPage({
       />
     </div>
   );
+}
+
+/**
+ * Phase 6.2 PR 2b S6: best-effort fetch of attached add-ons
+ * for a given trip. Returns [] when no bookings row exists
+ * for the trip (pre-PR-2a-accept legacy or pre-accept
+ * pending). The trip-summary component skips the section
+ * entirely when the array is empty.
+ *
+ * This is wrapped in a try/catch so a transient DB error
+ * during this read does NOT break the operator portal page
+ * — the operator can still see the trip-summary + submit
+ * the offer.
+ */
+async function fetchTripAddons(tripId: string): Promise<BookingAddonRow[]> {
+  try {
+    const booking = await getBookingByTripId(tripId);
+    if (!booking) return [];
+    return await listBookingAddons(booking.id);
+  } catch (err) {
+    console.error('[operator-portal.fetchTripAddons]', err);
+    return [];
+  }
 }

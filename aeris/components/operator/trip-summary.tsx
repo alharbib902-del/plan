@@ -1,5 +1,10 @@
-import type { AirportRow, TripRequestRow } from '@/types/database';
+import type {
+  AirportRow,
+  BookingAddonRow,
+  TripRequestRow,
+} from '@/types/database';
 import type { TripPreferences } from '@/lib/validators/trip-preferences';
+import { ADDONS_BY_SUBTYPE } from '@/lib/addons/catalog';
 import {
   aircraftCategoryLabel,
   airportLabel,
@@ -58,11 +63,26 @@ export function OperatorTripSummary({
   operatorContext,
   airports,
   lang,
+  /**
+   * Phase 6.2 PR 2b S6: optional read-only add-ons. When
+   * supplied + non-empty, the trip-summary card renders a
+   * "الخدمات الإضافية" section beneath the preferences
+   * section. Operator cannot mutate; mutation surfaces are
+   * admin (S4) + customer (S5) only.
+   *
+   * Operator-relevant subset of `details` is rendered: the
+   * customer-supplied note IS shown (operators need it to
+   * coordinate the ground vendor); the customer's WhatsApp
+   * phone is NEVER shown (privacy invariant — Phase 4/5
+   * "client identity stays private" rule still applies).
+   */
+  addons,
 }: {
   trip: TripRequestRow;
   operatorContext: OperatorContext;
   airports: AirportRow[];
   lang: Lang;
+  addons?: BookingAddonRow[];
 }) {
   return (
     <div
@@ -124,8 +144,74 @@ export function OperatorTripSummary({
             {formatRiyadhDateTime(operatorContext.tokenExpiresAt, lang)}
           </span>
         </Row>
+        {/* Phase 6.2 PR 2b S6: read-only add-ons section.
+            Renders only when at least one non-cancelled
+            add-on exists. Cancelled rows drop OUT — the
+            operator's view shows only what the trip actually
+            requires for ground prep. */}
+        {addons && addons.filter((a) => a.status !== 'cancelled').length > 0 && (
+          <AddonsRows addons={addons} lang={lang} />
+        )}
       </dl>
     </div>
+  );
+}
+
+// ============================================================
+// Phase 6.2 PR 2b (S6) — read-only add-ons display
+// ============================================================
+
+function AddonsRows({
+  addons,
+  lang,
+}: {
+  addons: BookingAddonRow[];
+  lang: Lang;
+}) {
+  // Filter out cancelled rows. The remaining rows are the
+  // ones the operator actually needs to prepare for.
+  const visible = addons.filter((a) => a.status !== 'cancelled');
+
+  return (
+    <Row label={t('operator_addons_section_heading', lang)}>
+      <ul className="space-y-1">
+        {visible.map((addon) => {
+          const catalogEntry = ADDONS_BY_SUBTYPE.get(addon.addon_subtype);
+          const label =
+            (catalogEntry &&
+              (lang === 'ar'
+                ? catalogEntry.label_ar
+                : catalogEntry.label_en)) ??
+            addon.addon_subtype;
+          const note =
+            addon.details &&
+            typeof addon.details === 'object' &&
+            'note' in addon.details &&
+            typeof addon.details.note === 'string'
+              ? addon.details.note
+              : null;
+          return (
+            <li key={addon.id} className="font-ar">
+              <span className="text-ink">{label}</span>
+              <span className="ms-2 text-xs text-ink-muted">
+                ×{addon.quantity}
+              </span>
+              <span className="ms-2 text-[10px] uppercase tracking-tagged text-ink-muted">
+                {t(
+                  `addon_status_${addon.status}` as 'addon_status_pending',
+                  lang
+                )}
+              </span>
+              {note && (
+                <span className="block text-xs text-ink-muted">
+                  {note}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Row>
   );
 }
 
