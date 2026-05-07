@@ -61,7 +61,14 @@ export function AddonsAttachForm({
     setError(null);
     setSuccess(false);
 
-    const formData = new FormData(e.currentTarget);
+    // Capture the form element synchronously. React nullifies
+    // `e.currentTarget` after the synchronous handler returns,
+    // so we must read it BEFORE entering the async transition.
+    // Reading `e.currentTarget.reset` from inside the async
+    // callback throws TypeError (cannot read properties of
+    // null) — that's the production crash this hotfix fixes.
+    const formEl = e.currentTarget;
+    const formData = new FormData(formEl);
     const overrideRaw = formData.get('unit_price_override');
     const quantityRaw = formData.get('quantity');
     const noteRaw = formData.get('note');
@@ -88,8 +95,10 @@ export function AddonsAttachForm({
         setSuccess(true);
         // Reset the form so the admin can attach another row
         // of the same subtype if needed (e.g. multiple
-        // limousines).
-        e.currentTarget.reset?.();
+        // limousines). Use the captured ref — `e.currentTarget`
+        // is null here because the sync handler already
+        // returned.
+        formEl.reset();
       } else {
         setError(translateError(result.error));
       }
