@@ -64,14 +64,20 @@ export interface WhatsappConfirmMessageInput {
    */
   routeFormatted: string;
   /**
-   * Pre-formatted departure datetime in Asia/Riyadh, e.g.
-   * "10 مايو 2026، 03:00". The "(بتوقيت الرياض)" suffix is
-   * appended by this builder; do NOT include it here.
+   * Pre-formatted departure datetime, e.g.
+   * `"10 مايو 2026، 03:00 (بتوقيت الرياض)"`. The
+   * `(بتوقيت الرياض)` suffix MUST be included by the caller —
+   * `formatRiyadhDateTime` from `lib/i18n/operator` already
+   * returns it that way, and the WhatsApp builder passes the
+   * value through verbatim. (PR 2c hotfix: the previous
+   * contract had the builder append the suffix, which caused
+   * a double "(بتوقيت الرياض) (بتوقيت الرياض)" rendering on
+   * production.)
    */
   departureFormatted: string;
   /**
-   * Same shape as `departureFormatted`. NULL when the
-   * booking has no return leg.
+   * Same shape as `departureFormatted` (suffix included).
+   * NULL when the booking has no return leg.
    */
   returnFormatted: string | null;
   /**
@@ -119,17 +125,17 @@ export function buildWhatsappConfirmMessage(
   }
   lines.push('');
 
-  // Trip details block.
+  // Trip details block. The departure / return strings come
+  // in already including the `(بتوقيت الرياض)` suffix from
+  // `formatRiyadhDateTime`; we pass them through verbatim
+  // rather than appending the suffix here (PR 2c hotfix —
+  // previous contract caused a double-suffix rendering).
   lines.push('تفاصيل الرحلة:');
   lines.push(`• رقم الحجز: ${input.bookingNumber}`);
   lines.push(`• المسار: ${input.routeFormatted}`);
-  lines.push(
-    `• المغادرة: ${input.departureFormatted} (بتوقيت الرياض)`
-  );
+  lines.push(`• المغادرة: ${input.departureFormatted}`);
   if (input.returnFormatted !== null) {
-    lines.push(
-      `• العودة: ${input.returnFormatted} (بتوقيت الرياض)`
-    );
+    lines.push(`• العودة: ${input.returnFormatted}`);
   }
   if (typeof input.passengersCount === 'number') {
     lines.push(`• عدد الركاب: ${input.passengersCount}`);
