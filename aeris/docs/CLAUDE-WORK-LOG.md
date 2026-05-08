@@ -5194,3 +5194,135 @@ None on the implementation side. Operational follow-ups (same as PR 1):
 
 **PR 2b** — admin surfaces (`/admin/empty-legs` list + detail + create + outreach queue + operator-bootstrap + 6 admin Server Actions). Awaits Codex review of PR 2a first.
 
+## Phase 7 — PR 2a closure (2026-05-08)
+
+PR 2a is **shipped end-to-end on production** as of squash sha
+`386fe2a` (`2026-05-08T18:29:05Z`).
+
+### Codex review iterations
+
+| Round | Verdict | Findings | Resolution |
+|---|---|---|---|
+| 1 | 2×P1 + 2×P2 | (P1 #1) NULL token hash bypassed `confirm` / `release` token check via `column <> NULL`; (P1 #2) invalid IATA values surfaced as raw FK errors instead of structured contract; (P2 #1) equal `initial = floor` accepted (no-op curve); (P2 #2) reservation expiry unbounded into the future. | Commit `caf4ee7` — `IS DISTINCT FROM` + explicit NULL reject; pre-INSERT `airports(iata_code)` validation with new errors `departure_airport_unknown` / `arrival_airport_unknown`; `v_floor <= v_initial` (was `<`); `LEAST(NOW() + INTERVAL '10 minutes', departure_window_start)` ceiling with new error `reservation_expiry_too_far`. |
+| 2 | 1×P1 + 2×P2 | (P1 #1) NULL `p_departure_window_start` / `_end` still bypassed structured validation (NULL comparisons evaluate to NULL); (P2 #1) FK-backed UUID inputs (`parent_booking_id`, `operator_id`, `operator_stub_id`, `aircraft_id`) still raised raw FK errors; (P2 #2) `v_lead_hours` unbounded — negative values pushed `auction_window_end_at` past `departure_window_start`. | Commit `5023be8` — explicit NULL guard before order check; pre-INSERT `EXISTS` checks with new errors `parent_booking_not_found` / `operator_not_found` / `operator_stub_not_found` / `aircraft_not_found`; `v_lead_hours < 0` guard with new error `auction_window_lead_hours_invalid`. |
+| 3 | **Accepted 100/100** ✅ | — | — |
+
+### Branch + PR
+
+- Branch: `phase-7/pr-2a-rpcs` (worktree, deleted on merge)
+- PR: [#28](https://github.com/alharbib902-del/plan/pull/28)
+- Squash sha: `386fe2a` on `main`
+- CI: green (Type-check, build, lint + Vercel)
+
+### Production migration
+
+`supabase/migrations/20260510000011_phase_7_empty_legs_rpcs.sql`
+applied to production Supabase project `ugwxklkulptxrgqysxkn`
+(`Success. No rows returned`). All 12 functions
+(11 publics + 1 helper) now exist on production.
+
+### Founder probes — results
+
+All three probes passed against production.
+
+#### Probe 5 — RPC grants
+
+Service-role SQL Editor query enumerated the 12 Phase 7 functions
+and their explicit (non-owner) EXECUTE grantees:
+
+| Function | Security definer | Owner | Non-owner grantees | Verdict |
+|---|---|---|---|---|
+| `_recompute_empty_leg_price` | ✅ | postgres | (none) | OK (helper, zero non-owner grantees) |
+| `publish_empty_leg` | ✅ | postgres | service_role | OK |
+| `update_empty_leg_price` | ✅ | postgres | service_role | OK |
+| `reserve_empty_leg` | ✅ | postgres | service_role | OK |
+| `confirm_empty_leg_reservation` | ✅ | postgres | service_role | OK |
+| `release_empty_leg_reservation` | ✅ | postgres | service_role | OK |
+| `admin_release_empty_leg_reservation` | ✅ | postgres | service_role | OK |
+| `cancel_empty_leg` | ✅ | postgres | service_role | OK |
+| `expire_empty_leg_reservation` | ✅ | postgres | service_role | OK |
+| `tick_empty_leg_dutch_auction` | ✅ | postgres | service_role | OK |
+| `admin_mark_empty_leg_sold` | ✅ | postgres | service_role | OK |
+| `publish_empty_leg_event` | ✅ | postgres | service_role | OK |
+
+(First execution surfaced grantees as raw OIDs because
+`aclexplode()` returns the raw oid; second-pass query
+translated via `pg_get_userbyid` and excluded the implicit
+owner. Owner is the implicit Supabase `postgres` role —
+expected; service-role-only grants confirmed.)
+
+#### Probe 6 — TS/SQL parity
+
+`npm run test:empty-legs-curve` — 16 passed, 0 failed against
+the production-shape formula. Sample points exercised:
+0%/25%/50%/75%/100% elapsed × 2 curves (linear + accelerating)
++ defensive boundary cases (now-before-start clamps to 0,
+now-after-end clamps to 1, zero-span window returns floor) +
+3 price-calculation fixtures. The TS port in
+`lib/empty-legs/auction-curve.ts` and the plpgsql
+`_recompute_empty_leg_price` produce identical outputs.
+
+#### Probe 7 — release + admin-release + manual-sold smoke
+
+13-step transaction-scoped probe (BEGIN → run → ROLLBACK so
+production stays byte-identical, mirrors Probe 4b's
+fixture pattern). All 13 verdicts = OK:
+
+| Step | Description | Expected | Verdict |
+|---|---|---|---|
+| 0 | Publish leg #1 (setup) | `ok=true` | OK |
+| 1 | Release on available leg | `error=leg_not_reserved` | OK |
+| 2 | Reserve leg #1 with right hash | `ok=true` | OK |
+| 3 | Release with wrong hash | `error=reservation_token_mismatch` | OK |
+| 4 | Release with right hash | `ok=true` | OK |
+| 5 | Leg #1 status after release | `status=available` | OK |
+| 6 | Reserve leg #1 again | `ok=true` | OK |
+| 7 | `admin_release` (no token) | `ok=true` | OK |
+| 8 | Leg #1 status after admin_release | `status=available` | OK |
+| 9 | Publish leg #2 (sold-test setup) | `ok=true` | OK |
+| 10 | `admin_mark_empty_leg_sold` | `ok=true` | OK |
+| 11 | Leg #2 status + booking after sold | `status=sold + booking_id non-null` | OK |
+| 12 | Bookings row for leg #2 | `count=1` | OK |
+
+Verifies: (a) release contract enforces token hash, (b) admin
+path bypasses customer token, (c) released legs flip back to
+`'available'` with cleared reservation columns, (d)
+`admin_mark_empty_leg_sold` is single-transaction atomic
+(creates `bookings` row + flips leg to `'sold'` + populates
+`customer_booking_id` in one call). The probe used
+`pg_temp.run_probe7()` (session-scoped) inside `BEGIN ... ROLLBACK`
+because Supabase SQL Editor's transaction handling did not
+hold a `CREATE TEMP TABLE ... ON COMMIT DROP` across the
+DO-block boundary on the first attempt.
+
+### What PR 2a ships (final)
+
+- `supabase/migrations/20260510000011_phase_7_empty_legs_rpcs.sql`
+  — 12-function migration: 11 publics + 1 helper. Helper
+  REVOKEd from every role; publics granted EXECUTE to
+  `service_role` only.
+- `types/database.ts` — 11 Args/Result type pairs + 11
+  `Database['public']['Functions']` entries; new error
+  codes added across rounds 1+2 (`departure_airport_unknown`,
+  `arrival_airport_unknown`, `reservation_expiry_too_far`,
+  `parent_booking_not_found`, `operator_not_found`,
+  `operator_stub_not_found`, `aircraft_not_found`,
+  `auction_window_lead_hours_invalid`).
+- `lib/empty-legs/types.ts` — re-exports the Phase-7-scoped
+  surface so PR 2b–2e Server Actions get a single import.
+
+### Operational follow-ups
+
+- **Migration application:** ✅ done (production probe 5 confirms).
+- **`types/database.ts` regen:** intentionally deferred per
+  the post-PR-1 ritual — the file remains hand-maintained.
+  No Codex pushback in any round; aligns with the
+  alias-layer-or-39-file-refactor decision documented in
+  PR 1's closure.
+
+### Next PR
+
+**PR 2b** — admin surfaces (`/admin/empty-legs` list + detail
++ create + outreach queue + operator-bootstrap + 6 admin
+Server Actions). Builds directly on PR 2a's RPC layer.
+
