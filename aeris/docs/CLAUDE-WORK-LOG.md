@@ -4926,11 +4926,17 @@ consultation 2026-05-08, Recommendation: A).
 
 - **`ENABLE_CHECKOUT_TOKEN_DEBUG`** on Vercel Preview:
   was set to `true` for PR 2b's debug smoke route
-  (`/admin/_debug/customer-token-smoke`). Founder to
-  flip back to `false` post-closure. Not a blocker —
-  the route is admin-gated behind standard admin auth
-  and Preview-only — but recommended for cleanliness
-  per the PR 2b plan.
+  served at `/admin/debug/customer-token-smoke` (the
+  on-disk segment is `debug`, NOT `_debug` — App Router
+  would exclude any `_`-prefixed folder from routing
+  entirely, which is why the external path uses the
+  unprefixed form; Codex round-1 P2 fix on this entry
+  to prevent reintroducing the same confusion already
+  resolved in `.env.example` + PR #19). Founder to flip
+  back to `false` post-closure. Not a blocker — the
+  route is admin-gated behind standard admin auth and
+  Preview-only — but recommended for cleanliness per
+  the PR 2b plan.
 
 ### What Phase 6.2 ships
 
