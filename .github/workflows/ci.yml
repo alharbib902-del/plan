@@ -63,6 +63,15 @@ jobs:
       - name: Site URL resolver
         run: npm run test:checkout-site-url
 
+      # Phase 7 PR 1: Dutch-auction curve parity test. The
+      # plpgsql RPC `_recompute_empty_leg_price` (PR 2a)
+      # ports the same formula in SQL; this Layer-1 test
+      # asserts both ports produce identical outputs at
+      # fixed sample points (0%, 25%, 50%, 75%, 100%
+      # elapsed-pct). Drift is a Codex-blocking finding.
+      - name: Dutch-auction curve parity
+        run: npm run test:empty-legs-curve
+
       - name: Type-check
         run: npm run type-check
 

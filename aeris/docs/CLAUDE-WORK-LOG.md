@@ -4992,3 +4992,105 @@ item. Awaits separate founder command. Same
 ENUM split established here will carry forward; payment
 integration remains deferred to Phase 11.
 
+---
+
+## Phase 7 — PR 1 (schema reshape)
+
+Phase 7 PR 1 ships the DDL foundation for Empty Legs:
+schema reshape on `empty_legs` + `lead_inquiries`, four
+new tables (`empty_leg_notifications`,
+`phase7_operator_stubs`, `operator_empty_leg_sessions`,
+`empty_leg_outreach_alert_status`), two triggers (audit
+log on `empty_legs`, `last_empty_leg_notified_at` atomic
+update on `empty_leg_notifications` INSERT), the
+`bookings.source_offer_table` CHECK extension to accept
+`'phase7_empty_leg'`, the TS port of the Dutch-auction
+curve formula, and the Layer-1 parity test scaffold
+that PR 2a's RPC migration will share. **No runtime
+UI/RPC code** — those land in PR 2a–2e.
+
+The full Phase 7 spec (15 Codex iterations to reach
+100/100, 4400+ lines, 87 acceptance criteria across 6
+PRs) lives at `docs/CLAUDE-TASK.md`. PR 1 implements
+sections §7.1 (Schema reshape) only; subsequent PRs
+implement §7.2 (RPCs), §7.3 (Admin), §7.4 (Operator
+portal), §7.5 (Public marketplace), §7.6 (Matching +
+cron + notifications).
+
+### Files added
+
+| Path | Purpose |
+|---|---|
+| `supabase/migrations/20260509000010_phase_7_empty_legs_reshape.sql` | 17-section idempotent migration. All `CREATE TABLE` + `CREATE INDEX` use `IF NOT EXISTS`; every constraint addition is in a `pg_constraint`-guarded DO block. Re-runs produce zero schema diff (Founder Probe 1 verifies). |
+| `lib/empty-legs/types.ts` | Phase-7-scoped re-export of the canonical row types from `types/database.ts`. PR 2a imports this. |
+| `lib/empty-legs/auction-curve.ts` | TypeScript port of the Dutch-auction formula. Plpgsql `_recompute_empty_leg_price` (PR 2a) ports the same formula in SQL; the parity test below asserts both ports produce identical outputs. |
+| `lib/empty-legs/__tests__/auction-curve.test.ts` | Layer-1 parity test (no DB, no network). Asserts the TS port at fixed sample points (0%, 25%, 50%, 75%, 100% elapsed) under both `'linear'` and `'accelerating'` curves + boundary cases (before window start, after window end, zero-span window) + `computeAuctionCurrentPrice` arithmetic. PR 2a's RPC migration reuses these expected values. |
+
+### Files edited
+
+| Path | Change |
+|---|---|
+| `types/database.ts` | Hand-extended (until `npm run db:types` is wired): `LeadInquiryRow` gains `empty_legs_opt_in` + `last_empty_leg_notified_at`; `SourceOfferTable` adds `'phase7_empty_leg'`; new types `EmptyLegStatus` (with `'cancelled'`), `EmptyLegAuctionCurve`, `EmptyLegRow` / `Insert` / `Update`, `EmptyLegNotificationRow` / `Insert` / `Update`, `Phase7OperatorStubRow` / `Insert` / `Update`, `OperatorEmptyLegSessionRow` / `Insert` / `Update`, `EmptyLegOutreachAlertStatusRow` / `Update`. Five new entries added to `Database['public']['Tables']`; `Enums.empty_leg_status` retargeted to the extended union. **The founder must regenerate this file via `npm run db:types` against production after the migration applies, replacing the hand-maintained version with the auto-generated one.** |
+| `package.json` | `+ "test:empty-legs-curve": "tsx lib/empty-legs/__tests__/auction-curve.test.ts"` script. No new dependencies; uses existing `tsx`. |
+| `.github/workflows/ci.yml` | New step "Dutch-auction curve parity" running `npm run test:empty-legs-curve`. Mirrors the Phase 6.2 catalog-parity step pattern. |
+| `docs/CLAUDE-WORK-LOG.md` | This entry. |
+
+### Quality gates run locally
+
+All passed:
+
+- `npm ci` — 753 packages installed in 2 minutes; 9 npm-audit
+  vulnerabilities (2 low / 1 mod / 6 high) **unchanged from
+  Phase 6.2 closure baseline** — no new dependencies
+  introduced by PR 1.
+- `npm run type-check` — clean.
+- `npm run lint:strict` — clean ("No ESLint warnings or
+  errors").
+- `npm run build` — green; route table unchanged from Phase
+  6.2 closure (PR 1 ships zero runtime UI/RPC code per spec
+  §7.1 fence).
+- `npm run test:addons` — 20 catalog rows match (Phase 6.2
+  regression check).
+- `npm run test:checkout-whatsapp` — 8 passed, 0 failed.
+- `npm run test:checkout-site-url` — 16 passed, 0 failed.
+- **`npm run test:empty-legs-curve` — 16 passed, 0 failed**
+  (new this PR). Covers the accelerating curve at 5 sample
+  points + linear curve at 5 sample points + 2 boundary
+  clamping cases + zero-span window + 3
+  `computeAuctionCurrentPrice` arithmetic checks (with
+  rounding to `DECIMAL(12,2)` precision so the TS port
+  matches the SQL output exactly).
+
+### Founder probes (run by founder against production)
+
+PR 1 ships 6 founder probes per spec §Founder Probes:
+
+1. **Migration idempotency** — re-run the migration; psql diff shows no schema delta.
+2. **`empty_legs` shape** — `\d+ empty_legs` shows the new columns (snapshots, freeform-airport, reservation, customer-booking, Dutch-auction, suppress_notifications, operator_stub_id) with the right types + nullability.
+3. **`bookings.source_offer_table` CHECK** — INSERT a test row with `source_offer_table = 'phase7_empty_leg'` and a valid UUID; expect success. Roll back.
+4. **`empty_leg_notifications` shape** — `\d+ empty_leg_notifications` shows the columns + CHECKs + all 3 indexes by name (`idx_empty_leg_notifications_lead_24h`, UNIQUE `idx_empty_leg_notifications_lead_leg_unique`, partial `idx_empty_leg_notifications_outreach_pending`); RLS enabled, no policies.
+4a. **`empty_leg_outreach_alert_status` singleton seed + enum** — `SELECT * FROM empty_leg_outreach_alert_status` returns exactly one row `(id=1, status='healthy')`; the `status` CHECK enumerates the 3 allowed values; an `INSERT (id=2)` is rejected by the CHECK.
+4b. **`empty_leg_notifications_update_last_notified` trigger wiring** — trigger exists with `event_manipulation='INSERT'` + `action_timing='AFTER'`; function `_update_lead_inquiry_last_notified` is SECURITY DEFINER + zero grantees; transaction-scoped smoke test (`BEGIN` → INSERT throwaway leg → INSERT notification row → assert `lead_inquiries.last_empty_leg_notified_at = NEW.sent_at` → `ROLLBACK`) passes.
+
+### Branch + PR
+
+- Branch: `claude/modest-perlman-0aa403` (worktree)
+- PR URL: pending
+- CI run URL: pending
+
+### Known issues
+
+None on the implementation side. Two operational followups for the founder:
+
+- **`types/database.ts` regen** — the file is hand-maintained in this PR. After the migration applies on production, the founder runs `npm run db:types` against the production Supabase project (requires the project ref + service role key in the local env) and commits the regenerated file. The hand-maintained version is shaped to mirror what the regen will produce, so the diff should be cosmetic (formatting, optional fields).
+- **Migration application** — PR 1 ships only the migration file; applying it on production Supabase is a manual step (Supabase dashboard SQL editor or CLI `supabase db push`). Founder Probe 1 verifies idempotency.
+
+### Questions for the next Codex review
+
+1. Is the audit-trigger output column shape (`entity_type`, `entity_id`, `action`, `old_value`, `new_value` from the initial schema's `audit_logs`) correct for forensic queries downstream, or does Phase 7 need a richer payload?
+2. The `auction_window_end_at` column is added nullable + immediately upgraded to `NOT NULL` if `empty_legs` has zero rows (production has zero today). Is the conditional-`SET NOT NULL` defensive enough, or should it be unconditional given the production-empty assumption?
+
+### Next PR
+
+**PR 2a** — RPCs + auction-curve TS port + parity test (per spec §7.2). 12 SECURITY DEFINER public functions + 1 internal helper + 1 stub. Awaits Codex review of PR 1 first.
+
