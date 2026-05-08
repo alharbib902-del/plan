@@ -14,6 +14,7 @@
     "test:checkout-whatsapp": "tsx lib/checkout/__tests__/whatsapp-message.test.ts",
     "test:checkout-site-url": "tsx lib/checkout/__tests__/site-url.test.ts",
     "test:empty-legs-curve": "tsx lib/empty-legs/__tests__/auction-curve.test.ts",
+    "test:empty-legs-token": "tsx lib/empty-legs/__tests__/reservation-token.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

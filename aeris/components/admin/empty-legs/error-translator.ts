@@ -49,6 +49,16 @@ const ERROR_MAP: Record<string, string> = {
   reservation_token_missing: emptyLegsAr.errorRpcReservationTokenInvalid,
   reservation_token_too_long: emptyLegsAr.errorRpcReservationTokenInvalid,
 
+  // PR 2d — public surface
+  leg_number_missing: emptyLegsAr.errorRpcLegNumberMissing,
+  leg_number_invalid: emptyLegsAr.errorRpcLegNumberInvalid,
+  opt_out_token_missing: emptyLegsAr.errorRpcOptOutTokenMissing,
+  opt_out_token_too_long: emptyLegsAr.errorRpcOptOutTokenMissing,
+  opt_out_invalid: emptyLegsAr.errorRpcOptOutInvalid,
+  lead_inquiry_not_found: emptyLegsAr.errorRpcLeadInquiryNotFound,
+  flag_disabled_public: emptyLegsAr.errorFlagDisabled,
+  reservation_mint_failed: emptyLegsAr.errorGeneric,
+
   // PR 2c — operator surface
   company_name_missing: emptyLegsAr.errorRpcCompanyNameMissing,
   company_name_too_long: emptyLegsAr.errorRpcCompanyNameMissing,

@@ -39,6 +39,12 @@ interface ResolvedLeadInput {
   originIata: string | null;
   destinationIata: string | null;
   preferences: TripPreferences;
+  // Phase 7 PR 2d (Codex iteration-1 P1 #1 fix): the
+  // empty-legs opt-in checkbox is unchecked by default;
+  // we only flip the column to TRUE when the customer
+  // ticks it explicitly. An unticked submission lets
+  // the schema default FALSE stand.
+  emptyLegsOptIn: boolean;
 }
 
 async function tryPersistLead(
@@ -59,6 +65,7 @@ async function tryPersistLead(
       notes: input.data.notes ?? null,
       source: 'website',
       preferences: input.preferences,
+      empty_legs_opt_in: input.emptyLegsOptIn,
     });
     return { persisted: true, row };
   } catch (err) {
@@ -205,6 +212,15 @@ export async function submitFlightRequest(
     data.preferences ?? {}
   );
 
+  // Phase 7 PR 2d: read the explicit opt-in flag from the
+  // form. HTML <input type="checkbox"> sends the field with
+  // value 'on' when ticked, omits it entirely when unticked,
+  // so a `null` means "not ticked".
+  const emptyLegsOptInRaw = formData.get('empty_legs_opt_in');
+  const emptyLegsOptIn =
+    typeof emptyLegsOptInRaw === 'string' &&
+    (emptyLegsOptInRaw === 'on' || emptyLegsOptInRaw === 'true');
+
   const persistInput: ResolvedLeadInput = {
     data,
     originLabel: originResolved.label,
@@ -212,6 +228,7 @@ export async function submitFlightRequest(
     originIata: originResolved.iata,
     destinationIata: destinationResolved.iata,
     preferences: cleanedPreferences,
+    emptyLegsOptIn,
   };
 
   const { persisted, row } = await tryPersistLead(persistInput);

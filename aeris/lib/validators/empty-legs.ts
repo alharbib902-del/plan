@@ -338,3 +338,62 @@ export const operatorCancelSchema = z.object({
 });
 
 export type OperatorCancelInput = z.infer<typeof operatorCancelSchema>;
+
+// ============================================================
+// PR 2d — public marketplace + reserve flow
+// ============================================================
+
+export const publicReserveEmptyLegSchema = z.object({
+  leg_number: z
+    .string()
+    .trim()
+    .min(1, 'leg_number_missing')
+    .max(64, 'leg_number_invalid'),
+  customer_name: z
+    .string()
+    .trim()
+    .min(2, 'customer_name_missing')
+    .max(255, 'customer_name_too_long'),
+  customer_phone: z
+    .string()
+    .trim()
+    .min(8, 'customer_phone_missing')
+    .max(32, 'customer_phone_too_long'),
+  // Codex iteration-1 P1 #1 fix: opt-in defaults UNCHECKED.
+  // Server Action only writes `empty_legs_opt_in = TRUE`
+  // when the customer ticks this box explicitly.
+  opt_in: z.boolean(),
+});
+
+export type PublicReserveEmptyLegInput = z.infer<
+  typeof publicReserveEmptyLegSchema
+>;
+
+export const publicCancelMyReservationSchema = z.object({
+  leg_number: z
+    .string()
+    .trim()
+    .min(1, 'leg_number_missing')
+    .max(64, 'leg_number_invalid'),
+  reservation_token: z
+    .string()
+    .trim()
+    .min(1, 'reservation_token_missing')
+    .max(2048, 'reservation_token_too_long'),
+});
+
+export type PublicCancelMyReservationInput = z.infer<
+  typeof publicCancelMyReservationSchema
+>;
+
+export const publicConfirmOptOutSchema = z.object({
+  opt_out_token: z
+    .string()
+    .trim()
+    .min(1, 'opt_out_token_missing')
+    .max(2048, 'opt_out_token_too_long'),
+});
+
+export type PublicConfirmOptOutInput = z.infer<
+  typeof publicConfirmOptOutSchema
+>;
