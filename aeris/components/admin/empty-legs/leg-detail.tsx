@@ -1,0 +1,175 @@
+import Link from 'next/link';
+
+import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
+import type { EmptyLegRow } from '@/lib/empty-legs/types';
+import { EmptyLegStatusBadge } from './status-badge';
+import {
+  formatDateTimeAr,
+  formatPercent,
+  formatSarAmount,
+  routeLabel,
+} from './formatters';
+import { PriceEditForm } from './price-edit-form';
+import { CancelLegButton } from './cancel-button';
+import { MarkSoldManualForm } from './mark-sold-form';
+import { ReservationActions } from './reservation-actions';
+
+export function EmptyLegDetail({ leg }: { leg: EmptyLegRow }) {
+  const floor =
+    leg.original_price !== null && leg.auction_floor_discount_pct !== null
+      ? Math.round(
+          leg.original_price * (1 - leg.auction_floor_discount_pct / 100)
+        )
+      : null;
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
+        <div>
+          <Link
+            href="/admin/empty-legs"
+            className="font-ar text-xs text-ink-muted hover:text-gold-light"
+          >
+            ← {emptyLegsAr.back}
+          </Link>
+          <h1 className="font-ar mt-2 text-2xl text-ink sm:text-3xl">
+            {emptyLegsAr.pageDetailTitle}
+          </h1>
+          <div className="mt-1 font-mono text-sm text-gold-light">
+            {leg.leg_number}
+          </div>
+        </div>
+        <EmptyLegStatusBadge status={leg.status} />
+      </header>
+
+      <section className="grid gap-3 sm:grid-cols-2">
+        <Pair label={emptyLegsAr.detailRouteLabel}>
+          {routeLabel(
+            leg.departure_airport,
+            leg.departure_airport_freeform_snapshot
+          )}
+          {' ← '}
+          {routeLabel(
+            leg.arrival_airport,
+            leg.arrival_airport_freeform_snapshot
+          )}
+        </Pair>
+        <Pair label={emptyLegsAr.detailWindowLabel}>
+          {formatDateTimeAr(leg.departure_window_start)}
+          {' ← '}
+          {formatDateTimeAr(leg.departure_window_end)}
+        </Pair>
+        <Pair label={emptyLegsAr.detailFlexibilityLabel}>
+          {leg.flexibility_hours ?? 0} {emptyLegsAr.detailFlexibilityHoursSuffix}
+        </Pair>
+        <Pair label={emptyLegsAr.detailMaxPassengersLabel}>
+          {leg.max_passengers}
+        </Pair>
+        <Pair label={emptyLegsAr.detailOriginalPriceLabel}>
+          {formatSarAmount(leg.original_price)}
+        </Pair>
+        <Pair label={emptyLegsAr.detailCurrentPriceLabel}>
+          {formatSarAmount(leg.current_price)}
+        </Pair>
+        <Pair label={emptyLegsAr.detailDiscountPctLabel}>
+          {formatPercent(leg.current_discount_pct)}
+        </Pair>
+        <Pair label={emptyLegsAr.detailAuctionWindowLabel}>
+          {formatDateTimeAr(leg.auction_window_start_at)}
+          {' ← '}
+          {formatDateTimeAr(leg.auction_window_end_at)}
+        </Pair>
+        <Pair label={emptyLegsAr.detailAuctionCurveLabel}>
+          {leg.auction_curve === 'linear'
+            ? emptyLegsAr.fieldAuctionCurveLinear
+            : leg.auction_curve === 'accelerating'
+              ? emptyLegsAr.fieldAuctionCurveAccelerating
+              : emptyLegsAr.detailNotProvided}
+        </Pair>
+        <Pair label={emptyLegsAr.detailOperatorLabel}>
+          {leg.operator_name_snapshot ?? emptyLegsAr.detailNotProvided}
+        </Pair>
+        <Pair label={emptyLegsAr.detailAircraftLabel}>
+          {leg.aircraft_snapshot ?? emptyLegsAr.detailNotProvided}
+        </Pair>
+      </section>
+
+      {leg.status === 'available' ? (
+        <section className="space-y-3">
+          <h2 className="font-ar text-base text-ink">
+            {emptyLegsAr.caseAvailableTitle}
+          </h2>
+          <PriceEditForm
+            legId={leg.id}
+            currentPrice={leg.current_price}
+            floorPrice={floor}
+            originalPrice={leg.original_price}
+          />
+          <CancelLegButton legId={leg.id} />
+          <MarkSoldManualForm legId={leg.id} />
+        </section>
+      ) : null}
+
+      {leg.status === 'reserved' ? (
+        <section className="space-y-3">
+          <h2 className="font-ar text-base text-ink">
+            {emptyLegsAr.caseReservedTitle}
+          </h2>
+          <ReservationActions
+            legId={leg.id}
+            customerName={leg.reservation_customer_name_snapshot}
+            customerPhone={leg.reservation_customer_phone_snapshot}
+            expiresAt={leg.reservation_expires_at}
+          />
+        </section>
+      ) : null}
+
+      {leg.status === 'sold' ? (
+        <section className="space-y-3">
+          <h2 className="font-ar text-base text-ink">
+            {emptyLegsAr.caseSoldTitle}
+          </h2>
+          <div className="rounded-lg border border-border bg-navy-secondary/40 p-4">
+            {leg.customer_booking_id ? (
+              <>
+                <p className="font-ar text-sm text-ink">
+                  {emptyLegsAr.soldBookingId}:{' '}
+                  <span dir="ltr" className="font-mono text-gold-light">
+                    {leg.customer_booking_id}
+                  </span>
+                </p>
+                <Link
+                  href={`/admin/bookings/${leg.customer_booking_id}`}
+                  className="font-ar mt-3 inline-flex items-center gap-2 rounded-md border border-gold bg-gold/10 px-4 py-1.5 text-sm text-gold-light transition-colors hover:bg-gold/15"
+                >
+                  {emptyLegsAr.soldBookingLink}
+                </Link>
+              </>
+            ) : (
+              <p className="font-ar text-sm text-ink-muted">
+                {emptyLegsAr.soldBookingMissingHint}
+              </p>
+            )}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function Pair({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-navy-card/40 p-3">
+      <div className="font-ar text-xs uppercase tracking-tagged text-ink-muted">
+        {label}
+      </div>
+      <div className="font-ar mt-1 text-sm text-ink">{children}</div>
+    </div>
+  );
+}

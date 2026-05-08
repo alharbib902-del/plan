@@ -1116,9 +1116,9 @@ export type EmptyLegOutreachAlertStatusUpdate = Partial<
 export type PublishEmptyLegArgs = {
   p_operator_id: string | null;
   p_operator_stub_id: string | null;
-  p_operator_name: string;
-  p_operator_phone: string;
-  p_operator_email: string;
+  p_operator_name: string | null;
+  p_operator_phone: string | null;
+  p_operator_email: string | null;
   p_aircraft_id: string | null;
   p_aircraft_text: string | null;
   p_parent_booking_id: string | null;

@@ -33,6 +33,22 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               >
                 الرحلات
               </Link>
+              {process.env.ENABLE_EMPTY_LEGS_ADMIN_UI !== 'false' ? (
+                <>
+                  <Link
+                    href="/admin/empty-legs"
+                    className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                  >
+                    الرحلات الفارغة
+                  </Link>
+                  <Link
+                    href="/admin/empty-legs/outreach-queue"
+                    className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                  >
+                    قائمة المراسلات
+                  </Link>
+                </>
+              ) : null}
             </nav>
           </div>
 

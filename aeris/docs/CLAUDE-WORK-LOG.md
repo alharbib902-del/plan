@@ -5326,3 +5326,154 @@ DO-block boundary on the first attempt.
 + create + outreach queue + operator-bootstrap + 6 admin
 Server Actions). Builds directly on PR 2a's RPC layer.
 
+## Phase 7 — PR 2b (Admin surfaces)
+
+Phase 7 PR 2b ships the **admin-side UI** for the Empty Legs
+marketplace: list page, three-case detail page (available /
+reserved / sold), publish form, and the wa.me outreach queue
+that founder uses to dispatch matched-candidate links. Behind
+feature flag `ENABLE_EMPTY_LEGS_ADMIN_UI` (defaults `true`
+once PR 2a is on production; explicit `false` short-circuits
+every page module + Server Action with `flag_disabled` /
+`notFound`).
+
+PR 2b is the first Phase-7 PR that ships **runtime UI + Server
+Actions**. Behaviour: Server Actions are thin wrappers over
+PR 2a's SECURITY DEFINER RPCs — atomicity is guaranteed at the
+DB layer; Server Actions never combine multiple `rpc()` calls.
+Every action: admin-gate → flag-gate → Zod parse → RPC call →
+revalidatePath.
+
+### Spec deviations (founder-approved before implementation)
+
+Three deviations from §7.3 of `docs/CLAUDE-TASK.md`,
+resolved in conversation before code was written:
+
+1. **Seventh admin Server Action `adminConfirmReservation`.**
+   §7.3 names six admin Server Actions explicitly
+   (`adminPublishEmptyLeg`, `adminUpdatePrice`, `adminCancel`,
+   `adminMarkSoldManual`, `adminReleaseReservation`,
+   `markOutreachSent`). §7.3 Case 2 also describes a
+   "تأكيد الحجز" button calling a "manual confirm Server
+   Action" without naming it. The seventh action below
+   closes that gap — RPC `confirm_empty_leg_reservation`
+   requires `p_token_hash`, so the admin pastes the raw
+   reservation token the customer sent over WhatsApp, the
+   action sha256-hashes it, and calls the RPC.
+2. **`components/admin/admin-shell.tsx` edited instead of
+   `components/layout/admin-sidebar.tsx`.** §7.3 referenced a
+   path that does not exist in the codebase (no file under
+   `components/layout/`). The admin nav lives in
+   `components/admin/admin-shell.tsx` (header bar with
+   "الطلبات" + "الرحلات" links); two new gated entries
+   ("الرحلات الفارغة" + "قائمة المراسلات") were appended
+   there.
+3. **Dashboard summary card (§7.3 Files (Edit)
+   `app/(admin)/admin/page.tsx`) skipped.** That file does
+   not exist — admin auth lands on `/admin/leads` directly.
+   Adding a dashboard landing was treated as scope creep
+   into Phase 6.x admin-landing territory. Documented here
+   as a known deviation; if Codex requires the summary, the
+   work is a small follow-up PR.
+
+### Files added (24)
+
+| Path | Purpose |
+|---|---|
+| `lib/i18n/empty-legs-ar.ts` | Every Arabic-RTL string for the surface (i18n discipline mirrors Phase 6.2). |
+| `lib/validators/empty-legs.ts` | Zod schemas for the 7 Server Actions; cross-field guards mirror PR 2a's structured-error contract. |
+| `lib/admin/empty-legs/queries.ts` | Read-side queries (admin Supabase client, no RLS surface): list legs by status, count by status, get by id, list pending outreach with joined lead + leg details, count pending older-than-24h, read alert-status singleton. |
+| `app/actions/empty-legs.ts` | 7 admin Server Actions (per spec deviation #1 above). Every action: `requireAdminSession()` → flag check → Zod → RPC → revalidatePath. |
+| `components/admin/empty-legs/status-badge.tsx` | `EmptyLegStatusBadge` + `emptyLegStatusLabel` helper. |
+| `components/admin/empty-legs/formatters.ts` | `formatSarAmount`, `formatPercent`, `formatDateTimeAr`, `formatDateAr`, `routeLabel`. |
+| `components/admin/empty-legs/error-translator.ts` | RPC error code → Arabic-RTL message map. |
+| `components/admin/empty-legs/list-filters.tsx` | Filter chips: open (default — available + reserved), all, then per-status. |
+| `components/admin/empty-legs/leg-row.tsx` | `EmptyLegsTable` — desktop table + mobile card stack pattern from `trip-table.tsx`. |
+| `components/admin/empty-legs/leg-detail.tsx` | Three-case admin detail (available / reserved / sold) per spec §7.3. |
+| `components/admin/empty-legs/publish-form.tsx` | Client form for `adminPublishEmptyLeg`; 19+ fields with route-presence cross-field guard + `suppress_notifications` checkbox (Codex iteration-7 P1 #3 marker). |
+| `components/admin/empty-legs/cancel-button.tsx` | `CancelLegButton` — Case 1 cancel form. |
+| `components/admin/empty-legs/price-edit-form.tsx` | `PriceEditForm` — Case 1 price-edit form, displays current price + floor + original. |
+| `components/admin/empty-legs/mark-sold-form.tsx` | `MarkSoldManualForm` — Case 1 sold-via-WhatsApp fallback (calls the single-RPC `admin_mark_empty_leg_sold` per Codex iteration-1 P1 #4). |
+| `components/admin/empty-legs/reservation-actions.tsx` | Case 2 surface — "اتصل بالعميل" wa.me + "تأكيد الحجز" + "إلغاء التحفظ" buttons. The confirm button reveals an inline token-paste field that sha256-hashes the token in `adminConfirmReservation`. |
+| `components/admin/empty-legs/outreach-row.tsx` | One-row card for the queue: shows wa.me URL + "تم الإرسال" button (idempotent — second click is no-op via `.is('outreach_sent_at', null)` guard). |
+| `app/(admin)/admin/(protected)/empty-legs/page.tsx` | List page with filter chips + new-leg CTA. |
+| `app/(admin)/admin/(protected)/empty-legs/[id]/page.tsx` | Detail page (delegates to `EmptyLegDetail`). |
+| `app/(admin)/admin/(protected)/empty-legs/new/page.tsx` | Publish form page. |
+| `app/(admin)/admin/(protected)/empty-legs/outreach-queue/page.tsx` | Outreach queue page with the alert-status banner (Codex iteration-5 P2 #2 fix: red Arabic-RTL banner when `empty_leg_outreach_alert_status.status <> 'healthy'`). |
+
+### Files edited (3)
+
+| Path | Change |
+|---|---|
+| `components/admin/admin-shell.tsx` | Added two flag-gated nav entries: "الرحلات الفارغة" + "قائمة المراسلات" (spec deviation #2 — file path differs from §7.3). |
+| `.env.example` | Added Phase 7 env block: 3 feature flags + notification kill switch + AI-scoring kill switch + 3 HMAC token secrets + founder batch email recipient + `CRON_SECRET`. |
+| `types/database.ts` | Relaxed `PublishEmptyLegArgs.p_operator_name` / `_phone` / `_email` to `string \| null` (matched the SQL function which accepts NULL TEXT for these). |
+
+### The 7 admin Server Actions
+
+| # | Action | RPC called | Revalidates |
+|:-:|---|---|---|
+| 1 | `adminPublishEmptyLeg` | `publish_empty_leg` | list, outreach-queue |
+| 2 | `adminUpdatePrice` | `update_empty_leg_price` | list, outreach-queue, detail |
+| 3 | `adminCancel` | `cancel_empty_leg` | list, outreach-queue, detail |
+| 4 | `adminMarkSoldManual` | `admin_mark_empty_leg_sold` | list, outreach-queue, detail |
+| 5 | `adminConfirmReservation` (deviation #1) | `confirm_empty_leg_reservation` (with sha256 of pasted token) | list, outreach-queue, detail |
+| 6 | `adminReleaseReservation` | `admin_release_empty_leg_reservation` | list, outreach-queue, detail |
+| 7 | `markOutreachSent` | direct UPDATE on `empty_leg_notifications` (idempotent via `.is(outreach_sent_at, null)` filter) | outreach-queue |
+
+### Quality gates run locally
+
+All passed:
+
+- `npm run type-check` — clean. (Round 1 surfaced 3 errors
+  on `PublishEmptyLegArgs.p_operator_name/_phone/_email`
+  being non-nullable in `types/database.ts`; the SQL
+  function accepts NULL for these. Fixed by relaxing the
+  three to `string | null`.)
+- `npm run lint:strict` — clean.
+- `npm run build` — green; route table shows the 4 new
+  admin pages compiled.
+- `npm run test:addons` — Phase 6.2 regression pass.
+- `npm run test:checkout-whatsapp` — 8 passed (Phase 6.2
+  regression).
+- `npm run test:checkout-site-url` — 16 passed (regression).
+- `npm run test:empty-legs-curve` — 16 passed (Phase 7 PR 1
+  parity test, unchanged).
+
+### Founder probes (run by founder against production after PR 2b merges)
+
+PR 2b ships 1 founder probe per spec §Founder Probes:
+
+8. **Admin publish + RLS** — publish a test leg via the
+   admin UI in production; query the leg as anon via REST
+   API (`/rest/v1/empty_legs?id=eq.<uuid>` with anon key) —
+   should return the row only when `status = 'available'`.
+   Reserve it manually via admin UI; re-query as anon —
+   should return empty (RLS hides reserved rows per
+   PR 1 §RLS). The probe is the first end-to-end trip
+   through publish + reserve + admin Case-2 surface in
+   production; expects no Sentry errors and the surface
+   strings render as Arabic-RTL with no missing translations.
+
+### Branch + PR
+
+- Branch: `phase-7/pr-2b-admin` (worktree)
+- PR URL: pending (filled after `gh pr create`)
+- CI run URL: pending
+
+### Known issues
+
+- **Dashboard summary card (spec deviation #3)** — not
+  shipped; documented above. Follow-up PR if Codex requires.
+- **`types/database.ts` regen** — same posture as PR 1 +
+  PR 2a closures: file remains hand-maintained. PR 2b's
+  type relaxation on `PublishEmptyLegArgs` is a hand edit
+  that mirrors the SQL function signature.
+
+### Next PR
+
+**PR 2c** — operator self-serve portal (token-gated session
+model + 3 operator Server Actions + bootstrap surface for
+`phase7_operator_stubs`). Behind `ENABLE_OPERATOR_PORTAL`
+flag, default `false`.
+
