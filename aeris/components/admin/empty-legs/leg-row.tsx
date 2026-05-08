@@ -11,7 +11,20 @@ import {
   routeLabel,
 } from './formatters';
 
-export function EmptyLegsTable({ legs }: { legs: EmptyLegRow[] }) {
+export function EmptyLegsTable({
+  legs,
+  getLegHref,
+}: {
+  legs: EmptyLegRow[];
+  /**
+   * Caller may override the per-row link target. Defaults
+   * to `/admin/empty-legs/<id>` for the admin list. The
+   * operator portal passes a token-scoped builder.
+   */
+  getLegHref?: (leg: EmptyLegRow) => string;
+}) {
+  const hrefFor =
+    getLegHref ?? ((leg: EmptyLegRow) => `/admin/empty-legs/${leg.id}`);
   if (legs.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border bg-navy-card/30 p-12 text-center">
@@ -79,7 +92,7 @@ export function EmptyLegsTable({ legs }: { legs: EmptyLegRow[] }) {
                 </td>
                 <td className="px-4 py-4 text-right">
                   <Link
-                    href={`/admin/empty-legs/${leg.id}`}
+                    href={hrefFor(leg)}
                     className="font-ar inline-flex items-center gap-1 text-sm text-gold-light transition-colors hover:text-gold"
                   >
                     {emptyLegsAr.rowOpen}
@@ -96,7 +109,7 @@ export function EmptyLegsTable({ legs }: { legs: EmptyLegRow[] }) {
         {legs.map((leg) => (
           <Link
             key={leg.id}
-            href={`/admin/empty-legs/${leg.id}`}
+            href={hrefFor(leg)}
             className="block rounded-xl border border-border bg-navy-card/40 p-4 transition-colors hover:border-gold/40"
           >
             <div className="flex items-start justify-between gap-3">

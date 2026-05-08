@@ -7,6 +7,7 @@ import type {
   EmptyLegStatus,
   EmptyLegNotificationRow,
   EmptyLegOutreachAlertStatusRow,
+  Phase7OperatorStubRow,
 } from '@/lib/empty-legs/types';
 
 const TABLE = 'empty_legs';
@@ -213,4 +214,90 @@ export async function getOutreachAlertStatus(): Promise<EmptyLegOutreachAlertSta
     throw new Error(`getOutreachAlertStatus failed: ${error.message}`);
   }
   return (data as EmptyLegOutreachAlertStatusRow | null) ?? null;
+}
+
+// ============================================================
+// PR 2c — phase7_operator_stubs
+// ============================================================
+
+const STUBS_TABLE = 'phase7_operator_stubs';
+
+export async function listActiveOperatorStubs(): Promise<
+  Phase7OperatorStubRow[]
+> {
+  noStore();
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from(STUBS_TABLE)
+    .select('*')
+    .eq('status', 'active')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('[empty-legs] listActiveOperatorStubs failed', error);
+    throw new Error(`listActiveOperatorStubs failed: ${error.message}`);
+  }
+  return (data ?? []) as Phase7OperatorStubRow[];
+}
+
+export async function getOperatorStubById(
+  id: string
+): Promise<Phase7OperatorStubRow | null> {
+  noStore();
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from(STUBS_TABLE)
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[empty-legs] getOperatorStubById failed', error);
+    throw new Error(`getOperatorStubById failed: ${error.message}`);
+  }
+  return (data as Phase7OperatorStubRow | null) ?? null;
+}
+
+// ============================================================
+// PR 2c — empty_legs scoped to a single operator_stub_id
+// ============================================================
+
+export async function listEmptyLegsForStub(
+  stubId: string,
+  limit = 200
+): Promise<EmptyLegRow[]> {
+  noStore();
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from(TABLE)
+    .select('*')
+    .eq('operator_stub_id', stubId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('[empty-legs] listEmptyLegsForStub failed', error);
+    throw new Error(`listEmptyLegsForStub failed: ${error.message}`);
+  }
+  return (data ?? []) as EmptyLegRow[];
+}
+
+export async function getEmptyLegByIdAndStub(
+  legId: string,
+  stubId: string
+): Promise<EmptyLegRow | null> {
+  noStore();
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from(TABLE)
+    .select('*')
+    .eq('id', legId)
+    .eq('operator_stub_id', stubId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[empty-legs] getEmptyLegByIdAndStub failed', error);
+    throw new Error(`getEmptyLegByIdAndStub failed: ${error.message}`);
+  }
+  return (data as EmptyLegRow | null) ?? null;
 }
