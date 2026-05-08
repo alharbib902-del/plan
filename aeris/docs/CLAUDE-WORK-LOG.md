@@ -5094,3 +5094,103 @@ None on the implementation side. Two operational followups for the founder:
 
 **PR 2a** — RPCs + auction-curve TS port + parity test (per spec §7.2). 12 SECURITY DEFINER public functions + 1 internal helper + 1 stub. Awaits Codex review of PR 1 first.
 
+---
+
+## Phase 7 — PR 2a (SECURITY DEFINER RPC layer)
+
+Phase 7 PR 2a ships the mutation layer for Empty Legs:
+**11 public SECURITY DEFINER functions + 1 internal helper +
+1 no-op stub** (`publish_empty_leg_event`, body shipped in
+PR 2e). All publics: SECURITY DEFINER + service-role-only
+EXECUTE + structured-error contract on every validation
+failure (no raises). The helper is REVOKEd from every role
+including service_role — callable only from inside the
+public functions, which run as the function-owner role.
+
+PR 2a ships **migration + types + parity-test extension
+only** — zero runtime UI/RPC code. Server Actions that wrap
+these RPCs land in PR 2b–2e per the spec's locked PR
+sequence. PR 1 must merge to production before PR 2a's
+migration applies.
+
+### Files added
+
+| Path | Purpose |
+|---|---|
+| `supabase/migrations/20260510000011_phase_7_empty_legs_rpcs.sql` | 12-function migration. All `CREATE OR REPLACE FUNCTION` (idempotent re-runs); explicit REVOKE/GRANT statements on every public; helper REVOKEd from every role. Mirrors Phase 6.2 PR 2a's `_recompute_booking_totals` pattern exactly. |
+
+### Files edited
+
+| Path | Change |
+|---|---|
+| `types/database.ts` | Added 11 Args + 11 Result types (some with discriminated `error` unions enumerating every structured-error code from the SQL). Added 11 entries to `Database['public']['Functions']` so `supabase.rpc('publish_empty_leg', ...)` etc. type-check. The internal helper `_recompute_empty_leg_price` is intentionally NOT exposed here (REVOKEd from every role). |
+| `lib/empty-legs/types.ts` | Re-exports the 11 Args/Result type pairs from `@/types/database` so PR 2b–2e Server Actions get a single Phase-7-scoped import surface. |
+| `docs/CLAUDE-WORK-LOG.md` | This entry. |
+
+### The 11 public functions + 1 helper
+
+| # | Name | Caller (in subsequent PRs) |
+|:-:|---|---|
+| (helper) | `_recompute_empty_leg_price(UUID)` | internal only — REVOKEd from every role |
+| 1 | `publish_empty_leg(...)` | admin Server Action (PR 2b) + operator Server Action (PR 2c) |
+| 2 | `update_empty_leg_price(UUID, DECIMAL)` | admin + operator Server Actions |
+| 3 | `reserve_empty_leg(UUID, VARCHAR, TIMESTAMPTZ, VARCHAR, VARCHAR)` | public marketplace `reserveEmptyLeg` (PR 2d) |
+| 4 | `confirm_empty_leg_reservation(UUID, VARCHAR)` | admin "confirm reservation" Server Action (PR 2b) |
+| 5 | `release_empty_leg_reservation(UUID, VARCHAR)` | public `cancelMyReservation` Server Action (PR 2d) |
+| 6 | `admin_release_empty_leg_reservation(UUID)` | admin "إلغاء التحفظ" button (PR 2b; Codex iteration-3 P1 #2 fix) |
+| 7 | `cancel_empty_leg(UUID, TEXT)` | admin + operator cancel Server Actions |
+| 8 | `expire_empty_leg_reservation(UUID)` | cron route `/api/cron/empty-legs/expire-reservations` (PR 2e) |
+| 9 | `tick_empty_leg_dutch_auction(UUID)` | cron route `/api/cron/empty-legs/dutch-auction-tick` (PR 2e) |
+| 10 | `admin_mark_empty_leg_sold(UUID, TEXT, TEXT)` | admin `adminMarkSoldManual` Server Action (PR 2b; Codex iteration-1 P1 #4 fix) |
+| 11 | `publish_empty_leg_event(UUID, TEXT)` | called by #1, #2, #9 — **no-op stub in PR 2a; PR 2e replaces body** |
+
+### Quality gates run locally
+
+All passed:
+
+- `npm run type-check` — clean.
+- `npm run lint:strict` — clean ("No ESLint warnings or errors").
+- `npm run build` — green; route table unchanged from PR 1 (PR 2a ships zero runtime UI/RPC code).
+- `npm run test:addons` — 20 catalog rows match (Phase 6.2 regression).
+- `npm run test:checkout-whatsapp` — 8 passed, 0 failed.
+- `npm run test:checkout-site-url` — 16 passed, 0 failed.
+- `npm run test:empty-legs-curve` — 16 passed, 0 failed.
+
+### Founder probes (run by founder against production after PR 2a merges)
+
+PR 2a ships 3 founder probes per spec §Founder Probes:
+
+5. **RPC grants** — `\df+ public.*empty_leg*` shows exactly 11 PR-2a public functions plus the 1 REVOKEd helper, named:
+   1. `_recompute_empty_leg_price` (helper — REVOKEd from every role; zero grantees)
+   2. `publish_empty_leg`
+   3. `update_empty_leg_price`
+   4. `reserve_empty_leg`
+   5. `confirm_empty_leg_reservation`
+   6. `release_empty_leg_reservation`
+   7. `admin_release_empty_leg_reservation`
+   8. `cancel_empty_leg`
+   9. `expire_empty_leg_reservation`
+   10. `tick_empty_leg_dutch_auction`
+   11. `admin_mark_empty_leg_sold`
+   12. `publish_empty_leg_event` (PR 2a stub; PR 2e replaces body)
+   For each of the 11 publics, EXECUTE granted to `service_role` ONLY (no PUBLIC, no anon, no authenticated). For the helper, zero grantees.
+6. **Parity test** — `npm run test:empty-legs-curve` passes locally against production-shape data. (Same script that PR 1 added; PR 2a does not modify it because the formula in the plpgsql `_recompute_empty_leg_price` matches the TS port exactly — both use the same fixed sample-point math.)
+7. **Release + admin-release + manual-sold smoke** — service-role psql session: call `release_empty_leg_reservation` → `leg_not_reserved`; reserve a leg with a known token hash, call `release_empty_leg_reservation` with wrong hash → `reservation_token_mismatch`, with right hash → `{ ok: true }` + leg flips back to `'available'` with cleared reservation columns. Then reserve again, call `admin_release_empty_leg_reservation` with NO token → `{ ok: true }` (verifies admin path bypasses customer's token check). Then call `admin_mark_empty_leg_sold` against a fresh `'available'` leg → `bookings` row exists, leg `status = 'sold'`, `customer_booking_id` populated.
+
+### Branch + PR
+
+- Branch: `phase-7/pr-2a-rpcs` (worktree)
+- PR URL: pending (filled after `gh pr create`)
+- CI run URL: pending
+
+### Known issues
+
+None on the implementation side. Operational follow-ups (same as PR 1):
+
+- **Migration application** — PR 2a ships only the migration file; applying it on production Supabase is a manual step. Founder Probe 5 verifies grants post-deploy.
+- **`types/database.ts` regen** — the file is hand-maintained. After the migration applies on production, re-run `supabase gen types typescript ... > types/database.ts` and merge any cosmetic diff (per the post-PR-1 ritual learnings, the regen format mismatches the codebase's named-export pattern; if Codex flags this in round 1 we'll address with a thin alias layer rather than a 39-file refactor).
+
+### Next PR
+
+**PR 2b** — admin surfaces (`/admin/empty-legs` list + detail + create + outreach queue + operator-bootstrap + 6 admin Server Actions). Awaits Codex review of PR 2a first.
+
