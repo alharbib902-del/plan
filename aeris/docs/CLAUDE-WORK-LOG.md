@@ -4658,3 +4658,331 @@ without payment using the same `status` ENUM
 (operational) + `payment_status` ENUM (financial)
 split this phase established.
 
+---
+
+## Phase 6.2 PR 2c — rich WhatsApp confirm body + site-url helper
+
+**PR:** #24 — squash-merged at `6527504`.
+**PR (hotfix):** #25 — squash-merged at `f5ce88f`.
+**Branches (deleted post-merge):**
+`phase-6.2/pr-2c-whatsapp-message-ux` (PR #24);
+`phase-6.2/pr-2c-hotfix-riyadh-suffix-dup` (PR #25).
+
+### What changed
+
+UX polish on top of PR 2b. The customer checkout-prep
+page's "أكّد الحجز عبر واتساب" deep link previously
+prefilled a one-line WhatsApp body
+(`أكّد الحجز <booking_number>`). Founder validated PR 2b
+end-to-end on production today and asked for a richer,
+more professional message. PR #24 replaces the one-line
+body with a structured Arabic template; PR #25 is a
+single-line hotfix for a double-suffix rendering bug
+caught during the post-merge production smoke.
+
+### Files touched (PR #24)
+
+```
+aeris/lib/checkout/whatsapp-message.ts                              (new)
+aeris/lib/checkout/site-url.ts                                      (new)
+aeris/lib/checkout/__tests__/whatsapp-message.test.ts               (new)
+aeris/lib/checkout/__tests__/site-url.test.ts                       (new)
+aeris/app/(checkout)/booking/[token]/checkout-prep/page.tsx         (modified — wired helper)
+aeris/package.json                                                  (modified — 2 new test scripts)
+.github/workflows/ci.yml                                            (modified — 2 new CI steps)
+```
+
+### Files touched (PR #25 hotfix)
+
+```
+aeris/lib/checkout/whatsapp-message.ts                              (modified — drop suffix append)
+aeris/lib/checkout/__tests__/whatsapp-message.test.ts               (modified — Case 8 regression)
+```
+
+### Helper: `buildWhatsappConfirmMessage` (`whatsapp-message.ts`)
+
+Pure function. Given the booking-shape data (post-snapshot
+extraction), the active add-ons (caller filters cancelled
+out), and the personal review URL, returns the multi-line
+Arabic message body. Arabic-only by design (matches the
+`lang='ar' as const` lock on the customer checkout-prep
+page). Caller passes pre-formatted route + datetime
+strings; the helper handles the templating.
+
+Shape decisions:
+- Greeting: "السلام عليكم ورحمة الله،"
+- Self-introduction: "أنا {name}، أؤكّد حجزي مع Aeris."
+  - `customer_name_snapshot` NULL or whitespace-only →
+    drop the name clause; keep "أؤكّد حجزي مع Aeris." alone.
+- Trip details: bullet list of booking_number, route,
+  departure (+ optional return), passengers count
+  (omitted when NULL).
+- Add-ons section: bullet list per active row, omitted
+  entirely when zero active.
+- Totals: compact single-line "الإجمالي: X ريال" when
+  no active addons; full breakdown (base + addons +
+  grand total) otherwise.
+- Review URL: explicit "رابط مراجعة الحجز:" line with
+  the personal token URL on its own line so WhatsApp
+  auto-linkifies cleanly.
+- Closing: "أرجو إفادتي بخطوات إكمال الدفع." +
+  "وشكراً لكم."
+
+Tradeoff documented in PR description: embedding the
+personal review URL makes the message forwardable.
+Mitigations: the page already shows
+`checkout_prep_link_personal_notice`; admin re-issue
+rotates the DB hash; 14-day TTL caps the leak window.
+Founder accepted the tradeoff explicitly before PR #24
+opened.
+
+### Helper: `resolveSiteUrl` (`site-url.ts`)
+
+Resolves the canonical site URL embedded in the WhatsApp
+review link. Codex round-1 + round-2 P2 fixes shaped the
+final 4-layer resolver:
+
+1. **Preview override** — `VERCEL_ENV === 'preview'` AND
+   `VERCEL_URL` set → use `VERCEL_URL`. Bypasses
+   `NEXT_PUBLIC_SITE_URL` because the override is
+   typically the production canonical domain
+   (project-level, not per-deploy). Preview tokens are
+   signed with the Preview-environment
+   `CUSTOMER_CHECKOUT_SECRET` and hashed into the
+   Preview DB; routing the customer to a Production
+   hostname breaks all three layers of token
+   validation.
+2. **Explicit override** — `NEXT_PUBLIC_SITE_URL`. Used
+   on Production for the canonical brand domain.
+3. **Vercel-injected hostname** — `VERCEL_URL`.
+   Reachable when (env != preview) AND (no explicit
+   override).
+4. **Static last-resort fallback**
+   (`https://aeris-flax.vercel.app`). Only reachable on
+   `npm run dev` or other non-Vercel hosts.
+
+Pure `resolveSiteUrlFromEnv(env)` for testability +
+thin `resolveSiteUrl()` wrapper that reads
+`process.env`.
+
+### PR #25 hotfix
+
+Production smoke (sha `6527504`) revealed the departure
+line rendering with the `(بتوقيت الرياض)` suffix
+duplicated:
+
+```
+• المغادرة: 2026/05/10، 03:00 (بتوقيت الرياض) (بتوقيت الرياض)
+```
+
+Root cause: the WhatsApp builder appended
+`" (بتوقيت الرياض)"` to `departureFormatted` and
+`returnFormatted`, but `formatRiyadhDateTime` already
+returns its output with that suffix included. PR #25
+drops the in-builder concatenation; passes the
+caller-provided string through verbatim. The JSDoc
+contract is flipped ("suffix MUST be included by the
+caller"). New Case 8 (regression guard) asserts the
+suffix appears EXACTLY ONCE on each line.
+
+### CI
+
+Two new dedicated steps in `.github/workflows/ci.yml`,
+both static (no DB, no network):
+
+```
+- name: WhatsApp confirm-message builder
+  run: npm run test:checkout-whatsapp
+- name: Site URL resolver
+  run: npm run test:checkout-site-url
+```
+
+Coverage:
+- `test:checkout-whatsapp` — 8 cases (full / minimal /
+  mixed / name-trim / whitespace-only-name / multi-addon-
+  ordering / null-pax / regression-guard).
+- `test:checkout-site-url` — 16 cases covering the
+  Preview override / Production paths / Local-dev
+  fallback / whitespace + trailing-slash normalization
+  matrix.
+
+### Quality gates run locally
+
+- `npm run type-check` — clean.
+- `npm run lint:strict` — clean.
+- `npm run test:addons` — 20 catalog rows match.
+- `npm run test:checkout-whatsapp` — 8 passed, 0 failed
+  (after PR #25 hotfix).
+- `npm run test:checkout-site-url` — 16 passed, 0
+  failed.
+- `npm run build` — green; route count unchanged from
+  PR 2b (13 routes).
+
+### Codex iterations
+
+- **PR #24 round 1 (1×P2):** `resolveSiteUrl()`
+  hard-coded fallback to `aeris-flax.vercel.app` when
+  `NEXT_PUBLIC_SITE_URL` is unset would route Preview
+  tokens (signed with Preview secret) to Production.
+  Fix: insert `VERCEL_URL` as a secondary fallback.
+- **PR #24 round 2 (1×P2):** the round-1 fix solved
+  the unset case but not the case where
+  `NEXT_PUBLIC_SITE_URL` is set on Preview to the
+  production canonical domain (a common Vercel
+  "Apply to all environments" mistake). Fix: add a
+  Layer-0 rule — when `VERCEL_ENV === 'preview'`,
+  `VERCEL_URL` trumps the explicit override
+  unconditionally. Refactor: extracted resolution into
+  a pure helper for testability.
+- **PR #24 round 3:** accepted 100/100.
+- **PR #25:** hotfix; not Codex-reviewed (single-line
+  fix + regression test; founder direct merge command
+  after green CI).
+
+### Closing
+
+PR #24 + PR #25 ship the rich WhatsApp confirm body
+end-to-end. Production smoke after PR #25's deploy
+verified the single-suffix rendering on the
+post-customer-remove (compact totals) path. The
+full-breakdown path (one or more active addons) was
+NOT re-exercised visually after PR #25; risk
+assessment in the closure section below.
+
+---
+
+## Phase 6.2 — closure
+
+Phase 6.2 is **shipped end-to-end on production** as of
+sha `f5ce88f` (`2026-05-08T05:51:14Z`).
+
+### PR sequence
+
+| PR | Scope | Squash sha | Date |
+|---|---|---|---|
+| #19 | PR 1 — schema reshape + ENUM extension + addon_catalog seed (20 rows) + CI parity gate | `aa16586` | 2026-05-07 |
+| #21 | PR 2a — 7 SECURITY DEFINER RPCs + recompute helper | `9bd9ffc` | 2026-05-07 |
+| #22 | PR 2b — UI wiring + 7 thin Server Actions + 3-case admin gate + customer page with three-layer token validation | `23abfcd` | 2026-05-07 |
+| #23 | PR 2b hotfix — `e.currentTarget` null after async `startTransition` in `addons-attach-form` | `b7dcbc1` | 2026-05-07 |
+| #24 | PR 2c — rich WhatsApp confirm body + extracted testable site-url helper | `6527504` | 2026-05-07 |
+| #25 | PR 2c hotfix — duplicate `(بتوقيت الرياض)` suffix | `f5ce88f` | 2026-05-08 |
+
+### Production smoke results
+
+The 10-step smoke (`docs/checklists/operator-flow-smoke-test.md`)
+was run against trip `9ff1bc06-f2bb-4fdb-9cb8-1394b4279eac`
+(`AER-260505F3B3`) and its booking
+`AER-B-260507277A` on `aeris-flax.vercel.app`:
+
+**Steps 1–9: visual pass.** Step 10 not visually
+exercised because the customer cancelled the active
+add-ons in step 8, leaving zero active rows on the
+booking and rendering the operator-side addons
+section's "section not rendered" branch instead of the
+presence branch the smoke is designed to validate.
+**Residual risk accepted by founder** (Codex
+consultation 2026-05-08, Recommendation: A).
+
+### Coverage of paths NOT visually exercised after PR #25
+
+#### A. Operator portal addons presence path
+
+- Code: `components/operator/trip-summary.tsx::AddonsRows`.
+- Type-checked + lint:strict-clean.
+- Risk: low-to-medium. The same `addons` shape +
+  catalog-label resolution are visually validated on
+  the customer checkout-prep page (steps 7–8 of the
+  smoke); the operator-side `<li>` rendering is
+  straightforward read-only and shares the catalog
+  label-resolution path. The post-accept operator URL
+  may be ExpiredLink-gated by Phase 4/5's existing
+  one-shot acceptance gate, in which case re-exercising
+  the path would test the gate, not the addons
+  rendering.
+- **Will be naturally exercised in the next trip whose
+  add-ons land on a still-valid operator URL.**
+
+#### B. WhatsApp full-totals (multi-addon breakdown) path
+
+- Visually exercised: compact totals path (zero active
+  addons → single-line "الإجمالي: X ريال").
+- NOT visually exercised after PR #25: full breakdown
+  path (one or more active addons → 3-line breakdown
+  of base + addons + grand total).
+- Coverage in
+  `lib/checkout/__tests__/whatsapp-message.test.ts`:
+  Case 1 (full case, single addon, breakdown asserted
+  line-by-line); Case 6 (multi-addon ordering +
+  breakdown, all sums asserted); Case 8 (regression
+  guard against duplicate `(بتوقيت الرياض)`).
+- Risk: low. The remaining unverified surface is a
+  WhatsApp rendering quirk specific to multi-line "•"
+  bullet messages with numeric SAR amounts that the
+  regex assertions don't capture — not business logic.
+- **Will be naturally exercised when a trip with active
+  add-ons reaches WhatsApp confirm.**
+
+### Operational hygiene follow-up
+
+- **`ENABLE_CHECKOUT_TOKEN_DEBUG`** on Vercel Preview:
+  was set to `true` for PR 2b's debug smoke route
+  (`/admin/_debug/customer-token-smoke`). Founder to
+  flip back to `false` post-closure. Not a blocker —
+  the route is admin-gated behind standard admin auth
+  and Preview-only — but recommended for cleanliness
+  per the PR 2b plan.
+
+### What Phase 6.2 ships
+
+- 20-row `addon_catalog` seeded table as the single
+  source of truth (TS catalog mirror + CI parity gate).
+- Two new ENUMs (`booking_addons.status`, `booking_addons.addon_type`)
+  + the schema reshape that nullable-relaxed
+  `bookings.client_id` / `operator_id` / `aircraft_id`
+  for guest-mode + snapshot-driven booking shape.
+- 7 SECURITY DEFINER RPCs covering every booking-state
+  mutation (attach / customer_cancel / admin_cancel /
+  update_quantity / confirm / backfill / accept_offer
+  body extension) + the `_recompute_booking_totals`
+  helper invoked from each.
+- Admin add-ons surface (3-case gate: `pre_accept` /
+  `booked_no_record` / `booked_with_record` / `closed`)
+  with attach / cancel / update / backfill / issue-link
+  surfaces wired through 4 thin Server Actions.
+- Customer checkout-prep page with three-layer token
+  validation (HMAC signature + DB hash + DB expiry),
+  remove + confirm Server Actions taking only the
+  token, structured WhatsApp confirm body
+  (Codex-reviewed across 3 rounds on PR #24).
+- Operator portal extension: best-effort fetch of
+  active add-ons + read-only render in the trip
+  summary card (privacy invariant preserved — admin
+  notes shown for ground-prep coordination; customer
+  phone never shown).
+- 3 dedicated CI test suites (`test:addons` /
+  `test:checkout-whatsapp` / `test:checkout-site-url`)
+  totaling 44 cases, all blocking on every PR.
+
+### What Phase 6.2 does NOT ship
+
+- **No payment integration** (HyperPay / Moyasar /
+  Apple Pay / mada / STC Pay) — Phase 11.
+- **No ZATCA** invoice generation / QR / UUID — Phase
+  11.
+- **No webhook handlers, no refund flow** — Phase 11.
+- **No loyalty point award** — Phase 10.
+- **No customer accounts** — Phase 10 territory; guest
+  mode preserved.
+- **No Realtime updates** — admin pages refresh
+  manually (consistent with Phase 6.0/6.1).
+- **No E2E (Playwright)** — advisor's Week-8 marker;
+  high-priority around Phase 8 / 9.
+
+### Next phase
+
+**Phase 7 (Empty Legs)** is the next locked roadmap
+item. Awaits separate founder command. Same
+`status` (operational) + `payment_status` (financial)
+ENUM split established here will carry forward; payment
+integration remains deferred to Phase 11.
+
