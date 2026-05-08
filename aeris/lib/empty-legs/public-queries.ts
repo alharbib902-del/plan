@@ -77,14 +77,19 @@ export async function listPublicAvailableLegs(
  * the RLS policy `empty_legs_public_available` (status =
  * 'available') AND additionally surfaces 'reserved' rows
  * to the post-reservation page (the customer's own row,
- * looked up via leg_number + still within the 10-min hold).
+ * looked up via leg_number + still within the 10-min hold)
+ * AND surfaces terminal states ('sold', 'expired') so a
+ * stale shareable link still renders a meaningful page
+ * instead of a 404 (Codex round-1 P2 #1 fix on PR 2d).
  *
  * The caller decides which states are acceptable; the
  * default keeps anon-equivalent behavior.
  */
 export async function getPublicLegByNumber(
   legNumber: string,
-  opts: { allowedStatuses?: ('available' | 'reserved' | 'sold')[] } = {}
+  opts: {
+    allowedStatuses?: ('available' | 'reserved' | 'sold' | 'expired')[];
+  } = {}
 ): Promise<EmptyLegRow | null> {
   noStore();
   const allowed = opts.allowedStatuses ?? ['available'];

@@ -10,6 +10,10 @@ import {
   routeLabel,
 } from '@/components/admin/empty-legs/formatters';
 import { getPublicLegByNumber } from '@/lib/empty-legs/public-queries';
+import {
+  hashReservationToken,
+  verifyReservationToken,
+} from '@/lib/empty-legs/reservation-token';
 import { whatsappLink } from '@/lib/utils/format';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
@@ -25,6 +29,16 @@ interface PageProps {
   searchParams?: { token?: string };
 }
 
+function NotFoundCard() {
+  return (
+    <section className="mx-auto max-w-2xl px-4 pb-16 pt-28 sm:px-6 lg:px-8">
+      <p className="font-ar rounded-md border border-border bg-navy-card/30 px-4 py-6 text-center text-sm text-ink-muted">
+        {emptyLegsAr.publicLegNotFound}
+      </p>
+    </section>
+  );
+}
+
 export default async function PublicEmptyLegReservedPage({
   params,
   searchParams,
@@ -33,23 +47,64 @@ export default async function PublicEmptyLegReservedPage({
     notFound();
   }
 
-  // The reserved page accepts both 'reserved' (current
-  // hold) and 'available' (already-cancelled) so the
-  // post-cancel render still has the leg context.
+  // Codex round-1 P1 #1 fix. The reserved page reads via
+  // the admin Supabase client (no RLS), so a guessed
+  // `EL-...` would otherwise expose any held leg's route,
+  // price, expiry countdown, and WhatsApp CTA to anon
+  // visitors. We require the caller to supply the
+  // reservation token in the `?token=` query param and
+  // validate it through three layers BEFORE rendering
+  // any reserved data:
+  //
+  //   Layer 1 — HMAC signature + payload `expires_at`
+  //             (verifyReservationToken).
+  //   Layer 2 — Token's payload.leg_id matches the row's
+  //             id AND status='reserved' AND
+  //             sha256(rawToken) === row.reservation_token_hash
+  //             (this also covers the post-cancel state
+  //             where status flipped back to 'available'
+  //             and the hash was cleared to NULL).
+  //   Layer 3 — Row-level reservation_expires_at > NOW()
+  //             — defense in depth alongside Layer 1.
+  //
+  // Any failure renders the opaque `publicLegNotFound`
+  // copy — the visitor cannot tell which layer rejected.
+  const token = searchParams?.token ?? '';
+  if (!token) {
+    return <NotFoundCard />;
+  }
+
+  const verified = verifyReservationToken(token);
+  if (!verified.valid) {
+    return <NotFoundCard />;
+  }
+
   const leg = await getPublicLegByNumber(params.leg_number, {
     allowedStatuses: ['available', 'reserved'],
   });
   if (!leg) {
-    return (
-      <section className="mx-auto max-w-2xl px-4 pb-16 pt-28 sm:px-6 lg:px-8">
-        <p className="font-ar rounded-md border border-border bg-navy-card/30 px-4 py-6 text-center text-sm text-ink-muted">
-          {emptyLegsAr.publicLegNotFound}
-        </p>
-      </section>
-    );
+    return <NotFoundCard />;
   }
 
-  const token = searchParams?.token ?? '';
+  if (verified.payload.leg_id !== leg.id) {
+    return <NotFoundCard />;
+  }
+
+  if (
+    leg.status !== 'reserved' ||
+    leg.reservation_token_hash === null ||
+    hashReservationToken(token) !== leg.reservation_token_hash
+  ) {
+    return <NotFoundCard />;
+  }
+
+  if (
+    leg.reservation_expires_at === null ||
+    Date.parse(leg.reservation_expires_at) <= Date.now()
+  ) {
+    return <NotFoundCard />;
+  }
+
   const expiresAt = leg.reservation_expires_at;
 
   const waUrl = whatsappLink(

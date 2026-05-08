@@ -31,9 +31,13 @@ export default async function PublicEmptyLegDetailPage({
   // The detail page surfaces 'sold' and 'expired' rows too
   // so a stale link still renders a meaningful state, not
   // a 404. The reserve CTA on the detail card only appears
-  // for 'available'.
+  // for 'available'. Codex round-1 P2 #1 fix on PR 2d:
+  // 'expired' was missing from the prior list, so legs
+  // that PR 2e expires would surface the generic
+  // not-found branch instead of the dedicated
+  // `publicLegExpired` copy in `<PublicLegDetail />`.
   const leg = await getPublicLegByNumber(params.leg_number, {
-    allowedStatuses: ['available', 'sold'],
+    allowedStatuses: ['available', 'sold', 'expired'],
   });
   if (!leg) {
     return (
