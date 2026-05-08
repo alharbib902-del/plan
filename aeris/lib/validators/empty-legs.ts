@@ -261,3 +261,77 @@ export const markOutreachSentSchema = z.object({
 });
 
 export type MarkOutreachSentInput = z.infer<typeof markOutreachSentSchema>;
+
+// ============================================================
+// PR 2c — phase7_operator_stubs bootstrap + session mint
+// ============================================================
+
+export const adminCreateOperatorStubSchema = z.object({
+  company_name: z
+    .string()
+    .trim()
+    .min(1, 'company_name_missing')
+    .max(255, 'company_name_too_long'),
+  contact_email: z
+    .string()
+    .trim()
+    .email('contact_email_invalid')
+    .nullable()
+    .optional(),
+  contact_phone: z
+    .string()
+    .trim()
+    .min(6, 'contact_phone_invalid')
+    .max(32, 'contact_phone_too_long')
+    .nullable()
+    .optional(),
+  notes: z
+    .string()
+    .trim()
+    .max(2000, 'notes_too_long')
+    .nullable()
+    .optional(),
+});
+
+export type AdminCreateOperatorStubInput = z.infer<
+  typeof adminCreateOperatorStubSchema
+>;
+
+export const adminMintOperatorSessionSchema = z.object({
+  operator_stub_id: z.string().uuid('operator_stub_id_invalid'),
+});
+
+export type AdminMintOperatorSessionInput = z.infer<
+  typeof adminMintOperatorSessionSchema
+>;
+
+// ============================================================
+// PR 2c — operator-side Server Actions (token-bound)
+// ============================================================
+
+export const operatorPublishEmptyLegSchema = adminPublishEmptyLegSchema;
+export type OperatorPublishEmptyLegInput = AdminPublishEmptyLegInput;
+
+export const operatorUpdatePriceSchema = z.object({
+  leg_id: z.string().uuid('leg_id_invalid'),
+  new_price: z
+    .number()
+    .positive('new_price_invalid')
+    .max(10_000_000, 'new_price_too_large'),
+});
+
+export type OperatorUpdatePriceInput = z.infer<
+  typeof operatorUpdatePriceSchema
+>;
+
+export const operatorCancelSchema = z.object({
+  leg_id: z.string().uuid('leg_id_invalid'),
+  reason: z
+    .string()
+    .trim()
+    .max(500, 'reason_too_long')
+    .nullable()
+    .optional(),
+});
+
+export type OperatorCancelInput = z.infer<typeof operatorCancelSchema>;

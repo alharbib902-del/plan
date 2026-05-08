@@ -1031,8 +1031,8 @@ export type Phase7OperatorStubStatus = 'active' | 'archived';
 export type Phase7OperatorStubRow = {
   id: string;
   company_name: string;
-  contact_email: string;
-  contact_phone: string;
+  contact_email: string | null;
+  contact_phone: string | null;
   status: Phase7OperatorStubStatus;
   notes: string | null;
   created_at: string;
@@ -1041,8 +1041,6 @@ export type Phase7OperatorStubRow = {
 
 export type Phase7OperatorStubInsert = Partial<Phase7OperatorStubRow> & {
   company_name: string;
-  contact_email: string;
-  contact_phone: string;
 };
 
 export type Phase7OperatorStubUpdate = Partial<

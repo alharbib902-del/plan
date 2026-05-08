@@ -48,6 +48,17 @@ const ERROR_MAP: Record<string, string> = {
   // Field-level Zod codes
   reservation_token_missing: emptyLegsAr.errorRpcReservationTokenInvalid,
   reservation_token_too_long: emptyLegsAr.errorRpcReservationTokenInvalid,
+
+  // PR 2c — operator surface
+  company_name_missing: emptyLegsAr.errorRpcCompanyNameMissing,
+  company_name_too_long: emptyLegsAr.errorRpcCompanyNameMissing,
+  contact_email_invalid: emptyLegsAr.errorRpcContactEmailInvalid,
+  contact_phone_invalid: emptyLegsAr.errorRpcContactPhoneInvalid,
+  contact_phone_too_long: emptyLegsAr.errorRpcContactPhoneInvalid,
+  notes_too_long: emptyLegsAr.errorGeneric,
+  operator_stub_id_invalid: emptyLegsAr.errorRpcOperatorStubIdInvalid,
+  invalid_session: emptyLegsAr.errorRpcInvalidSession,
+  insert_failed: emptyLegsAr.errorGeneric,
 };
 
 export function translateEmptyLegError(code: string | undefined): string {

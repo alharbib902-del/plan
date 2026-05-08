@@ -47,6 +47,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   >
                     قائمة المراسلات
                   </Link>
+                  <Link
+                    href="/admin/empty-legs/operators"
+                    className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                  >
+                    سجلّات المشغّلين
+                  </Link>
                 </>
               ) : null}
             </nav>

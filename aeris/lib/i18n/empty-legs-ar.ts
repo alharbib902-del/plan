@@ -207,6 +207,60 @@ export const emptyLegsAr = {
   errorOutreachNotFound: 'سجل المراسلة غير موجود.',
   errorAdminGate: 'تعذّر التحقق من الصلاحيات.',
   errorFlagDisabled: 'هذه الواجهة معطّلة بإعدادات النظام.',
+
+  // ============================================================
+  // PR 2c — Operator stubs bootstrap + session mint (admin)
+  // ============================================================
+  adminStubsNavLabel: 'سجلّات المشغّلين',
+  adminSessionsNavLabel: 'جلسات المشغّلين',
+  adminStubsPageTitle: 'سجلّات المشغّلين (Phase 7)',
+  adminStubsPageSubtitle:
+    'إدارة سجلّات المشغّلين المؤقتة لمرحلة الرحلات الفارغة. تُستبدل بالسجلّات الكاملة في طور لاحق.',
+  adminStubsTableEmpty: 'لا توجد سجلّات مشغّلين فعّالة.',
+  adminStubsCreateTitle: 'إضافة سجلّ مشغّل جديد',
+  adminStubsFieldCompanyName: 'اسم الشركة',
+  adminStubsFieldContactEmail: 'البريد الإلكتروني (اختياري)',
+  adminStubsFieldContactPhone: 'رقم الهاتف (اختياري)',
+  adminStubsFieldNotes: 'ملاحظات (اختياري)',
+  adminStubsSubmit: 'إنشاء السجلّ',
+  adminStubsColCompany: 'الشركة',
+  adminStubsColEmail: 'البريد',
+  adminStubsColPhone: 'الهاتف',
+  adminStubsColCreated: 'أُنشئ في',
+  adminStubsRowMint: 'إصدار جلسة',
+
+  adminSessionsPageTitle: 'جلسات المشغّلين',
+  adminSessionsPageSubtitle:
+    'إصدار رمز جلسة جديد لمشغّل قائم. يُعرض الرمز مرة واحدة عند الإصدار.',
+  adminSessionsFieldStub: 'اختر السجل',
+  adminSessionsSubmit: 'إصدار رمز جلسة',
+  adminSessionsTokenIssuedTitle: 'تم إصدار الرمز',
+  adminSessionsTokenIssuedHint:
+    'انسخ الرمز الآن — لن يُعرض مرة أخرى. شارك الرابط مع المشغّل عبر واتساب.',
+  adminSessionsTokenUrlLabel: 'رابط البوابة الكامل',
+  adminSessionsTokenExpires: 'ينتهي في',
+  adminSessionsNoStubs:
+    'لا يوجد سجلّ مشغّل فعّال. أنشئ سجلاً أولاً من صفحة سجلّات المشغّلين.',
+
+  // ============================================================
+  // PR 2c — Operator self-serve portal
+  // ============================================================
+  operatorPortalTitle: 'بوابة المشغّل — الرحلات الفارغة',
+  operatorPortalNewLeg: 'نشر رحلة جديدة',
+  operatorPortalEmpty: 'لا توجد رحلات منشورة في هذه الجلسة.',
+  operatorPortalSessionInvalid:
+    'الجلسة غير صالحة أو منتهية الصلاحية. اطلب من فريق Aeris إصدار رابط جديد.',
+  operatorPortalLegNotFound: 'الرحلة غير موجودة.',
+  operatorPortalLegEditTitle: 'تعديل الرحلة',
+
+  // ============================================================
+  // PR 2c — Validator-only error codes
+  // ============================================================
+  errorRpcCompanyNameMissing: 'اسم الشركة مطلوب.',
+  errorRpcContactEmailInvalid: 'البريد الإلكتروني غير صالح.',
+  errorRpcContactPhoneInvalid: 'رقم الهاتف غير صالح.',
+  errorRpcOperatorStubIdInvalid: 'معرّف سجلّ المشغّل غير صالح.',
+  errorRpcInvalidSession: 'الجلسة غير صالحة.',
 } as const;
 
 export type EmptyLegsArKey = keyof typeof emptyLegsAr;

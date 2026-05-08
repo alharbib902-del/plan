@@ -5477,3 +5477,211 @@ model + 3 operator Server Actions + bootstrap surface for
 `phase7_operator_stubs`). Behind `ENABLE_OPERATOR_PORTAL`
 flag, default `false`.
 
+## Phase 7 — PR 2c (Operator self-serve portal)
+
+Phase 7 PR 2c ships the **operator-side UI** for the Empty
+Legs marketplace plus the admin **bootstrap surface** that
+seeds `phase7_operator_stubs` rows and mints HMAC session
+tokens. Behind feature flag `ENABLE_OPERATOR_PORTAL`
+(default `false`; only the admin bootstrap surfaces ride
+the existing `ENABLE_EMPTY_LEGS_ADMIN_UI` flag).
+
+PR 2c is the third Phase-7 PR. Stack at this point:
+PR 1 (schema) → PR 2a (RPCs) → PR 2b (admin) → **PR 2c
+(operator + stub bootstrap)**. PR 2c does NOT ship any
+DDL — it consumes the `phase7_operator_stubs` and
+`operator_empty_leg_sessions` tables from PR 1 (§14 + §15).
+
+### Why a stub table
+
+The real `operators` table requires `user_id NOT NULL
+REFERENCES users(id)` + `commercial_registration` +
+`gaca_license` + `license_expiry` — none of which Phase 7
+can populate without the full Phase 8 onboarding flow.
+Per Codex iteration-11 P1 #1's prescribed second option,
+Phase 7 uses a dedicated `phase7_operator_stubs` table
+with the lightweight fields the model actually needs.
+Sessions FK to the stub table; published legs reference
+the stub via the new column `empty_legs.operator_stub_id`
+(Codex iteration-12 P1 #1).
+
+### Three-layer token validation
+
+Every operator Server Action passes through
+`validateOperatorEmptyLegSession(rawToken)` before any
+mutation:
+
+1. **Layer 1** — HMAC signature + payload `expires_at`
+   check (`verifyEmptyLegSessionToken`). Pure crypto, no
+   DB roundtrip.
+2. **Layer 2** — DB row exists in
+   `operator_empty_leg_sessions` with a matching
+   `token_hash` (sha256 of the raw token) AND
+   `revoked_at IS NULL`.
+3. **Layer 3** — DB row's `expires_at > NOW()`. Defense
+   in depth alongside the payload-level check; the row's
+   wall-clock expiry can be older than the token's
+   payload expiry if the admin force-revoked.
+
+A belt-and-braces guard rejects any session row whose
+`operator_stub_id` does not match the token payload's
+`operator_stub_id`. Failure on any layer returns the
+opaque `'invalid_session'` error — the operator cannot
+tell which layer rejected.
+
+### Stub-scoping enforcement (Codex iteration-12 P1 #1)
+
+- `operatorPublishEmptyLeg` forces `p_operator_stub_id =
+  session.operatorStubId` into the `publish_empty_leg`
+  RPC. The crafted-input attack ("publish under another
+  stub") is impossible because the RPC argument is
+  server-set.
+- `operatorUpdatePrice` and `operatorCancel` pre-SELECT
+  the leg `WHERE id = :leg_id AND operator_stub_id =
+  :session_stub_id`. Zero rows → opaque `'leg_not_found'`
+  (NOT `'unauthorized'` — the operator cannot tell whether
+  the leg exists under another stub).
+- Operator portal list/detail pages (`getEmptyLegByIdAndStub`
+  + `listEmptyLegsForStub`) apply the same stub-scope
+  filter at the query layer, so cross-stub legs never
+  reach the React tree.
+
+### Files added (12)
+
+| Path | Purpose |
+|---|---|
+| `lib/operator/empty-leg-session-token.ts` | HMAC mint + verify (Layer 1). Separate secret `EMPTY_LEGS_OPERATOR_TOKEN_SECRET`. 30-day default TTL. Payload field is `operator_stub_id` (Codex iteration-12 P1 #2). |
+| `lib/operator/empty-leg-session-store.ts` | DB-side hash storage helpers + the 3-layer `validateOperatorEmptyLegSession` combiner. |
+| `app/actions/phase7-operator-stubs.ts` | 2 admin Server Actions: `adminCreatePhase7OperatorStub` + `adminMintOperatorSession` (mints token, hashes it, INSERTs the session row, returns the raw token + portal URL once). |
+| `app/actions/operator-empty-legs.ts` | 3 token-bound operator Server Actions: `operatorPublishEmptyLeg`, `operatorUpdatePrice`, `operatorCancel`. Each validates the session before mutating; stub-scoping enforced per the contract above. |
+| `components/admin/empty-legs/operator-stub-form.tsx` | Admin "إضافة سجلّ مشغّل جديد" form. |
+| `components/admin/empty-legs/session-mint-form.tsx` | Admin "إصدار رمز جلسة" form. Renders the raw token + portal URL once on success — DB only stores the hash. |
+| `components/operator/empty-legs/operator-publish-form.tsx` | Operator-side publish form. Mirrors the admin publish form but always sets `suppress_notifications = false` (only admin can publish suppressed test legs). |
+| `components/operator/empty-legs/operator-leg-actions.tsx` | Operator-side price-edit + cancel forms (mirrors the admin Case-1 surface, scoped to one leg). |
+| `app/(admin)/admin/(protected)/empty-legs/operators/page.tsx` | Admin bootstrap page — list active stubs + create form. |
+| `app/(admin)/admin/(protected)/empty-legs/operator-sessions/page.tsx` | Admin mint page — pick a stub, mint a session, render the URL once. |
+| `app/operator/empty-legs/[token]/page.tsx` | Operator list page (stub-scoped). |
+| `app/operator/empty-legs/[token]/new/page.tsx` | Operator publish form page. |
+| `app/operator/empty-legs/[token]/[id]/page.tsx` | Operator detail/edit page (stub-scoped). |
+
+### Files edited (5)
+
+| Path | Change |
+|---|---|
+| `components/admin/admin-shell.tsx` | Added a third flag-gated nav entry: "سجلّات المشغّلين". |
+| `components/admin/empty-legs/leg-row.tsx` | `EmptyLegsTable` now accepts an optional `getLegHref` prop so the operator portal can route per-row links to `/operator/empty-legs/<token>/<id>` instead of the admin path. Default behaviour is unchanged. |
+| `lib/admin/empty-legs/queries.ts` | Added 4 stub-scoped + bootstrap queries: `listActiveOperatorStubs`, `getOperatorStubById`, `listEmptyLegsForStub`, `getEmptyLegByIdAndStub`. |
+| `lib/validators/empty-legs.ts` | Added 5 Zod schemas: `adminCreateOperatorStubSchema`, `adminMintOperatorSessionSchema`, `operatorPublishEmptyLegSchema`, `operatorUpdatePriceSchema`, `operatorCancelSchema`. |
+| `lib/i18n/empty-legs-ar.ts` | Extended with PR 2c Arabic strings (admin stubs + sessions surfaces, operator portal, validator-level error codes). |
+| `components/admin/empty-legs/error-translator.ts` | Mapped the new validator + Server Action error codes (`company_name_missing`, `contact_email_invalid`, `invalid_session`, `insert_failed`, etc.) to Arabic strings. |
+| `types/database.ts` | Relaxed `Phase7OperatorStubRow.contact_email` and `contact_phone` to `string \| null` to match the SQL schema; relaxed `Phase7OperatorStubInsert` so only `company_name` is required (the migration's CHECK constraints carry the rest). |
+
+### The 5 new Server Actions
+
+| # | Action | Backed by | Stub-scoping |
+|:-:|---|---|---|
+| 1 | `adminCreatePhase7OperatorStub` | direct INSERT on `phase7_operator_stubs` | n/a (admin) |
+| 2 | `adminMintOperatorSession` | mint token + INSERT on `operator_empty_leg_sessions` | n/a (admin) |
+| 3 | `operatorPublishEmptyLeg` | `publish_empty_leg` RPC | session-id forced into RPC arg |
+| 4 | `operatorUpdatePrice` | `update_empty_leg_price` RPC | pre-SELECT WHERE id AND stub_id |
+| 5 | `operatorCancel` | `cancel_empty_leg` RPC | pre-SELECT WHERE id AND stub_id |
+
+### Spec deviation
+
+- **Dashboard summary card still skipped** (carry-over from
+  PR 2b deviation #3). Same rationale: `app/(admin)/admin/page.tsx`
+  does not exist.
+
+### Quality gates run locally
+
+All passed:
+
+- `npm run type-check` — clean.
+- `npm run lint:strict` — clean.
+- `npm run build` — green; route table now shows 5 new
+  operator/admin routes:
+  - `/admin/empty-legs/operators`
+  - `/admin/empty-legs/operator-sessions`
+  - `/operator/empty-legs/[token]`
+  - `/operator/empty-legs/[token]/new`
+  - `/operator/empty-legs/[token]/[id]`
+- `npm run test:addons` — Phase 6.2 regression pass.
+- `npm run test:checkout-whatsapp` — 8 passed.
+- `npm run test:checkout-site-url` — 16 passed.
+- `npm run test:empty-legs-curve` — 16 passed.
+
+(Build round 1 surfaced one TS error: the SQL schema
+allows NULL `contact_email` / `contact_phone` on
+`phase7_operator_stubs`, but the hand-maintained
+`Phase7OperatorStubRow` typed those as non-nullable
+`string`. Fixed by relaxing both fields to
+`string | null` and trimming
+`Phase7OperatorStubInsert` accordingly. `npm run
+type-check` had passed because `tsc --noEmit` didn't
+exercise the literal `.insert({...})` call site;
+`next build` did via its strict app-router type check.)
+
+### Founder probes (run by founder against production after PR 2c merges)
+
+PR 2c ships 2 founder probes per spec §Founder Probes:
+
+9. **Operator bootstrap** — visit
+   `/admin/empty-legs/operators` in admin auth; verify the
+   listing renders (initially empty); submit the create-
+   stub form with a real operator's `company_name` +
+   `contact_email` + `contact_phone` + optional notes;
+   verify the new row appears in the listing AND in
+   service-role psql. Capture the new
+   `phase7_operator_stubs.id` for Probe 10.
+
+10. **Operator session token + stub-scoped publishing** —
+    mint a session token `T_A` for the stub created in
+    Probe 9 (call its id `S_A`); visit
+    `/operator/empty-legs/<T_A>` in incognito; verify
+    list page renders empty initially. Try the URL with
+    a tampered token byte; verify `'invalid_session'`
+    opaque error.
+
+    Then publish a leg through the publish form. Verify
+    via service-role psql:
+    `SELECT id, operator_stub_id FROM empty_legs WHERE
+    leg_number = :probed_leg_number` returns the leg
+    with `operator_stub_id = S_A`.
+
+    **Isolation check**: from the admin bootstrap page,
+    create a second stub `S_B`; mint a session token
+    `T_B`. Visit `/operator/empty-legs/<T_B>` in
+    incognito; verify the leg published via `T_A` is
+    NOT listed. Attempt `operatorUpdatePrice` and
+    `operatorCancel` via `T_B` targeting `T_A`'s leg id;
+    verify each returns the opaque `'leg_not_found'`
+    (NOT `'unauthorized'` — preserves the iteration-12
+    P1 #1 contract).
+
+### Branch + PR
+
+- Branch: `phase-7/pr-2c-operator` (worktree)
+- PR URL: pending (filled after `gh pr create`)
+- CI run URL: pending
+
+### Pre-merge env requirement
+
+Before flipping `ENABLE_OPERATOR_PORTAL = true` on
+production, the founder must set
+`EMPTY_LEGS_OPERATOR_TOKEN_SECRET` per environment
+(generate with `openssl rand -base64 32`). The token
+module is fail-closed: missing/empty secret → mint
+throws + verify returns `{ valid: false }`, so the
+portal renders the "session invalid" notice instead of
+crashing.
+
+### Next PR
+
+**PR 2d** — public marketplace (`/empty-legs` listing +
+detail + 10-min reserve flow + opt-out lander) + 3 anon-
+callable Server Actions. Behind
+`ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE` flag (default
+`false`; flips together with `ENABLE_EMPTY_LEGS_NOTIFICATIONS`
+in the canary plan).
+
+
