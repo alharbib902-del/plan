@@ -20,8 +20,11 @@
 -- regenerated `types/database.ts`, the new
 -- `test:empty-legs-curve` script in `package.json`, and the
 -- corresponding CI step in `.github/workflows/ci.yml`. RPC
--- bodies (12 publics + 1 helper) ship in PR 2a's separate
--- migration `20260510000011_phase_7_empty_legs_rpcs.sql`.
+-- bodies (11 publics + 1 helper in PR 2a; PR 2e adds
+-- expire_empty_leg_window as the 12th public) ship in
+-- separate migrations: PR 2a's
+-- `20260510000011_phase_7_empty_legs_rpcs.sql` and PR 2e's
+-- `20260511000012_phase_7_empty_legs_match_event.sql`.
 -- ============================================================
 
 

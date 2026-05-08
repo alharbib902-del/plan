@@ -682,11 +682,25 @@ Concretely Phase 7 must:
    shape Phase 6.2 normalized for `bookings` (operator + aircraft
    FKs nullable + snapshot columns; financial state lives on the
    linked booking row, not on the leg).
-2. **Add a 7-RPC `SECURITY DEFINER` mutation layer**: publish,
-   update price, cancel, reserve, confirm-to-booking, expire-
-   reservation, recompute-Dutch-auction-tick. All atomic, all
-   service-role-only EXECUTE, all paired with the canonical
-   `_recompute_*` helper pattern from Phase 6.2.
+2. **Add an 11-public-RPC + 1-helper `SECURITY DEFINER`
+   mutation layer in PR 2a, plus a 12th public
+   (`expire_empty_leg_window`) shipped in PR 2e's own
+   migration** (Codex iteration-16 P2 #2 fix: the
+   "7-RPC" wording was the iteration-1 estimate; the
+   final accepted decomposition is 11 + 1 in PR 2a +
+   1 in PR 2e). The PR 2a publics are `publish_empty_leg`,
+   `update_empty_leg_price`, `reserve_empty_leg`,
+   `confirm_empty_leg_reservation`,
+   `release_empty_leg_reservation`,
+   `admin_release_empty_leg_reservation`,
+   `cancel_empty_leg`, `expire_empty_leg_reservation`,
+   `tick_empty_leg_dutch_auction`,
+   `admin_mark_empty_leg_sold`, plus the
+   `publish_empty_leg_event` stub; the helper is
+   `_recompute_empty_leg_price`. All atomic, all
+   service-role-only EXECUTE, all paired with the
+   canonical `_recompute_*` helper pattern from Phase
+   6.2.
 3. **Ship admin surfaces** (`/admin/empty-legs` list + detail +
    create/edit) wired to thin Server Actions that call the RPCs.
 4. **Ship a token-gated operator self-serve portal**

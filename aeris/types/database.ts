@@ -80,6 +80,16 @@ export type LeadInquiryInsert = {
   // `DEFAULT '{}'::jsonb`. Callers that omit it get `{}`
   // automatically.
   preferences?: TripPreferences;
+  // Phase 7 PR 1 §9: optional on insert. The DB column is
+  // `BOOLEAN NOT NULL DEFAULT FALSE`, so omitting it stores
+  // FALSE (the opt-IN default per Codex iteration-1 P1 #1).
+  // PR 2d's `/request` form + reserve form set this to TRUE
+  // only when the customer explicitly ticks the
+  // empty-legs-notification checkbox. `last_empty_leg_notified_at`
+  // is intentionally NOT in the Insert shape — it's owned
+  // by the AFTER INSERT trigger on `empty_leg_notifications`
+  // (PR 1 §17), application code never writes it.
+  empty_legs_opt_in?: boolean;
 };
 
 // ============================================================================
