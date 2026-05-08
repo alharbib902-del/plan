@@ -1143,6 +1143,10 @@ export type PublishEmptyLegError =
   | 'arrival_route_missing'
   | 'departure_airport_unknown'
   | 'arrival_airport_unknown'
+  | 'parent_booking_not_found'
+  | 'operator_not_found'
+  | 'operator_stub_not_found'
+  | 'aircraft_not_found'
   | 'departure_window_invalid'
   | 'original_price_invalid'
   | 'max_passengers_invalid'
@@ -1150,6 +1154,7 @@ export type PublishEmptyLegError =
   | 'auction_floor_discount_out_of_range'
   | 'auction_floor_below_initial'
   | 'auction_curve_invalid'
+  | 'auction_window_lead_hours_invalid'
   | 'auction_window_already_closed';
 
 export type PublishEmptyLegResult =

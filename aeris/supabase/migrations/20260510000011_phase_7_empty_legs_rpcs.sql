@@ -239,7 +239,18 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'arrival_airport_unknown');
   END IF;
 
-  -- Window order.
+  -- Window presence + order. NULL bounds must produce a
+  -- structured `departure_window_invalid` instead of falling
+  -- through to the INSERT (where downstream NOT NULL +
+  -- timestamp-math would surface a raw database error). SQL
+  -- comparisons with NULL evaluate to NULL, so the order
+  -- check below is not enough on its own — reject NULL start
+  -- or end explicitly first (Codex round-2 P1 #1 fix).
+  IF p_departure_window_start IS NULL
+     OR p_departure_window_end IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'departure_window_invalid');
+  END IF;
+
   IF p_departure_window_end <= p_departure_window_start THEN
     RETURN json_build_object('ok', false, 'error', 'departure_window_invalid');
   END IF;
@@ -277,12 +288,59 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'auction_curve_invalid');
   END IF;
 
+  -- Bound v_lead_hours to non-negative (Codex round-2 P2 #2
+  -- fix). A negative value would push auction_window_end_at
+  -- past departure_window_start, keeping the leg reservable
+  -- after the flight should already have departed and
+  -- violating the auction-closes-before-flight semantics
+  -- agreed in the Phase 7 spec.
+  IF v_lead_hours < 0 THEN
+    RETURN json_build_object('ok', false, 'error', 'auction_window_lead_hours_invalid');
+  END IF;
+
   -- Compute auction_window_end_at = departure_window_start - lead_hours.
   v_window_end_at := p_departure_window_start - make_interval(hours => v_lead_hours);
 
   -- Auction window must close after NOW().
   IF v_window_end_at <= v_now THEN
     RETURN json_build_object('ok', false, 'error', 'auction_window_already_closed');
+  END IF;
+
+  -- Validate optional FK ids against their parent tables
+  -- BEFORE the INSERT (Codex round-2 P2 #1 fix). A stale
+  -- admin selection or a crafted Server-Action payload that
+  -- supplies a non-existent UUID would otherwise surface as
+  -- a raw PostgreSQL FK violation, breaking the structured-
+  -- error contract that callers rely on. The IATA path is
+  -- already guarded above; this block extends the same
+  -- pattern to parent_booking_id, operator_id,
+  -- operator_stub_id, and aircraft_id.
+  IF p_parent_booking_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM bookings WHERE id = p_parent_booking_id
+     ) THEN
+    RETURN json_build_object('ok', false, 'error', 'parent_booking_not_found');
+  END IF;
+
+  IF p_operator_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM operators WHERE id = p_operator_id
+     ) THEN
+    RETURN json_build_object('ok', false, 'error', 'operator_not_found');
+  END IF;
+
+  IF p_operator_stub_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM phase7_operator_stubs WHERE id = p_operator_stub_id
+     ) THEN
+    RETURN json_build_object('ok', false, 'error', 'operator_stub_not_found');
+  END IF;
+
+  IF p_aircraft_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM aircraft WHERE id = p_aircraft_id
+     ) THEN
+    RETURN json_build_object('ok', false, 'error', 'aircraft_not_found');
   END IF;
 
   -- Initial price = original × (1 − initial/100).
