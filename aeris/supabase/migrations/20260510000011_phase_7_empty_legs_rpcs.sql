@@ -218,6 +218,27 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'arrival_route_missing');
   END IF;
 
+  -- Validate non-empty IATA codes against airports(iata_code)
+  -- BEFORE the INSERT. Without this, a non-empty but unknown
+  -- IATA value would surface as a raw PostgreSQL FK violation
+  -- instead of the structured RPC error contract (Codex
+  -- round-1 P1 #2 fix).
+  IF NULLIF(TRIM(p_departure_airport_iata), '') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM airports
+         WHERE iata_code = TRIM(p_departure_airport_iata)
+     ) THEN
+    RETURN json_build_object('ok', false, 'error', 'departure_airport_unknown');
+  END IF;
+
+  IF NULLIF(TRIM(p_arrival_airport_iata), '') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM airports
+         WHERE iata_code = TRIM(p_arrival_airport_iata)
+     ) THEN
+    RETURN json_build_object('ok', false, 'error', 'arrival_airport_unknown');
+  END IF;
+
   -- Window order.
   IF p_departure_window_end <= p_departure_window_start THEN
     RETURN json_build_object('ok', false, 'error', 'departure_window_invalid');
@@ -241,7 +262,13 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'auction_floor_discount_out_of_range');
   END IF;
 
-  IF v_floor < v_initial THEN
+  -- Reject equality too (Codex round-1 P2 #1 fix). Phase 7
+  -- contract requires a strictly increasing Dutch-auction
+  -- range; equality produces a no-op curve. The PR 1
+  -- schema CHECK uses `>=` (defense in depth, permissive);
+  -- the RPC validation is stricter so the structured-error
+  -- contract surfaces this case before the INSERT runs.
+  IF v_floor <= v_initial THEN
     RETURN json_build_object('ok', false, 'error', 'auction_floor_below_initial');
   END IF;
 
@@ -440,16 +467,19 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_now          TIMESTAMPTZ := NOW();
-  v_status       empty_leg_status;
-  v_window_end   TIMESTAMPTZ;
+  v_now           TIMESTAMPTZ := NOW();
+  v_status        empty_leg_status;
+  v_window_end    TIMESTAMPTZ;
+  v_dep_window    TIMESTAMPTZ;
+  v_max_expiry    TIMESTAMPTZ;
 BEGIN
   PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN json_build_object('ok', false, 'error', 'leg_not_found');
   END IF;
 
-  SELECT status, auction_window_end_at INTO v_status, v_window_end
+  SELECT status, auction_window_end_at, departure_window_start
+    INTO v_status, v_window_end, v_dep_window
     FROM empty_legs WHERE id = p_leg_id;
 
   IF v_status <> 'available' THEN
@@ -464,8 +494,20 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'reservation_token_invalid');
   END IF;
 
+  -- Bound the reservation hold to the spec-mandated 10-minute
+  -- window AND ensure it does not stretch past the leg's
+  -- departure_window_start (Codex round-1 P2 #2 fix). Without
+  -- this, a buggy or crafted Server Action call could reserve
+  -- an empty leg for hours/days, blocking availability past
+  -- the intended hold. The Server Action mints tokens with
+  -- a 10-minute TTL, so the bounded ceiling here is defense
+  -- in depth at the DB layer.
+  v_max_expiry := LEAST(v_now + INTERVAL '10 minutes', v_dep_window);
   IF p_expires_at IS NULL OR p_expires_at <= v_now THEN
     RETURN json_build_object('ok', false, 'error', 'reservation_expiry_invalid');
+  END IF;
+  IF p_expires_at > v_max_expiry THEN
+    RETURN json_build_object('ok', false, 'error', 'reservation_expiry_too_far');
   END IF;
 
   IF NULLIF(TRIM(p_customer_name), '') IS NULL THEN
@@ -541,8 +583,14 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'reservation_expired');
   END IF;
 
-  IF v_leg.reservation_token_hash IS NULL
-     OR v_leg.reservation_token_hash <> p_token_hash THEN
+  -- NULL-safe compare (Codex round-1 P1 #1 fix). SQL
+  -- `column <> NULL` evaluates to NULL, not TRUE/FALSE, so
+  -- a `p_token_hash = NULL` payload would silently pass an
+  -- `OR <>` check. `IS DISTINCT FROM` treats NULL on either
+  -- side as "differs", which is what we want here. Defense
+  -- in depth: also reject NULL `p_token_hash` explicitly.
+  IF p_token_hash IS NULL
+     OR v_leg.reservation_token_hash IS DISTINCT FROM p_token_hash THEN
     RETURN json_build_object('ok', false, 'error', 'reservation_token_mismatch');
   END IF;
 
@@ -692,7 +740,10 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'leg_not_reserved');
   END IF;
 
-  IF v_hash IS NULL OR v_hash <> p_token_hash THEN
+  -- NULL-safe compare (Codex round-1 P1 #1 fix). See
+  -- §5 confirm_empty_leg_reservation for rationale.
+  IF p_token_hash IS NULL
+     OR v_hash IS DISTINCT FROM p_token_hash THEN
     RETURN json_build_object('ok', false, 'error', 'reservation_token_mismatch');
   END IF;
 

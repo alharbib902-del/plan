@@ -1141,6 +1141,8 @@ export type PublishEmptyLegArgs = {
 export type PublishEmptyLegError =
   | 'departure_route_missing'
   | 'arrival_route_missing'
+  | 'departure_airport_unknown'
+  | 'arrival_airport_unknown'
   | 'departure_window_invalid'
   | 'original_price_invalid'
   | 'max_passengers_invalid'
@@ -1199,6 +1201,7 @@ export type ReserveEmptyLegError =
   | 'leg_window_closed'
   | 'reservation_token_invalid'
   | 'reservation_expiry_invalid'
+  | 'reservation_expiry_too_far'
   | 'customer_name_missing'
   | 'customer_phone_missing';
 
