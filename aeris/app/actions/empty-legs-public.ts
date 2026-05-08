@@ -271,9 +271,15 @@ export type ConfirmOptOutActionResult =
 export async function confirmOptOut(input: {
   opt_out_token: string;
 }): Promise<ConfirmOptOutActionResult> {
-  if (isPublicFlagDisabled()) {
-    return { ok: false, error: 'flag_disabled_public' };
-  }
+  // Codex round-2 P2 #1 fix. confirmOptOut is explicitly
+  // NOT gated by ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE. The
+  // opt-out token has no expiry and is embedded in wa.me
+  // outreach that may already be in customers' inboxes; if
+  // the founder later disables the marketplace as a kill
+  // switch, those customers must still be able to honour
+  // their non-expiring opt-out promise. The HMAC + DB
+  // write boundary is the enforcement perimeter — the
+  // marketplace flag has no business gating it.
 
   const parsed = publicConfirmOptOutSchema.safeParse(input);
   if (!parsed.success) {

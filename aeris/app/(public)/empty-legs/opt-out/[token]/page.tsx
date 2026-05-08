@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
 
 import { OptOutConfirmButton } from '@/components/public/empty-legs/opt-out-confirm-button';
 import { verifyOptOutToken } from '@/lib/empty-legs/opt-out-token';
@@ -17,11 +16,19 @@ interface PageProps {
 }
 
 export default function PublicEmptyLegsOptOutPage({ params }: PageProps) {
-  if (process.env.ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE !== 'true') {
-    notFound();
-  }
-
-  // Layer-1 HMAC verification at render time. The user
+  // Codex round-2 P2 #1 fix. The opt-out lander is
+  // explicitly NOT gated by
+  // `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE`. Opt-out tokens
+  // never expire and are embedded in wa.me outreach
+  // already in customers' inboxes; if the founder later
+  // disables the marketplace as a kill switch, those
+  // customers must still be able to honour their
+  // non-expiring opt-out promise. The HMAC + DB write
+  // boundary is sufficient on its own — flipping the
+  // marketplace flag does not need to disable the
+  // unsubscribe workflow.
+  //
+  // Layer-1 HMAC verification at render time: the user
   // sees an immediate error if the URL is malformed or
   // the signature has been tampered with — no DB write
   // happens until they click confirm. The confirm
