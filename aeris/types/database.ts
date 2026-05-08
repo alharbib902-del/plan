@@ -45,6 +45,18 @@ export type LeadInquiryRow = {
   // so existing rows have `{}` and new code never has to
   // null-check. Shape governed by `lib/validators/trip-preferences.ts`.
   preferences: TripPreferences;
+  // Phase 7 PR 1 §9: empty-legs marketing consent (Codex
+  // iteration-1 P1 #1 fix: opt-IN, default FALSE — historical
+  // leads predate the empty-legs marketing category and have
+  // not consented to it). Updated to TRUE only when the
+  // customer explicitly ticks the "أبلغوني عند توفر رحلة فارغة"
+  // checkbox on /request or /empty-legs/<>/reserve.
+  empty_legs_opt_in: boolean;
+  // Phase 7 PR 1 §17: atomic write by the
+  // empty_leg_notifications_update_last_notified trigger on
+  // every queue insert. Application code does NOT touch this
+  // column.
+  last_empty_leg_notified_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -68,6 +80,16 @@ export type LeadInquiryInsert = {
   // `DEFAULT '{}'::jsonb`. Callers that omit it get `{}`
   // automatically.
   preferences?: TripPreferences;
+  // Phase 7 PR 1 §9: optional on insert. The DB column is
+  // `BOOLEAN NOT NULL DEFAULT FALSE`, so omitting it stores
+  // FALSE (the opt-IN default per Codex iteration-1 P1 #1).
+  // PR 2d's `/request` form + reserve form set this to TRUE
+  // only when the customer explicitly ticks the
+  // empty-legs-notification checkbox. `last_empty_leg_notified_at`
+  // is intentionally NOT in the Insert shape — it's owned
+  // by the AFTER INSERT trigger on `empty_leg_notifications`
+  // (PR 1 §17), application code never writes it.
+  empty_legs_opt_in?: boolean;
 };
 
 // ============================================================================
@@ -541,8 +563,13 @@ export type AddonStatusValue =
  * Discriminator on `bookings.source_offer_table`. Paired with
  * `source_offer_id` (UUID). The `bookings_source_offer_pair_check`
  * constraint enforces that both are NULL or both populated.
+ *
+ * Phase 7 PR 1 extends the CHECK constraint to also accept
+ * `'phase7_empty_leg'` — `confirm_empty_leg_reservation` and
+ * `admin_mark_empty_leg_sold` (PR 2a) write that discriminator
+ * onto the bookings row they create.
  */
-export type SourceOfferTable = 'phase4' | 'phase5';
+export type SourceOfferTable = 'phase4' | 'phase5' | 'phase7_empty_leg';
 
 export type BookingRow = {
   id: string;
@@ -871,6 +898,202 @@ export type ConfirmCheckoutPrepResult =
       error: 'booking_not_found';
     };
 
+// ============================================================================
+// Phase 7 PR 1: Empty Legs schema reshape
+//
+// Migration file: 20260509000010_phase_7_empty_legs_reshape.sql.
+// PR 1 ships DDL only — no RPCs (those land in PR 2a's
+// 20260510000011_phase_7_empty_legs_rpcs.sql) and no runtime
+// UI/RPC code. The types below cover every new/changed table
+// + every new column on existing tables, mirroring the SQL
+// migration row-for-row.
+//
+// `types/database.ts` is regenerated after the full PR 1
+// migration applies (Codex iteration-14 P2 #1 fix). Until
+// `npm run db:types` is wired to a real Supabase project,
+// this file is hand-maintained and must stay in sync with
+// the migration.
+// ============================================================================
+
+export type EmptyLegStatus =
+  | 'available'
+  | 'reserved'
+  | 'sold'
+  | 'expired'
+  // Phase 7 PR 1 §4 ADD VALUE.
+  | 'cancelled';
+
+export type EmptyLegAuctionCurve = 'linear' | 'accelerating';
+
+export type EmptyLegRow = {
+  id: string;
+  leg_number: string;
+  parent_booking_id: string | null;
+  // Phase 7 PR 1 §1: relaxed to nullable + 3 operator
+  // snapshot columns + operator_stub_id for Phase-7
+  // ownership.
+  operator_id: string | null;
+  operator_name_snapshot: string | null;
+  operator_phone_snapshot: string | null;
+  operator_email_snapshot: string | null;
+  operator_stub_id: string | null;
+  // Phase 7 PR 1 §2: relaxed to nullable + freeform snapshot.
+  aircraft_id: string | null;
+  aircraft_snapshot: string | null;
+  // Phase 7 PR 1 §3: relaxed both IATA columns to nullable +
+  // added freeform fallback columns + presence CHECKs.
+  departure_airport: string | null;
+  arrival_airport: string | null;
+  departure_airport_freeform_snapshot: string | null;
+  arrival_airport_freeform_snapshot: string | null;
+  departure_window_start: string;
+  departure_window_end: string;
+  flexibility_hours: number;
+  original_price: number;
+  current_discount_pct: number;
+  current_price: number;
+  max_passengers: number;
+  status: EmptyLegStatus;
+  views_count: number;
+  notifications_sent: number;
+  // Phase 7 PR 1 §6: reservation-hold columns + paired CHECK
+  // (all-NULL-or-all-non-NULL).
+  reservation_token_hash: string | null;
+  reservation_expires_at: string | null;
+  reservation_customer_name_snapshot: string | null;
+  reservation_customer_phone_snapshot: string | null;
+  // Phase 7 PR 1 §7: customer-booking link, set by
+  // confirm_empty_leg_reservation (PR 2a).
+  customer_booking_id: string | null;
+  // Phase 7 PR 1 §8: Dutch-auction columns.
+  auction_initial_discount_pct: number;
+  auction_floor_discount_pct: number;
+  auction_curve: EmptyLegAuctionCurve;
+  auction_window_start_at: string;
+  auction_window_end_at: string | null;
+  last_price_drop_at: string | null;
+  // Phase 7 PR 1 §11: Phase-7-canary marker (Codex
+  // iteration-7 P1 #3 fix).
+  suppress_notifications: boolean;
+  created_at: string;
+  expires_at: string | null;
+  updated_at: string;
+};
+
+export type EmptyLegInsert = Partial<EmptyLegRow> & {
+  original_price: number;
+  current_price: number;
+  max_passengers: number;
+  departure_window_start: string;
+  departure_window_end: string;
+};
+
+export type EmptyLegUpdate = Partial<Omit<EmptyLegRow, 'id' | 'created_at'>>;
+
+// --- empty_leg_notifications (PR 1 §13) ---
+
+export type EmptyLegNotificationEventType = 'published' | 'price_dropped';
+export type EmptyLegNotificationChannel = 'whatsapp_link';
+
+export type EmptyLegNotificationRow = {
+  id: string;
+  lead_inquiry_id: string;
+  leg_id: string;
+  event_type: EmptyLegNotificationEventType;
+  channel: EmptyLegNotificationChannel;
+  wa_url: string;
+  sent_at: string;
+  // NULL = pending founder dispatch; non-NULL = founder
+  // marked the wa.me URL as sent via the outreach queue.
+  outreach_sent_at: string | null;
+  // wa.me has no provider message id; populated for future
+  // Resend / WhatsApp Business API channels (Phase 8+).
+  external_message_id: string | null;
+  created_at: string;
+};
+
+export type EmptyLegNotificationInsert = Partial<EmptyLegNotificationRow> & {
+  lead_inquiry_id: string;
+  leg_id: string;
+  event_type: EmptyLegNotificationEventType;
+  channel: EmptyLegNotificationChannel;
+  wa_url: string;
+};
+
+export type EmptyLegNotificationUpdate = Partial<
+  Omit<EmptyLegNotificationRow, 'id' | 'created_at'>
+>;
+
+// --- phase7_operator_stubs (PR 1 §14) ---
+
+export type Phase7OperatorStubStatus = 'active' | 'archived';
+
+export type Phase7OperatorStubRow = {
+  id: string;
+  company_name: string;
+  contact_email: string;
+  contact_phone: string;
+  status: Phase7OperatorStubStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Phase7OperatorStubInsert = Partial<Phase7OperatorStubRow> & {
+  company_name: string;
+  contact_email: string;
+  contact_phone: string;
+};
+
+export type Phase7OperatorStubUpdate = Partial<
+  Omit<Phase7OperatorStubRow, 'id' | 'created_at'>
+>;
+
+// --- operator_empty_leg_sessions (PR 1 §15) ---
+
+export type OperatorEmptyLegSessionRow = {
+  id: string;
+  // FK target is phase7_operator_stubs(id) (Codex
+  // iteration-11 P1 #1 + iteration-12 P1 #2 fixes).
+  operator_stub_id: string;
+  token_hash: string;
+  issued_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+export type OperatorEmptyLegSessionInsert =
+  Partial<OperatorEmptyLegSessionRow> & {
+    operator_stub_id: string;
+    token_hash: string;
+    expires_at: string;
+  };
+
+export type OperatorEmptyLegSessionUpdate = Partial<
+  Omit<OperatorEmptyLegSessionRow, 'id' | 'created_at'>
+>;
+
+// --- empty_leg_outreach_alert_status (PR 1 §16) ---
+
+export type EmptyLegOutreachAlertStatusValue =
+  | 'healthy'
+  | 'config_missing'
+  | 'send_failed';
+
+export type EmptyLegOutreachAlertStatusRow = {
+  // Singleton row: id is always 1 (CHECK enforced).
+  id: 1;
+  status: EmptyLegOutreachAlertStatusValue;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+  updated_at: string;
+};
+
+export type EmptyLegOutreachAlertStatusUpdate = Partial<
+  Omit<EmptyLegOutreachAlertStatusRow, 'id'>
+>;
+
 export type Database = {
   __InternalSupabase: {
     PostgrestVersion: '12';
@@ -971,6 +1194,67 @@ export type Database = {
         Update: AddonCatalogUpdate;
         Relationships: [];
       };
+      // Phase 7 PR 1: empty_legs is reshaped (operator_id /
+      // aircraft_id / IATA columns relaxed; new snapshot,
+      // reservation, customer-booking, Dutch-auction,
+      // suppress_notifications, operator_stub_id columns +
+      // audit trigger). Direct table writes are intentionally
+      // not used — every mutation goes through PR 2a's
+      // SECURITY DEFINER RPCs.
+      empty_legs: {
+        Row: EmptyLegRow;
+        Insert: EmptyLegInsert;
+        Update: EmptyLegUpdate;
+        Relationships: [];
+      };
+      // Phase 7 PR 1 §13: dedicated audit + outreach-queue
+      // table for guest lead_inquiries recipients.
+      // application reads via PR 2b's outreach queue +
+      // PR 2e's frequency-cap module. INSERTs come from
+      // PR 2e's matching engine; the AFTER INSERT trigger
+      // (§17) atomically updates lead_inquiries.last_empty_leg_notified_at.
+      empty_leg_notifications: {
+        Row: EmptyLegNotificationRow;
+        Insert: EmptyLegNotificationInsert;
+        Update: EmptyLegNotificationUpdate;
+        Relationships: [];
+      };
+      // Phase 7 PR 1 §14: lightweight Phase-7 operator stub
+      // table (Codex iteration-11 P1 #1 fix). The real
+      // `operators` table requires `user_id NOT NULL` +
+      // `commercial_registration` + `gaca_license` +
+      // `license_expiry` — Phase 7 cannot populate those
+      // without the full Phase 8 onboarding flow, so the
+      // stub table is the operator namespace for Phase 7.
+      phase7_operator_stubs: {
+        Row: Phase7OperatorStubRow;
+        Insert: Phase7OperatorStubInsert;
+        Update: Phase7OperatorStubUpdate;
+        Relationships: [];
+      };
+      // Phase 7 PR 1 §15: HMAC-token sessions for the
+      // operator portal (PR 2c). FK to phase7_operator_stubs
+      // (Codex iteration-11 P1 #1 + iteration-12 P1 #2).
+      operator_empty_leg_sessions: {
+        Row: OperatorEmptyLegSessionRow;
+        Insert: OperatorEmptyLegSessionInsert;
+        Update: OperatorEmptyLegSessionUpdate;
+        Relationships: [];
+      };
+      // Phase 7 PR 1 §16: singleton health row for the
+      // founder batch alert email (Codex iteration-5 P2 #2
+      // fix). The founder-batch-email module UPDATEs this
+      // row on every send attempt; PR 2b's outreach queue
+      // page reads it + renders a banner when status
+      // <> 'healthy'.
+      empty_leg_outreach_alert_status: {
+        Row: EmptyLegOutreachAlertStatusRow;
+        // Singleton — INSERT only happens once via the
+        // migration's seed; runtime code only UPDATEs.
+        Insert: EmptyLegOutreachAlertStatusRow;
+        Update: EmptyLegOutreachAlertStatusUpdate;
+        Relationships: [];
+      };
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -1057,7 +1341,10 @@ export type Database = {
       // Phase 5
       dispatch_target_status: DispatchTargetStatus;
       dispatch_round_status: DispatchRoundStatus;
-      empty_leg_status: 'available' | 'reserved' | 'sold' | 'expired';
+      // Phase 7 PR 1 §4: ADD VALUE 'cancelled' (admin /
+      // operator-initiated, distinct from 'expired' which is
+      // window-elapsed).
+      empty_leg_status: EmptyLegStatus;
       addon_type: AddonTypeValue;
       addon_status: AddonStatusValue;
       medevac_service_level: 'BMT' | 'ALS' | 'CCT' | 'repatriation';
