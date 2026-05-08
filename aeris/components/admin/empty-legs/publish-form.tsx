@@ -6,6 +6,7 @@ import { useState, useTransition } from 'react';
 import { adminPublishEmptyLeg } from '@/app/actions/empty-legs';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 import { translateEmptyLegError } from './error-translator';
+import { datetimeLocalToRiyadhIso } from './formatters';
 
 interface FormState {
   error: string | null;
@@ -84,8 +85,8 @@ export function PublishEmptyLegForm() {
           form,
           'arrival_airport_freeform'
         ),
-        departure_window_start: new Date(start).toISOString(),
-        departure_window_end: new Date(end).toISOString(),
+        departure_window_start: datetimeLocalToRiyadhIso(start),
+        departure_window_end: datetimeLocalToRiyadhIso(end),
         flexibility_hours: readNumber(form, 'flexibility_hours'),
         original_price: original,
         max_passengers: maxPax,
