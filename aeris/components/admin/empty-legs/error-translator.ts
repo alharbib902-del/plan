@@ -52,7 +52,9 @@ const ERROR_MAP: Record<string, string> = {
   // PR 2c — operator surface
   company_name_missing: emptyLegsAr.errorRpcCompanyNameMissing,
   company_name_too_long: emptyLegsAr.errorRpcCompanyNameMissing,
+  contact_email_missing: emptyLegsAr.errorRpcContactEmailMissing,
   contact_email_invalid: emptyLegsAr.errorRpcContactEmailInvalid,
+  contact_email_too_long: emptyLegsAr.errorRpcContactEmailInvalid,
   contact_phone_invalid: emptyLegsAr.errorRpcContactPhoneInvalid,
   contact_phone_too_long: emptyLegsAr.errorRpcContactPhoneInvalid,
   notes_too_long: emptyLegsAr.errorGeneric,

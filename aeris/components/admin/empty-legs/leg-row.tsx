@@ -109,7 +109,7 @@ export function EmptyLegsTable({
         {legs.map((leg) => (
           <Link
             key={leg.id}
-            href={`/admin/empty-legs/${leg.id}`}
+            href={hrefFor(leg)}
             className="block rounded-xl border border-border bg-navy-card/40 p-4 transition-colors hover:border-gold/40"
           >
             <div className="flex items-start justify-between gap-3">

@@ -1028,11 +1028,18 @@ export type EmptyLegNotificationUpdate = Partial<
 
 export type Phase7OperatorStubStatus = 'active' | 'archived';
 
+// PR 2c review note (Codex round 1, P2 #2): the production
+// migration declares `contact_email` and `contact_phone` as
+// NOT NULL on `phase7_operator_stubs`, so the row + insert
+// types must NOT relax those columns to `string | null`.
+// Both the Zod schema and the admin form keep the columns
+// required end-to-end; a future relaxation would need an
+// explicit migration first.
 export type Phase7OperatorStubRow = {
   id: string;
   company_name: string;
-  contact_email: string | null;
-  contact_phone: string | null;
+  contact_email: string;
+  contact_phone: string;
   status: Phase7OperatorStubStatus;
   notes: string | null;
   created_at: string;
@@ -1041,6 +1048,8 @@ export type Phase7OperatorStubRow = {
 
 export type Phase7OperatorStubInsert = Partial<Phase7OperatorStubRow> & {
   company_name: string;
+  contact_email: string;
+  contact_phone: string;
 };
 
 export type Phase7OperatorStubUpdate = Partial<

@@ -219,8 +219,8 @@ export const emptyLegsAr = {
   adminStubsTableEmpty: 'لا توجد سجلّات مشغّلين فعّالة.',
   adminStubsCreateTitle: 'إضافة سجلّ مشغّل جديد',
   adminStubsFieldCompanyName: 'اسم الشركة',
-  adminStubsFieldContactEmail: 'البريد الإلكتروني (اختياري)',
-  adminStubsFieldContactPhone: 'رقم الهاتف (اختياري)',
+  adminStubsFieldContactEmail: 'البريد الإلكتروني',
+  adminStubsFieldContactPhone: 'رقم الهاتف',
   adminStubsFieldNotes: 'ملاحظات (اختياري)',
   adminStubsSubmit: 'إنشاء السجلّ',
   adminStubsColCompany: 'الشركة',
@@ -257,6 +257,7 @@ export const emptyLegsAr = {
   // PR 2c — Validator-only error codes
   // ============================================================
   errorRpcCompanyNameMissing: 'اسم الشركة مطلوب.',
+  errorRpcContactEmailMissing: 'البريد الإلكتروني مطلوب.',
   errorRpcContactEmailInvalid: 'البريد الإلكتروني غير صالح.',
   errorRpcContactPhoneInvalid: 'رقم الهاتف غير صالح.',
   errorRpcOperatorStubIdInvalid: 'معرّف سجلّ المشغّل غير صالح.',

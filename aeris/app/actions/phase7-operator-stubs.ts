@@ -67,8 +67,8 @@ export type AdminCreatePhase7OperatorStubActionResult =
 
 export async function adminCreatePhase7OperatorStub(input: {
   company_name: string;
-  contact_email?: string | null;
-  contact_phone?: string | null;
+  contact_email: string;
+  contact_phone: string;
   notes?: string | null;
 }): Promise<AdminCreatePhase7OperatorStubActionResult> {
   requireAdminSession();
@@ -84,13 +84,16 @@ export async function adminCreatePhase7OperatorStub(input: {
   }
   const v = parsed.data;
 
+  // contact_email + contact_phone are NOT NULL in production
+  // (Codex round-1 P2 #2 fix). The Zod schema above enforces
+  // both required so the typed insert never sends NULL.
   const client = createAdminClient();
   const { data, error } = await client
     .from('phase7_operator_stubs')
     .insert({
       company_name: v.company_name,
-      contact_email: v.contact_email ?? null,
-      contact_phone: v.contact_phone ?? null,
+      contact_email: v.contact_email,
+      contact_phone: v.contact_phone,
       notes: v.notes ?? null,
       status: 'active',
     })

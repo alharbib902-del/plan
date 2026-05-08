@@ -266,6 +266,11 @@ export type MarkOutreachSentInput = z.infer<typeof markOutreachSentSchema>;
 // PR 2c — phase7_operator_stubs bootstrap + session mint
 // ============================================================
 
+// Codex round-1 P2 #2 fix: contact_email + contact_phone are
+// NOT NULL in production (`phase7_operator_stubs` migration
+// in PR 1 §14). Schema enforces required end-to-end; the UI
+// form marks both as required + the admin Server Action
+// ships them straight to the INSERT.
 export const adminCreateOperatorStubSchema = z.object({
   company_name: z
     .string()
@@ -275,16 +280,14 @@ export const adminCreateOperatorStubSchema = z.object({
   contact_email: z
     .string()
     .trim()
+    .min(1, 'contact_email_missing')
     .email('contact_email_invalid')
-    .nullable()
-    .optional(),
+    .max(255, 'contact_email_too_long'),
   contact_phone: z
     .string()
     .trim()
     .min(6, 'contact_phone_invalid')
-    .max(32, 'contact_phone_too_long')
-    .nullable()
-    .optional(),
+    .max(20, 'contact_phone_too_long'),
   notes: z
     .string()
     .trim()

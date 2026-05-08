@@ -23,15 +23,17 @@ export function OperatorStubForm() {
     const formEl = e.currentTarget;
     const form = new FormData(formEl);
     const companyName = String(form.get('company_name') ?? '').trim();
-    const contactEmailRaw = String(form.get('contact_email') ?? '').trim();
-    const contactPhoneRaw = String(form.get('contact_phone') ?? '').trim();
+    const contactEmail = String(form.get('contact_email') ?? '').trim();
+    const contactPhone = String(form.get('contact_phone') ?? '').trim();
     const notesRaw = String(form.get('notes') ?? '').trim();
 
+    // Codex round-1 P2 #2 fix: contact_email + contact_phone
+    // are NOT NULL in production. Both required end-to-end.
     startTransition(async () => {
       const result = await adminCreatePhase7OperatorStub({
         company_name: companyName,
-        contact_email: contactEmailRaw.length > 0 ? contactEmailRaw : null,
-        contact_phone: contactPhoneRaw.length > 0 ? contactPhoneRaw : null,
+        contact_email: contactEmail,
+        contact_phone: contactPhone,
         notes: notesRaw.length > 0 ? notesRaw : null,
       });
       if (result.ok) {
@@ -66,12 +68,14 @@ export function OperatorStubForm() {
           label={emptyLegsAr.adminStubsFieldContactEmail}
           name="contact_email"
           error={fieldErrors.contact_email}
+          required
         >
           <input
             id="contact_email"
             name="contact_email"
             type="email"
             dir="ltr"
+            required
             className={inputCls}
           />
         </Field>
@@ -79,12 +83,14 @@ export function OperatorStubForm() {
           label={emptyLegsAr.adminStubsFieldContactPhone}
           name="contact_phone"
           error={fieldErrors.contact_phone}
+          required
         >
           <input
             id="contact_phone"
             name="contact_phone"
             type="tel"
             dir="ltr"
+            required
             className={inputCls}
           />
         </Field>
