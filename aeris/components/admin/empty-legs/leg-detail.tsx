@@ -129,6 +129,17 @@ export function EmptyLegDetail({ leg }: { leg: EmptyLegRow }) {
           <h2 className="font-ar text-base text-ink">
             {emptyLegsAr.caseSoldTitle}
           </h2>
+          {/*
+            Codex round-1 P2 #2 fix. The prior draft linked
+            to /admin/bookings/<id>, but no booking-detail
+            route exists in the codebase yet (admin currently
+            ships leads + trips + trip-addons + empty-legs
+            only). Until that route exists, render the
+            booking id as copy-only text plus a hint, so the
+            founder is not sent to a 404. When the bookings
+            admin page lands in a future phase, swap this
+            block back to a Link.
+          */}
           <div className="rounded-lg border border-border bg-navy-secondary/40 p-4">
             {leg.customer_booking_id ? (
               <>
@@ -138,16 +149,13 @@ export function EmptyLegDetail({ leg }: { leg: EmptyLegRow }) {
                     {leg.customer_booking_id}
                   </span>
                 </p>
-                <Link
-                  href={`/admin/bookings/${leg.customer_booking_id}`}
-                  className="font-ar mt-3 inline-flex items-center gap-2 rounded-md border border-gold bg-gold/10 px-4 py-1.5 text-sm text-gold-light transition-colors hover:bg-gold/15"
-                >
-                  {emptyLegsAr.soldBookingLink}
-                </Link>
+                <p className="font-ar mt-2 text-xs text-ink-muted">
+                  {emptyLegsAr.soldBookingDeepLinkPending}
+                </p>
               </>
             ) : (
               <p className="font-ar text-sm text-ink-muted">
-                {emptyLegsAr.soldBookingMissingHint}
+                {emptyLegsAr.soldBookingMissing}
               </p>
             )}
           </div>

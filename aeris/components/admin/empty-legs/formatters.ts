@@ -16,6 +16,13 @@ export function formatPercent(value: number | null): string {
   return `${value.toFixed(0)}%`;
 }
 
+// Codex round-1 P2 #1 fix. Phase 7's invariant is that
+// every customer/admin-facing operational timestamp
+// renders in Asia/Riyadh (per CLAUDE.md). Leaving
+// `timeZone` unset would render UTC on Vercel server
+// components and the viewer's local zone in the browser
+// — departure windows could be several hours off the
+// truth. Pin the formatter to Riyadh time explicitly.
 export function formatDateTimeAr(value: string | null): string {
   if (!value) return '—';
   try {
@@ -24,6 +31,7 @@ export function formatDateTimeAr(value: string | null): string {
       timeStyle: 'short',
       calendar: 'gregory',
       numberingSystem: 'latn',
+      timeZone: 'Asia/Riyadh',
     }).format(new Date(value));
   } catch {
     return value;
@@ -39,6 +47,7 @@ export function formatDateAr(value: string | null): string {
       day: 'numeric',
       calendar: 'gregory',
       numberingSystem: 'latn',
+      timeZone: 'Asia/Riyadh',
     }).format(new Date(value));
   } catch {
     return value;

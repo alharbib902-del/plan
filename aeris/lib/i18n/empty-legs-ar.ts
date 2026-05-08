@@ -141,10 +141,10 @@ export const emptyLegsAr = {
 
   // Case 3 — sold
   caseSoldTitle: 'تفاصيل البيع',
-  soldBookingLink: 'فتح الحجز في لوحة الحجوزات',
   soldBookingId: 'رقم الحجز',
-  soldBookingMissingHint:
-    'لم يتم العثور على صفحة لوحة الحجوزات الخاصة بهذا الحجز.',
+  soldBookingDeepLinkPending:
+    'لوحة الحجوزات ليست متاحة في هذه المرحلة. سيُربط هذا الحجز بصفحته الخاصة في طور لاحق.',
+  soldBookingMissing: 'لم يتم العثور على معرّف الحجز.',
 
   // ============================================================
   // Outreach queue
