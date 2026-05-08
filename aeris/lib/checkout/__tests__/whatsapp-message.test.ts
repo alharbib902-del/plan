@@ -50,8 +50,11 @@ test('Case 1: full case (name + addons + return + passengers)', () => {
     customerName: 'أحمد العتيبي',
     bookingNumber: 'AER-B-260507277A',
     routeFormatted: 'جدة ← الرياض',
-    departureFormatted: '10 مايو 2026، 03:00',
-    returnFormatted: '12 مايو 2026، 18:00',
+    // The (بتوقيت الرياض) suffix is part of the caller's
+    // formatted string (post-PR 2c hotfix). The builder no
+    // longer appends it.
+    departureFormatted: '10 مايو 2026، 03:00 (بتوقيت الرياض)',
+    returnFormatted: '12 مايو 2026، 18:00 (بتوقيت الرياض)',
     passengersCount: 2,
     baseAmount: 45000,
     addonsAmount: 1100,
@@ -109,7 +112,7 @@ test('Case 2: minimal (guest mode, no addons, no return)', () => {
     customerName: null,
     bookingNumber: 'AER-B-DEADBEEF',
     routeFormatted: 'الرياض ← دبي',
-    departureFormatted: '20 يونيو 2026، 14:00',
+    departureFormatted: '20 يونيو 2026، 14:00 (بتوقيت الرياض)',
     returnFormatted: null,
     passengersCount: 4,
     baseAmount: 80000,
@@ -157,7 +160,7 @@ test('Case 3: name + no active addons (post customer-remove)', () => {
     customerName: 'فاطمة الزهراني',
     bookingNumber: 'AER-B-CAFEFADE',
     routeFormatted: 'جدة ← القاهرة',
-    departureFormatted: '5 يوليو 2026، 09:30',
+    departureFormatted: '5 يوليو 2026، 09:30 (بتوقيت الرياض)',
     returnFormatted: null,
     passengersCount: 1,
     baseAmount: 60000,
@@ -189,7 +192,7 @@ test('Case 4: customer name is trimmed', () => {
     customerName: '   محمد القحطاني   ',
     bookingNumber: 'AER-B-12345678',
     routeFormatted: 'الرياض ← جدة',
-    departureFormatted: '1 أغسطس 2026، 10:00',
+    departureFormatted: '1 أغسطس 2026، 10:00 (بتوقيت الرياض)',
     returnFormatted: null,
     passengersCount: 3,
     baseAmount: 50000,
@@ -219,7 +222,7 @@ test('Case 5: whitespace-only name → guest mode', () => {
     customerName: '   ',
     bookingNumber: 'AER-B-WS00000',
     routeFormatted: 'الرياض ← مسقط',
-    departureFormatted: '15 سبتمبر 2026، 16:00',
+    departureFormatted: '15 سبتمبر 2026، 16:00 (بتوقيت الرياض)',
     returnFormatted: null,
     passengersCount: 2,
     baseAmount: 70000,
@@ -245,7 +248,7 @@ test('Case 6: multiple addons render in caller-supplied order', () => {
     customerName: 'سارة',
     bookingNumber: 'AER-B-MULTI001',
     routeFormatted: 'جدة ← الرياض',
-    departureFormatted: '10 أكتوبر 2026، 12:00',
+    departureFormatted: '10 أكتوبر 2026، 12:00 (بتوقيت الرياض)',
     returnFormatted: null,
     passengersCount: 4,
     baseAmount: 100000,
@@ -297,7 +300,7 @@ test('Case 7: NULL passengers count → omitted', () => {
     customerName: 'علي',
     bookingNumber: 'AER-B-NOPAX',
     routeFormatted: 'الدمام ← أبوظبي',
-    departureFormatted: '20 نوفمبر 2026، 08:00',
+    departureFormatted: '20 نوفمبر 2026، 08:00 (بتوقيت الرياض)',
     returnFormatted: null,
     passengersCount: null,
     baseAmount: 40000,
@@ -310,6 +313,65 @@ test('Case 7: NULL passengers count → omitted', () => {
   // Other trip-details lines still rendered.
   assert.match(result, /رقم الحجز: AER-B-NOPAX/);
   assert.match(result, /المسار: الدمام ← أبوظبي/);
+});
+
+// ────────────────────────────────────────────────────────────
+// Case 8: regression guard for the PR 2c hotfix.
+// ────────────────────────────────────────────────────────────
+
+test('Case 8 (regression): (بتوقيت الرياض) suffix is NOT duplicated', () => {
+  // PR 2c shipped with the builder appending the
+  // `(بتوقيت الرياض)` suffix to the departure / return lines,
+  // but the caller (`formatRiyadhDateTime`) already includes
+  // it. Production smoke caught the resulting double-suffix
+  // ("(بتوقيت الرياض) (بتوقيت الرياض)") on the WhatsApp
+  // message. This test guards against the regression: verify
+  // the suffix appears EXACTLY ONCE per line, even when the
+  // caller passes in a value that already contains the
+  // suffix.
+  const result = buildWhatsappConfirmMessage({
+    customerName: 'باسم الحجري',
+    bookingNumber: 'AER-B-DUPSUFFIX',
+    routeFormatted: 'جدة ← الرياض',
+    departureFormatted: '10 مايو 2026، 03:00 (بتوقيت الرياض)',
+    returnFormatted: '12 مايو 2026، 18:00 (بتوقيت الرياض)',
+    passengersCount: 2,
+    baseAmount: 45000,
+    addonsAmount: 0,
+    totalAmount: 45000,
+    activeAddons: [],
+    reviewUrl: 'https://aeris-flax.vercel.app/booking/dup/checkout-prep',
+  });
+
+  const departureLineMatch = result.match(/^• المغادرة: .+$/m);
+  assert.ok(departureLineMatch, 'departure line found');
+  const departureSuffixCount = (
+    departureLineMatch[0].match(/\(بتوقيت الرياض\)/g) ?? []
+  ).length;
+  assert.equal(
+    departureSuffixCount,
+    1,
+    `expected exactly 1 (بتوقيت الرياض) on departure line, got ${departureSuffixCount}`
+  );
+
+  const returnLineMatch = result.match(/^• العودة: .+$/m);
+  assert.ok(returnLineMatch, 'return line found');
+  const returnSuffixCount = (
+    returnLineMatch[0].match(/\(بتوقيت الرياض\)/g) ?? []
+  ).length;
+  assert.equal(
+    returnSuffixCount,
+    1,
+    `expected exactly 1 (بتوقيت الرياض) on return line, got ${returnSuffixCount}`
+  );
+
+  // Sanity: no occurrence of the literal duplicated form
+  // anywhere in the message.
+  assert.doesNotMatch(
+    result,
+    /\(بتوقيت الرياض\)\s*\(بتوقيت الرياض\)/,
+    'no double-suffix anywhere in the message'
+  );
 });
 
 // ────────────────────────────────────────────────────────────
