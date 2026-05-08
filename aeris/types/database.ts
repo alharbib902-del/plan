@@ -1094,6 +1094,256 @@ export type EmptyLegOutreachAlertStatusUpdate = Partial<
   Omit<EmptyLegOutreachAlertStatusRow, 'id'>
 >;
 
+// ============================================================================
+// Phase 7 PR 2a: SECURITY DEFINER RPC layer
+//
+// Migration file: 20260510000011_phase_7_empty_legs_rpcs.sql.
+// 11 public functions + 1 internal helper + 1 no-op stub.
+// All publics: SECURITY DEFINER + service-role-only EXECUTE +
+// structured-error contract on every validation failure (no
+// raises). Helper `_recompute_empty_leg_price` is REVOKEd
+// from every role and not exposed via the Functions map
+// below (callable only from inside the publics).
+//
+// Args/Result types below are exported so PR 2b–2e Server
+// Actions get strict typing on `supabase.rpc(...)` calls.
+// PR 2a itself ships zero callers — only the SQL migration +
+// these types + the parity-test extension.
+// ============================================================================
+
+// --- 1. publish_empty_leg ---
+
+export type PublishEmptyLegArgs = {
+  p_operator_id: string | null;
+  p_operator_stub_id: string | null;
+  p_operator_name: string;
+  p_operator_phone: string;
+  p_operator_email: string;
+  p_aircraft_id: string | null;
+  p_aircraft_text: string | null;
+  p_parent_booking_id: string | null;
+  p_departure_airport_iata: string | null;
+  p_departure_airport_freeform: string | null;
+  p_arrival_airport_iata: string | null;
+  p_arrival_airport_freeform: string | null;
+  p_departure_window_start: string;
+  p_departure_window_end: string;
+  p_flexibility_hours: number | null;
+  p_original_price: number;
+  p_max_passengers: number;
+  p_auction_initial_discount_pct: number | null;
+  p_auction_floor_discount_pct: number | null;
+  p_auction_curve: EmptyLegAuctionCurve | null;
+  p_auction_window_lead_hours: number | null;
+  p_suppress_notifications: boolean | null;
+};
+
+export type PublishEmptyLegError =
+  | 'departure_route_missing'
+  | 'arrival_route_missing'
+  | 'departure_window_invalid'
+  | 'original_price_invalid'
+  | 'max_passengers_invalid'
+  | 'auction_initial_discount_out_of_range'
+  | 'auction_floor_discount_out_of_range'
+  | 'auction_floor_below_initial'
+  | 'auction_curve_invalid'
+  | 'auction_window_already_closed';
+
+export type PublishEmptyLegResult =
+  | {
+      ok: true;
+      leg_id: string;
+      leg_number: string;
+      current_price: number;
+    }
+  | { ok: false; error: PublishEmptyLegError };
+
+// --- 2. update_empty_leg_price ---
+
+export type UpdateEmptyLegPriceArgs = {
+  p_leg_id: string;
+  p_new_price: number;
+};
+
+export type UpdateEmptyLegPriceError =
+  | 'leg_not_found'
+  | 'leg_not_available'
+  | 'new_price_invalid'
+  | 'new_price_above_original'
+  | 'new_price_below_floor';
+
+export type UpdateEmptyLegPriceResult =
+  | {
+      ok: true;
+      leg_id: string;
+      current_price: number;
+      current_discount_pct: number;
+      fired_event: boolean;
+    }
+  | { ok: false; error: UpdateEmptyLegPriceError };
+
+// --- 3. reserve_empty_leg ---
+
+export type ReserveEmptyLegArgs = {
+  p_leg_id: string;
+  p_token_hash: string;
+  p_expires_at: string;
+  p_customer_name: string;
+  p_customer_phone: string;
+};
+
+export type ReserveEmptyLegError =
+  | 'leg_not_found'
+  | 'leg_not_available'
+  | 'leg_window_closed'
+  | 'reservation_token_invalid'
+  | 'reservation_expiry_invalid'
+  | 'customer_name_missing'
+  | 'customer_phone_missing';
+
+export type ReserveEmptyLegResult =
+  | {
+      ok: true;
+      leg_id: string;
+      reservation_expires_at: string;
+    }
+  | { ok: false; error: ReserveEmptyLegError };
+
+// --- 4. confirm_empty_leg_reservation ---
+
+export type ConfirmEmptyLegReservationArgs = {
+  p_leg_id: string;
+  p_token_hash: string;
+};
+
+export type ConfirmEmptyLegReservationError =
+  | 'leg_not_found'
+  | 'leg_not_reserved'
+  | 'reservation_expired'
+  | 'reservation_token_mismatch'
+  | 'reservation_state_invalid'
+  | 'leg_route_origin_missing'
+  | 'leg_route_destination_missing';
+
+export type ConfirmEmptyLegReservationResult =
+  | {
+      ok: true;
+      leg_id: string;
+      booking_id: string;
+    }
+  | { ok: false; error: ConfirmEmptyLegReservationError };
+
+// --- 5. release_empty_leg_reservation ---
+
+export type ReleaseEmptyLegReservationArgs = {
+  p_leg_id: string;
+  p_token_hash: string;
+};
+
+export type ReleaseEmptyLegReservationError =
+  | 'leg_not_found'
+  | 'leg_not_reserved'
+  | 'reservation_token_mismatch';
+
+export type ReleaseEmptyLegReservationResult =
+  | { ok: true; leg_id: string }
+  | { ok: false; error: ReleaseEmptyLegReservationError };
+
+// --- 6. admin_release_empty_leg_reservation ---
+
+export type AdminReleaseEmptyLegReservationArgs = {
+  p_leg_id: string;
+};
+
+export type AdminReleaseEmptyLegReservationError =
+  | 'leg_not_found'
+  | 'leg_not_reserved';
+
+export type AdminReleaseEmptyLegReservationResult =
+  | { ok: true; leg_id: string }
+  | { ok: false; error: AdminReleaseEmptyLegReservationError };
+
+// --- 7. cancel_empty_leg ---
+
+export type CancelEmptyLegArgs = {
+  p_leg_id: string;
+  p_reason: string | null;
+};
+
+export type CancelEmptyLegError =
+  | 'leg_not_found'
+  | 'leg_sold_use_booking_flow'
+  | 'leg_terminal';
+
+export type CancelEmptyLegResult =
+  | { ok: true; leg_id: string }
+  | { ok: false; error: CancelEmptyLegError };
+
+// --- 8. expire_empty_leg_reservation ---
+
+export type ExpireEmptyLegReservationArgs = {
+  p_leg_id: string;
+};
+
+export type ExpireEmptyLegReservationResult =
+  | { ok: true; leg_id?: string; no_op?: boolean }
+  | { ok: false; error: 'leg_not_found' };
+
+// --- 9. tick_empty_leg_dutch_auction ---
+
+export type TickEmptyLegDutchAuctionArgs = {
+  p_leg_id: string;
+};
+
+export type TickEmptyLegDutchAuctionResult =
+  | {
+      ok: true;
+      leg_id?: string;
+      old_pct?: number;
+      new_pct?: number;
+      fired_event?: boolean;
+      no_op?: boolean;
+    }
+  | { ok: false; error: 'leg_not_found' };
+
+// --- 10. admin_mark_empty_leg_sold ---
+
+export type AdminMarkEmptyLegSoldArgs = {
+  p_leg_id: string;
+  p_customer_name: string;
+  p_customer_phone: string;
+};
+
+export type AdminMarkEmptyLegSoldError =
+  | 'leg_not_found'
+  | 'leg_not_available'
+  | 'leg_window_closed'
+  | 'customer_name_missing'
+  | 'customer_phone_missing'
+  | 'leg_route_origin_missing'
+  | 'leg_route_destination_missing';
+
+export type AdminMarkEmptyLegSoldResult =
+  | {
+      ok: true;
+      leg_id: string;
+      booking_id: string;
+    }
+  | { ok: false; error: AdminMarkEmptyLegSoldError };
+
+// --- 11. publish_empty_leg_event (no-op stub in PR 2a) ---
+
+export type PublishEmptyLegEventArgs = {
+  p_leg_id: string;
+  p_event_type: 'published' | 'price_dropped';
+};
+
+// `RETURNS VOID` in plpgsql; supabase-js types these as
+// `null`. PR 2e replaces the body with the outbox-write
+// logic but keeps the same signature + return type.
+export type PublishEmptyLegEventResult = null;
+
 export type Database = {
   __InternalSupabase: {
     PostgrestVersion: '12';
@@ -1318,6 +1568,57 @@ export type Database = {
       confirm_checkout_prep: {
         Args: ConfirmCheckoutPrepArgs;
         Returns: ConfirmCheckoutPrepResult;
+      };
+      // Phase 7 PR 2a: 11 SECURITY DEFINER public functions
+      // covering every empty_legs mutation (publish, reprice,
+      // reserve, confirm, release × 2, cancel, expire, tick,
+      // mark-sold) + the no-op publish_empty_leg_event stub
+      // that PR 2e replaces. All service-role-only EXECUTE.
+      // The internal helper `_recompute_empty_leg_price` is
+      // REVOKEd from every role and not exposed here.
+      publish_empty_leg: {
+        Args: PublishEmptyLegArgs;
+        Returns: PublishEmptyLegResult;
+      };
+      update_empty_leg_price: {
+        Args: UpdateEmptyLegPriceArgs;
+        Returns: UpdateEmptyLegPriceResult;
+      };
+      reserve_empty_leg: {
+        Args: ReserveEmptyLegArgs;
+        Returns: ReserveEmptyLegResult;
+      };
+      confirm_empty_leg_reservation: {
+        Args: ConfirmEmptyLegReservationArgs;
+        Returns: ConfirmEmptyLegReservationResult;
+      };
+      release_empty_leg_reservation: {
+        Args: ReleaseEmptyLegReservationArgs;
+        Returns: ReleaseEmptyLegReservationResult;
+      };
+      admin_release_empty_leg_reservation: {
+        Args: AdminReleaseEmptyLegReservationArgs;
+        Returns: AdminReleaseEmptyLegReservationResult;
+      };
+      cancel_empty_leg: {
+        Args: CancelEmptyLegArgs;
+        Returns: CancelEmptyLegResult;
+      };
+      expire_empty_leg_reservation: {
+        Args: ExpireEmptyLegReservationArgs;
+        Returns: ExpireEmptyLegReservationResult;
+      };
+      tick_empty_leg_dutch_auction: {
+        Args: TickEmptyLegDutchAuctionArgs;
+        Returns: TickEmptyLegDutchAuctionResult;
+      };
+      admin_mark_empty_leg_sold: {
+        Args: AdminMarkEmptyLegSoldArgs;
+        Returns: AdminMarkEmptyLegSoldResult;
+      };
+      publish_empty_leg_event: {
+        Args: PublishEmptyLegEventArgs;
+        Returns: PublishEmptyLegEventResult;
       };
     };
     CompositeTypes: { [_ in never]: never };

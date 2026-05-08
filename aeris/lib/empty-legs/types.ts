@@ -14,6 +14,7 @@
  * row types from here.
  */
 
+// PR 1 row + enum types
 export type {
   EmptyLegStatus,
   EmptyLegAuctionCurve,
@@ -35,4 +36,38 @@ export type {
   EmptyLegOutreachAlertStatusValue,
   EmptyLegOutreachAlertStatusRow,
   EmptyLegOutreachAlertStatusUpdate,
+} from '@/types/database';
+
+// PR 2a RPC arg + result types
+export type {
+  PublishEmptyLegArgs,
+  PublishEmptyLegError,
+  PublishEmptyLegResult,
+  UpdateEmptyLegPriceArgs,
+  UpdateEmptyLegPriceError,
+  UpdateEmptyLegPriceResult,
+  ReserveEmptyLegArgs,
+  ReserveEmptyLegError,
+  ReserveEmptyLegResult,
+  ConfirmEmptyLegReservationArgs,
+  ConfirmEmptyLegReservationError,
+  ConfirmEmptyLegReservationResult,
+  ReleaseEmptyLegReservationArgs,
+  ReleaseEmptyLegReservationError,
+  ReleaseEmptyLegReservationResult,
+  AdminReleaseEmptyLegReservationArgs,
+  AdminReleaseEmptyLegReservationError,
+  AdminReleaseEmptyLegReservationResult,
+  CancelEmptyLegArgs,
+  CancelEmptyLegError,
+  CancelEmptyLegResult,
+  ExpireEmptyLegReservationArgs,
+  ExpireEmptyLegReservationResult,
+  TickEmptyLegDutchAuctionArgs,
+  TickEmptyLegDutchAuctionResult,
+  AdminMarkEmptyLegSoldArgs,
+  AdminMarkEmptyLegSoldError,
+  AdminMarkEmptyLegSoldResult,
+  PublishEmptyLegEventArgs,
+  PublishEmptyLegEventResult,
 } from '@/types/database';
