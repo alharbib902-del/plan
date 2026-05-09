@@ -1414,15 +1414,19 @@ export type OperatorNotificationAlertStatusUpdate = Partial<
 >;
 
 // ============================================================================
-// Phase 8 PR 2a — Operator RPC layer (17 publics + 1 helper)
+// Phase 8 PR 2a — Operator RPC layer (17 publics + 2 helpers)
 //
 // Migration file: 20260513000021_phase_8_operator_rpcs.sql
 //
 // All publics: SECURITY DEFINER + service-role-only EXECUTE +
 // structured-error contract on every validation failure (no
-// raises). Helper `_normalize_operator_email` is REVOKEd from
-// every role and not exposed via the Functions map below
-// (callable only from inside the publics).
+// raises). Both internal helpers are REVOKEd from every role
+// and NOT exposed via the Functions map below (callable only
+// from inside the publics):
+//   - `_normalize_operator_email(TEXT)` → LOWER(BTRIM(...))
+//   - `_is_sha256_hex(TEXT)`            → NULL+length+lowercase-hex
+//     (added in Codex round-3 P2 #1 fix; round-4 P2 brought
+//     this header in line)
 //
 // Args/Result types below are exported so PR 2b/2c/2d Server
 // Actions get strict typing on `supabase.rpc(...)` calls.
@@ -2387,8 +2391,10 @@ export type Database = {
       };
       // Phase 8 PR 2a: 17 operator-account RPCs (all SECURITY
       // DEFINER + service-role-only EXECUTE; structured-error
-      // contract). Helper _normalize_operator_email is REVOKEd
-      // from every role and intentionally NOT exposed here.
+      // contract). The 2 internal helpers
+      // (_normalize_operator_email, _is_sha256_hex — the latter
+      // added in Codex round-3 P2 #1 fix) are REVOKEd from every
+      // role and intentionally NOT exposed here.
       operator_signup: {
         Args: OperatorSignupArgs;
         Returns: OperatorSignupResult;

@@ -788,20 +788,26 @@ PR 2a discipline:
 Migration file:
 `supabase/migrations/20260513000021_phase_8_operator_rpcs.sql`
 
-### 4.1 Function inventory (17 publics + 1 helper)
+### 4.1 Function inventory (17 publics + 2 helpers)
 
 Codex round-2 P1 #2 fix: the round-1 split of `operator_login`
 into a 2-step flow grew the public count from 15 to 16. The
 inventory below also reclassifies `consume_operator_welcome_token`
 from "stub" (round-0 wording was misleading; it was always
 fully implemented in PR 2a) to a regular public RPC, bringing
-the total to 17 publics + 1 helper. Each function is
-enumerated on its own row so grants, generated types, and the
-RPC-grants probe can reference each one directly.
+the total to 17 publics + 1 helper. PR 2a Codex round-3 P2 #1
+fix on the migration added a second helper `_is_sha256_hex`
+(shared sha256-hex predicate for all session/welcome/reset/OTP
+hash validations); PR 2a Codex round-4 P2 brought this
+inventory + downstream probes/acceptance/implementation-order
+in line. The total is now **17 publics + 2 helpers**. Each
+function is enumerated on its own row so grants, generated
+types, and the RPC-grants probe can reference each one directly.
 
 | # | Function | Caller (in subsequent PRs) |
 |:-:|---|---|
 | (helper) | `_normalize_operator_email(TEXT)` | internal — REVOKEd from every role |
+| (helper) | `_is_sha256_hex(TEXT)` | internal — REVOKEd from every role (PR 2a Codex round-3 P2 #1 fix) |
 | 1 | `operator_signup(p_email, p_password_hash, p_company_name, p_contact_email, p_contact_phone, p_notes, p_ip)` | PR 2c `/operator/signup` |
 | 2 | `operator_login_lookup(p_email)` | PR 2c `/operator/login` (step 1 of 2 — see §4.2) |
 | 3 | `operator_login_create_session(p_operator_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/login` (step 2 of 2 — see §4.2) |
@@ -1116,20 +1122,24 @@ operator. Used once on first login.
   P2 #1 fix: count updated from 15 to 17 after the
   round-2 login split + welcome-token reclassification).
   Each function gets its `Args*` + `Result*` exports +
-  one entry in `Database['public']['Functions']`. The
-  helper `_normalize_operator_email` is intentionally
-  NOT exposed in the Functions map (REVOKEd from every
-  role; callable only from inside the publics).
+  one entry in `Database['public']['Functions']`. Both
+  helpers (`_normalize_operator_email`,
+  `_is_sha256_hex` — the latter added in PR 2a Codex
+  round-3 P2 #1 fix) are intentionally NOT exposed in
+  the Functions map (REVOKEd from every role; callable
+  only from inside the publics).
 - **Edit:** `lib/empty-legs/types.ts` — re-export the
   Phase-8-scoped surface (17 Args/Result type pairs;
-  helper not exposed; mirrors PR 2a discipline).
+  helpers not exposed; mirrors PR 2a discipline).
 
 ### Founder probes after PR 2a (4 probes)
 
 5. **RPC grants** (Codex round-2 P1 #2 fix: count
    updated to 17 publics + 1 helper after the login
-   split + the welcome-token reclassification) —
-   service-role psql: `\df+ public.*operator*` shows
+   split + the welcome-token reclassification; PR 2a
+   Codex round-4 P2 fix: count updated to 17 publics
+   + **2 helpers** after round-3 added `_is_sha256_hex`)
+   — service-role psql: `\df+ public.*operator*` shows
    17 publics:
      1. `operator_signup`
      2. `operator_login_lookup`
@@ -1148,9 +1158,10 @@ operator. Used once on first login.
      15. `verify_operator_otp`
      16. `convert_phase7_stub_to_operator`
      17. `consume_operator_welcome_token`
-   plus the 1 helper `_normalize_operator_email`. Each
-   public has `EXECUTE` granted to `service_role` ONLY.
-   Helper has zero grantees.
+   plus the 2 helpers (`_normalize_operator_email`,
+   `_is_sha256_hex`). Each public has `EXECUTE` granted
+   to `service_role` ONLY. **Both** helpers have zero
+   grantees.
 6. **Approve smoke** — admin RPC dry-run: INSERT a
    pending operator row with **all required fixture
    columns** (Codex round-3 P1 #1 fix: `auth_email` is
@@ -1716,14 +1727,16 @@ merges.
 
 ### RPCs (PR 2a)
 
-7. 17 public functions + 1 helper exist; all are
+7. **17 public functions + 2 helpers** exist; all are
    SECURITY DEFINER (Codex round-2 P1 #2 fix: count
    updated after login split + welcome-token
-   reclassification).
+   reclassification; PR 2a Codex round-4 P2 fix: helper
+   count updated 1 → 2 after round-3 added
+   `_is_sha256_hex`).
 8. Each public has `EXECUTE` granted to `service_role`
    ONLY.
-9. The helper `_normalize_operator_email` has zero
-   grantees.
+9. **Both** helpers (`_normalize_operator_email`,
+   `_is_sha256_hex`) have zero grantees.
 10. `operator_signup` rejects duplicate emails AND
     rate-limited IPs (≥3 successful signups in 24h).
 11. The login flow rejects unknown email + wrong
@@ -1931,11 +1944,13 @@ index.)
    added in round 1 to cover the alert-status
    singleton seed but the handoff checklist still
    said 1-4).
-2. **PR 2a — RPC layer** (**17 publics + 1 helper**, all
+2. **PR 2a — RPC layer** (**17 publics + 2 helpers**, all
    SECURITY DEFINER — Codex round-3 P2 #2 fix: count
-   updated from 15 to 17 to match §4.1 inventory after
-   the round-2 login split + welcome-token
-   reclassification). Founder runs migration; verifies
+   updated from 15 to 17 publics to match §4.1 inventory
+   after the round-2 login split + welcome-token
+   reclassification; PR 2a Codex round-4 P2 fix: helper
+   count updated 1 → 2 after round-3 added
+   `_is_sha256_hex`). Founder runs migration; verifies
    probes 5-8.
 3. **PR 2b — Admin surfaces**. Founder verifies probes
    9-13.

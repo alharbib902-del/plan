@@ -1,5 +1,5 @@
 -- ============================================================
--- Phase 8 — PR 2a: Operator RPC layer (17 publics + 1 helper)
+-- Phase 8 — PR 2a: Operator RPC layer (17 publics + 2 helpers)
 --
 -- Ships the SQL function family that PR 2b/2c/2d Server
 -- Actions wrap. Mirrors the Phase 7 PR 2a discipline:
@@ -1615,8 +1615,10 @@ GRANT EXECUTE ON FUNCTION consume_operator_welcome_token(VARCHAR, VARCHAR, BOOLE
 
 -- ============================================================
 -- Migration complete. Total surface added:
---   - 1 internal helper (_normalize_operator_email) REVOKEd
---     from every role
+--   - 2 internal helpers REVOKEd from every role (Codex round-3
+--     P2 #1 fix added the 2nd helper):
+--       * _normalize_operator_email(TEXT) — LOWER(BTRIM(...))
+--       * _is_sha256_hex(TEXT)            — NULL+length+lowercase-hex
 --   - 17 SECURITY DEFINER public RPCs, EXECUTE granted to
 --     service_role only
 --   - All publics use structured-error JSON contract
@@ -1625,8 +1627,11 @@ GRANT EXECUTE ON FUNCTION consume_operator_welcome_token(VARCHAR, VARCHAR, BOOLE
 --
 -- Founder probes (per spec §4 founder probes 5-8):
 --   5. RPC grants — \df+ public.*operator* shows 17 publics +
---      1 helper; each public has EXECUTE granted to service_role;
---      helper has zero grantees
+--      2 helpers (_normalize_operator_email, _is_sha256_hex);
+--      each public has EXECUTE granted to service_role; both
+--      helpers have zero grantees (Codex round-4 P2: count
+--      updated from 1 to 2 helpers after round 3 added
+--      _is_sha256_hex)
 --   6. Approve smoke — INSERT pending operator + call
 --      admin_approve_operator + assert signup_status='approved'
 --   7. Login smoke — 5-step 2-step login flow with bcrypt

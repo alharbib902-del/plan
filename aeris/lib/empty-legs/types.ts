@@ -90,9 +90,10 @@ export type {
   // pairs. Re-exported here so PR 2b (admin) + PR 2c
   // (operator portal) + PR 2d (notifications) can import a
   // single Phase-8-scoped surface mirroring the Phase 7
-  // PR 2a alias-layer ritual. The internal helper
-  // `_normalize_operator_email` is REVOKEd from every role
-  // and intentionally NOT exposed here.
+  // PR 2a alias-layer ritual. The 2 internal helpers
+  // (`_normalize_operator_email`, `_is_sha256_hex` — the
+  // latter added in Codex round-3 P2 #1 fix) are REVOKEd
+  // from every role and intentionally NOT exposed here.
   OperatorSignupArgs,
   OperatorSignupError,
   OperatorSignupResult,
