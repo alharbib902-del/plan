@@ -233,10 +233,11 @@ ALTER TABLE operators ALTER COLUMN license_expiry DROP NOT NULL;
 Per decision §3 (admin completes documents). The columns
 stay typed-correct; admin uploads populate them later.
 
-### 3.3 Add custom-auth columns
+### 3.3 Add custom-auth columns (14 columns)
 
 ```sql
 ALTER TABLE operators
+  ADD COLUMN IF NOT EXISTS auth_email TEXT,
   ADD COLUMN IF NOT EXISTS password_hash TEXT,
   ADD COLUMN IF NOT EXISTS password_set_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS password_must_change BOOLEAN NOT NULL DEFAULT FALSE,
@@ -250,7 +251,25 @@ ALTER TABLE operators
   ADD COLUMN IF NOT EXISTS welcome_token_hash VARCHAR(64),
   ADD COLUMN IF NOT EXISTS welcome_token_expires_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS welcome_token_used_at TIMESTAMPTZ;
+
+-- auth_email is the immutable login identifier (Codex
+-- round-2 P1 #1 fix). The signup form writes the same
+-- email to both auth_email AND contact_email. Profile
+-- edits can change contact_email; auth_email is
+-- read-only. Login + password-reset look up by
+-- auth_email. Unique index added below.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_operators_auth_email_unique
+  ON operators(LOWER(auth_email))
+  WHERE auth_email IS NOT NULL;
 ```
+
+The `auth_email` column is nullable to keep the migration
+backward-safe on existing rows (production has zero
+`operators` rows; new rows from PR 2c's signup always
+populate both columns). The `LOWER()` index normalizes
+on read — see helper `_normalize_operator_email()` in
+§4 — so `Founder@Aeris.sa` and `founder@aeris.sa`
+resolve to the same row at lookup time.
 
 `password_hash` is nullable for the welcome-magic-link
 path: an operator who completed signup with a password
@@ -513,10 +532,18 @@ SELECT id, status FROM operator_notification_alert_status
 
 - **Add:** `supabase/migrations/20260512000020_phase_8_operator_accounts.sql`
 - **Edit:** `types/database.ts` — extend the `Database` map
-  with the 5 new tables + new columns on `operators`.
-  Hand-maintained per the Phase 7 alias-layer ritual; if
-  Codex flags this in round 1 we'll address with a thin
-  alias layer rather than a 39-file refactor.
+  with the **6** new tables (Codex round-2 P2 #1 fix:
+  count updated to include
+  `operator_notification_alert_status` from §3.10) plus
+  the 14 new columns on `operators` (including
+  `auth_email` from the round-2 P1 #1 fix). The 6
+  tables are: `operator_sessions`,
+  `operator_password_reset_tokens`, `operator_otp_codes`,
+  `operator_documents`, `operator_signup_attempts`,
+  `operator_notification_alert_status`. Hand-maintained
+  per the Phase 7 alias-layer ritual; if Codex flags
+  this in round 3 we'll address with a thin alias layer
+  rather than a 39-file refactor.
 - **Edit:** `lib/empty-legs/types.ts` — re-export
   `OperatorRow` (renamed from `OperatorRecord` if it
   exists) for downstream PRs.
@@ -572,34 +599,47 @@ PR 2a discipline:
 Migration file:
 `supabase/migrations/20260513000021_phase_8_operator_rpcs.sql`
 
-### 4.1 Function inventory (15 publics + 1 helper + 1 stub)
+### 4.1 Function inventory (17 publics + 1 helper)
+
+Codex round-2 P1 #2 fix: the round-1 split of `operator_login`
+into a 2-step flow grew the public count from 15 to 16. The
+inventory below also reclassifies `consume_operator_welcome_token`
+from "stub" (round-0 wording was misleading; it was always
+fully implemented in PR 2a) to a regular public RPC, bringing
+the total to 17 publics + 1 helper. Each function is
+enumerated on its own row so grants, generated types, and the
+RPC-grants probe can reference each one directly.
 
 | # | Function | Caller (in subsequent PRs) |
 |:-:|---|---|
 | (helper) | `_normalize_operator_email(TEXT)` | internal — REVOKEd from every role |
 | 1 | `operator_signup(p_email, p_password_hash, p_company_name, p_contact_email, p_contact_phone, p_notes, p_ip)` | PR 2c `/operator/signup` |
-| 2 | `operator_login_lookup(p_email)` + `operator_login_create_session(p_operator_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/login` (two-step: see §4.2 fix below) |
-| 3 | `operator_logout(p_session_token_hash)` | PR 2c `/operator/logout` |
-| 4 | `operator_session_validate(p_token_hash)` | PR 2c every protected page + Server Action |
-| 5 | `admin_approve_operator(p_operator_id)` | PR 2b `/admin/operators/<id>` |
-| 6 | `admin_reject_operator(p_operator_id, p_reason)` | PR 2b `/admin/operators/<id>` |
-| 7 | `admin_suspend_operator(p_operator_id, p_reason)` | PR 2b `/admin/operators/<id>` |
-| 8 | `admin_unsuspend_operator(p_operator_id)` | PR 2b `/admin/operators/<id>` |
-| 9 | `admin_set_operator_documents(p_operator_id, p_commercial_registration, p_gaca_license, p_license_expiry)` | PR 2b `/admin/operators/<id>/documents` |
-| 10 | `admin_reset_operator_password(p_operator_id, p_new_password_hash)` | PR 2b `/admin/operators/<id>` |
-| 11 | `mint_operator_password_reset_token(p_email, p_token_hash, p_expires_at)` | PR 2d `/operator/forgot-password` |
-| 12 | `verify_operator_password_reset(p_token_hash, p_new_password_hash)` | PR 2d `/operator/reset-password/[token]` |
-| 13 | `mint_operator_otp(p_operator_id, p_code_hash, p_purpose, p_expires_at)` | PR 2b `/admin/operators/<id>` (admin-issued only in §6) |
-| 14 | `verify_operator_otp(p_operator_id, p_code_hash)` | PR 2c `/operator/login/otp` |
-| 15 | `convert_phase7_stub_to_operator(p_stub_id, p_operator_id)` | PR 2b `/admin/empty-legs/operators/<stub_id>/convert` |
-| (stub) | `consume_operator_welcome_token(p_token_hash)` | PR 2c `/operator/welcome/[token]` (body in PR 2a; no separate stub PR) |
+| 2 | `operator_login_lookup(p_email)` | PR 2c `/operator/login` (step 1 of 2 — see §4.2) |
+| 3 | `operator_login_create_session(p_operator_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/login` (step 2 of 2 — see §4.2) |
+| 4 | `operator_logout(p_session_token_hash)` | PR 2c `/operator/logout` |
+| 5 | `operator_session_validate(p_token_hash)` | PR 2c every protected page + Server Action |
+| 6 | `admin_approve_operator(p_operator_id, p_welcome_token_hash, p_welcome_token_expires_at)` | PR 2b `/admin/operators/<id>` |
+| 7 | `admin_reject_operator(p_operator_id, p_reason)` | PR 2b `/admin/operators/<id>` |
+| 8 | `admin_suspend_operator(p_operator_id, p_reason)` | PR 2b `/admin/operators/<id>` |
+| 9 | `admin_unsuspend_operator(p_operator_id)` | PR 2b `/admin/operators/<id>` |
+| 10 | `admin_set_operator_documents(p_operator_id, p_commercial_registration, p_gaca_license, p_license_expiry)` | PR 2b `/admin/operators/<id>/documents` |
+| 11 | `admin_reset_operator_password(p_operator_id, p_new_password_hash)` | PR 2b `/admin/operators/<id>` |
+| 12 | `mint_operator_password_reset_token(p_email, p_token_hash, p_expires_at)` | PR 2d `/operator/forgot-password` |
+| 13 | `verify_operator_password_reset(p_token_hash, p_new_password_hash)` | PR 2d `/operator/reset-password/[token]` |
+| 14 | `mint_operator_otp(p_operator_id, p_code_hash, p_purpose, p_expires_at)` | PR 2b `/admin/operators/<id>` (admin-issued only in §6) |
+| 15 | `verify_operator_otp(p_operator_id, p_code_hash)` | PR 2c `/operator/login/otp` |
+| 16 | `convert_phase7_stub_to_operator(p_stub_id, p_operator_id)` | PR 2b `/admin/empty-legs/operators/<stub_id>/convert` |
+| 17 | `consume_operator_welcome_token(p_token_hash, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/welcome/[token]` |
 
 ### 4.2 Body sketches (key contracts)
 
 #### `operator_signup`
 
 1. Lock the email — SELECT … FROM operators WHERE
-   `_normalize_operator_email(contact_email)` = `_normalize_operator_email(p_email)` FOR UPDATE.
+   `_normalize_operator_email(auth_email)` =
+   `_normalize_operator_email(p_email)` FOR UPDATE.
+   (Codex round-2 P1 #1 fix: lookup by `auth_email`,
+   the immutable login identifier.)
 2. If a row exists → INSERT into
    `operator_signup_attempts` with
    `result='duplicate_email'` and return
@@ -612,14 +652,20 @@ Migration file:
 4. Validate password hash format (bcrypt $2a$ / $2b$ /
    $2y$ prefix). If invalid → return
    `{ ok: false, error: 'password_hash_malformed' }`.
-   The Zod layer in PR 2c parses + bcrypts the plaintext
+   The Server Action in PR 2c bcrypts the plaintext
    before this RPC; defense in depth.
 5. Validate `p_company_name` length, `p_contact_email`
    format, `p_contact_phone` length per the same
    patterns as PR 2c's stub bootstrap.
-6. INSERT into `operators` with `signup_status='pending',
-   password_hash=p_password_hash, password_set_at=NOW()`.
-   Return `{ ok: true, operator_id, signup_status:'pending' }`.
+6. INSERT into `operators` with `auth_email=p_email,
+   contact_email=p_email, signup_status='pending',
+   password_hash=p_password_hash,
+   password_set_at=NOW()`. Both `auth_email` and
+   `contact_email` are seeded with the same value at
+   signup time; `auth_email` stays immutable
+   afterward, `contact_email` can be edited via
+   `/operator/profile`. Return
+   `{ ok: true, operator_id, signup_status:'pending' }`.
 7. INSERT into `operator_signup_attempts` with
    `result='success'`.
 
@@ -649,8 +695,10 @@ Node-side bcrypt comparison in between.
 
 ##### Step 1 — `operator_login_lookup(p_email)`
 
-1. Look up the operator by normalized email. If not
-   found → return `{ ok: false, error: 'invalid_credentials' }`
+1. Look up the operator by normalized `auth_email`
+   (Codex round-2 P1 #1: NOT `contact_email`, which is
+   profile-mutable). If not found → return
+   `{ ok: false, error: 'invalid_credentials' }`
    (do NOT distinguish unknown-email from wrong-password
    — leaking that lets a spammer enumerate signups).
 2. If `signup_status != 'approved'` → return the
@@ -788,7 +836,8 @@ sets the regulatory text fields.
 
 #### `mint_operator_password_reset_token`
 
-1. Look up the operator by normalized email. If not
+1. Look up the operator by normalized `auth_email`
+   (Codex round-2 P1 #1: NOT `contact_email`). If not
    found → return `{ ok: true, no_op: true }` (do NOT
    leak that the email isn't registered — same posture
    as `operator_login`).
@@ -871,21 +920,53 @@ operator. Used once on first login.
 
 ### Founder probes after PR 2a (4 probes)
 
-5. **RPC grants** — service-role psql: `\df+
-   public.*operator*` shows 15 publics + 1 helper. Each
+5. **RPC grants** (Codex round-2 P1 #2 fix: count
+   updated to 17 publics + 1 helper after the login
+   split + the welcome-token reclassification) —
+   service-role psql: `\df+ public.*operator*` shows
+   17 publics:
+     1. `operator_signup`
+     2. `operator_login_lookup`
+     3. `operator_login_create_session`
+     4. `operator_logout`
+     5. `operator_session_validate`
+     6. `admin_approve_operator`
+     7. `admin_reject_operator`
+     8. `admin_suspend_operator`
+     9. `admin_unsuspend_operator`
+     10. `admin_set_operator_documents`
+     11. `admin_reset_operator_password`
+     12. `mint_operator_password_reset_token`
+     13. `verify_operator_password_reset`
+     14. `mint_operator_otp`
+     15. `verify_operator_otp`
+     16. `convert_phase7_stub_to_operator`
+     17. `consume_operator_welcome_token`
+   plus the 1 helper `_normalize_operator_email`. Each
    public has `EXECUTE` granted to `service_role` ONLY.
    Helper has zero grantees.
 6. **Approve smoke** — admin RPC dry-run: INSERT a
    pending operator row + call
-   `admin_approve_operator(operator_id)`; assert
-   `signup_status='approved'`, `approved_at` non-NULL,
-   `welcome_token_hash` non-NULL.
-7. **Login smoke** — call `operator_login(email,
-   p_password_hash, ...)` against the just-approved
-   operator. Assert a session row appears in
-   `operator_sessions` with the right expiry. Then call
-   `operator_session_validate(session_hash)` → returns
-   `{ ok: true, operator_id }`.
+   `admin_approve_operator(operator_id, p_welcome_token_hash, p_welcome_token_expires_at)`;
+   assert `signup_status='approved'`, `approved_at`
+   non-NULL, `welcome_token_hash` matches the input.
+7. **Login smoke** (Codex round-2 P1 #2 fix: probe
+   updated for the 2-step login flow) — against the
+   just-approved operator (the founder uses a known
+   plaintext password, e.g. `Probe7TestPass!`, that
+   was bcrypted at probe-2-INSERT time):
+   1. Call `operator_login_lookup(email)` →
+      assert `{ ok: true, operator_id, password_hash, password_must_change }`.
+   2. In Node (or psql + crypto helper), run
+      `bcrypt.compare('Probe7TestPass!', password_hash)`
+      → assert `true`.
+   3. Call `operator_login_create_session(operator_id,
+      session_token_hash, false, '127.0.0.1', 'probe')`
+      → assert a session row appears in
+      `operator_sessions` with the right
+      `expires_at` (NOW + 7 days for `remember_me=false`).
+   4. Call `operator_session_validate(session_hash)` →
+      returns `{ ok: true, operator_id }`.
 8. **Stub conversion smoke** — INSERT a synthetic stub +
    operator + 2 empty_legs rows linked to the stub.
    Call `convert_phase7_stub_to_operator(stub_id,
@@ -1068,7 +1149,17 @@ Phase 7 token-URL shape with cookie + session auth.
   (mirrors `lib/admin/auth.ts` shape; separate secret
   + cookie name).
 - `lib/operators/password.ts` — bcrypt wrappers (cost =
-  12; same defaults as bcryptjs's `genSalt(12)`).
+  12). Uses **`bcryptjs`** (pure JS, no native binding;
+  Vercel serverless-friendly — Codex round-2 P1 #3
+  fix). PR 2c file fence MUST include the
+  `package.json` + `package-lock.json` edits adding
+  `"bcryptjs": "^2.4.3"` and `"@types/bcryptjs": "^2.4.6"`
+  (devDep). The choice of `bcryptjs` over `bcrypt` is
+  intentional: `bcrypt` ships native bindings that
+  occasionally fail on Vercel cold starts (different
+  glibc versions). `bcryptjs` is ~30% slower at
+  cost=12 (still <500ms per hash) — acceptable for
+  login latency.
 - `lib/operators/password-reset-token.ts` — HMAC mint +
   verify; separate secret `OPERATOR_PASSWORD_RESET_TOKEN_SECRET`.
 - `lib/operators/session-store.ts` — DB-side helpers
@@ -1097,6 +1188,17 @@ Phase 7 token-URL shape with cookie + session auth.
   adds portal strings).
 - `lib/validators/operators.ts` — add the 8 public
   Server Action schemas.
+- `package.json` — Codex round-2 P1 #3 fix. Add
+  `"bcryptjs": "^2.4.3"` to `dependencies` and
+  `"@types/bcryptjs": "^2.4.6"` to `devDependencies`.
+  Without this, `lib/operators/password.ts` does not
+  compile — `bcryptjs` is not in the current
+  package.json (verified against the `6468dfb` main
+  state).
+- `package-lock.json` — committed alongside `package.json`
+  to lock the resolved version tree (mirrors Phase 6.2
+  / Phase 7's discipline of committing the lockfile in
+  the same PR as the dependency add).
 - `app/actions/operator-empty-legs.ts` (Phase 7 file) —
   conditional: if the Phase 7 token-URL flow is on
   (`ENABLE_OPERATOR_LEGACY_TOKEN=true`), the existing
@@ -1353,16 +1455,24 @@ merges.
 
 ### RPCs (PR 2a)
 
-7. 15 public functions + 1 helper exist; all are
-   SECURITY DEFINER.
+7. 17 public functions + 1 helper exist; all are
+   SECURITY DEFINER (Codex round-2 P1 #2 fix: count
+   updated after login split + welcome-token
+   reclassification).
 8. Each public has `EXECUTE` granted to `service_role`
    ONLY.
 9. The helper `_normalize_operator_email` has zero
    grantees.
 10. `operator_signup` rejects duplicate emails AND
     rate-limited IPs (≥3 successful signups in 24h).
-11. `operator_login` rejects unknown email + wrong
-    password with the same opaque error.
+11. The login flow rejects unknown email + wrong
+    password with the same opaque error
+    (`invalid_credentials`). The 2-step contract
+    (Codex round-2 P1 #2 fix): `operator_login_lookup`
+    returns `invalid_credentials` for unknown email AND
+    the Server Action returns the same error after a
+    failed `bcrypt.compare()`. The two paths are
+    indistinguishable to the caller.
 12. `operator_session_validate` rejects expired
     sessions, revoked sessions, and sessions whose
     operator was suspended after the session was minted.
@@ -1532,15 +1642,16 @@ index.)
    volume). A per-IP login rate limit is a Phase 8.1
    add-on.
 
-4. **Email change flow** — operators can update
-   `contact_email` from `/operator/profile`. Should
-   that trigger a re-verification? Default: NO — the
-   old email is the auth identifier; changing
-   `contact_email` does NOT change the auth email.
-   The auth email is a separate immutable field. We
-   add `auth_email TEXT NOT NULL UNIQUE` to PR 1's
-   migration — explicit immutability. (Update §3.3 if
-   Codex agrees on round 1.)
+4. **Email change flow** — RESOLVED in round 2 per Codex
+   round-2 P1 #1: `auth_email` is now a real column in
+   PR 1 §3.3 (added in this iteration). The signup
+   form writes the same email to both `auth_email` AND
+   `contact_email`. Profile edits change `contact_email`
+   only; `auth_email` is immutable post-signup (admin
+   can override via the admin reset flow if a real
+   email-change request lands). Login + password-reset
+   look up by `auth_email`; the duplicate-email check
+   in `operator_signup` is also against `auth_email`.
 
 ---
 
@@ -1580,3 +1691,12 @@ before any code is written. Iteration history below.
 | P1 #2 | "Bcrypt login flow cannot work by hashing plaintext again" | Real bug. `operator_login` was redesigned as a 2-step flow: `operator_login_lookup(email)` returns the stored hash + status; the Server Action runs `bcrypt.compare(plaintext, storedHash)` in Node; on success it calls `operator_login_create_session(operator_id, session_token_hash, ...)`. The RPC boundary now never touches plaintext OR a freshly-hashed proof. §4.1 inventory row 2 updated; §4.2 body rewritten with the round-1 P1 #2 background block. |
 | P1 #3 | "Notification alert-status table has no PR1 owner" | Real gap. PR 1 §3.10 added `operator_notification_alert_status` singleton table + seed row + RLS posture. Probe count for PR 1 grew from 4 to 5 (added probe 4a). §5 sanity-check query updated to include the new table + a singleton seed verification. §10 acceptance #5 reworded to mention 6 tables + the seed row. §11 probe index gained probe 4a. |
 | P2 #1 | "PR 1 says five new tables but probes reference document storage policy" | Probe slot 4 in the round-0 draft was titled "Document storage policy" but PR 1's body never created the Supabase Storage bucket. Resolution: the storage bucket is operational (admin creates it via Supabase Dashboard before the first document upload — covered in PR 2b's pre-deploy operational checklist), not migration-bound. Probe slot 4 is retired in §11; probe 4a (alert-status seed) replaces the slot's intent. |
+
+## Codex iteration 2 — findings (resolved in iteration 3)
+
+| # | Finding | Resolution |
+|:-:|---|---|
+| P1 #1 | "Auth email is promised but not owned by schema/login flow" | Real gap — round 1's resolution to open-question §13.4 promised an `auth_email TEXT NOT NULL UNIQUE` column without actually adding it. Round 2 added the column to PR 1 §3.3 (nullable + unique partial index on `LOWER(auth_email)`), updated `operator_signup` to seed both `auth_email` AND `contact_email` at signup, and rewrote `operator_login_lookup` + `mint_operator_password_reset_token` to look up by `auth_email`. Open question §13.4 marked RESOLVED. |
+| P1 #2 | "Login split leaves function counts and probes stale" | Real cascade. Round 1's `operator_login` → 2-step split was applied to §4.2 but not to §4.1 inventory count, §10 acceptance #7 + #11, or §11 Founder Probe 5/7. Round 2 reworked §4.1 to enumerate each function on its own row (16 publics + the previously-mislabeled `consume_operator_welcome_token` reclassified from "stub" to public #17 = **17 publics + 1 helper**), §10 acceptance #7 + #11 updated, §11 Probe 5 enumerates all 17 by name, §11 Probe 7 walks the 2-step contract step-by-step. |
+| P1 #3 | "Bcrypt dependency has no PR owner" | Real gap. Round 1's `lib/operators/password.ts` reference assumed `bcryptjs` was available but the current `package.json` (verified against `6468dfb` main) has no bcrypt-family dependency. Round 2 added `package.json` + `package-lock.json` to PR 2c's "Files (Edit)" with `"bcryptjs": "^2.4.3"` + `"@types/bcryptjs": "^2.4.6"`. The choice of `bcryptjs` over `bcrypt` is intentional (pure JS, Vercel cold-start safe). |
+| P2 #1 | "PR 1 types bullet still says five tables" | After round 1's P1 #3 added `operator_notification_alert_status`, the types-extend bullet still mentioned 5 tables. Round 2 reworded to enumerate all 6 tables explicitly + the 14 new `operators` columns (including `auth_email` from P1 #1). |
