@@ -232,7 +232,7 @@ BEGIN
   -- starts with $2a$ / $2b$ / $2y$ and is exactly 60 chars.
   IF p_password_hash IS NULL
      OR length(p_password_hash) <> 60
-     OR p_password_hash !~ '^\$2[aby]\$'
+     OR p_password_hash !~ '^[$]2[aby][$]'
   THEN
     INSERT INTO operator_signup_attempts
       (ip_address, email_attempted, result)
@@ -920,7 +920,7 @@ DECLARE
 BEGIN
   IF p_new_password_hash IS NULL
      OR length(p_new_password_hash) <> 60
-     OR p_new_password_hash !~ '^\$2[aby]\$'
+     OR p_new_password_hash !~ '^[$]2[aby][$]'
   THEN
     RETURN json_build_object('ok', false, 'error', 'password_hash_malformed');
   END IF;
@@ -1095,7 +1095,7 @@ BEGIN
 
   IF p_new_password_hash IS NULL
      OR length(p_new_password_hash) <> 60
-     OR p_new_password_hash !~ '^\$2[aby]\$'
+     OR p_new_password_hash !~ '^[$]2[aby][$]'
   THEN
     RETURN json_build_object('ok', false, 'error', 'password_hash_malformed');
   END IF;
