@@ -60,9 +60,9 @@ CREATE OR REPLACE FUNCTION _normalize_operator_email(p_email TEXT)
   LANGUAGE sql
   IMMUTABLE
   SET search_path = public, pg_temp
-AS $$
+AS $body$
   SELECT LOWER(BTRIM(p_email));
-$$;
+$body$;
 
 REVOKE ALL ON FUNCTION _normalize_operator_email(TEXT) FROM PUBLIC;
 
@@ -83,11 +83,11 @@ CREATE OR REPLACE FUNCTION _is_sha256_hex(p_hash TEXT)
   LANGUAGE sql
   IMMUTABLE
   SET search_path = public, pg_temp
-AS $$
+AS $body$
   SELECT p_hash IS NOT NULL
      AND length(p_hash) = 64
      AND p_hash ~ '^[0-9a-f]{64}$';
-$$;
+$body$;
 
 REVOKE ALL ON FUNCTION _is_sha256_hex(TEXT) FROM PUBLIC;
 
@@ -136,7 +136,7 @@ CREATE OR REPLACE FUNCTION operator_signup(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_normalized       TEXT;
   v_existing_id      UUID;
@@ -316,7 +316,7 @@ BEGIN
     'signup_status', 'pending'
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -352,7 +352,7 @@ CREATE OR REPLACE FUNCTION operator_login_lookup(p_email TEXT)
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_id                   UUID;
   v_signup_status        operator_status;
@@ -392,7 +392,7 @@ BEGIN
     'password_must_change', v_password_must_change
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -430,7 +430,7 @@ CREATE OR REPLACE FUNCTION operator_login_create_session(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status        operator_status;
   v_password_must_change BOOLEAN;
@@ -478,7 +478,7 @@ BEGIN
     'password_must_change', v_password_must_change
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -501,7 +501,7 @@ CREATE OR REPLACE FUNCTION operator_logout(p_session_token_hash TEXT)
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_session_id UUID;
 BEGIN
@@ -517,7 +517,7 @@ BEGIN
 
   RETURN json_build_object('ok', true, 'session_id', v_session_id);
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -541,7 +541,7 @@ CREATE OR REPLACE FUNCTION operator_session_validate(p_token_hash TEXT)
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_operator_id          UUID;
   v_expires_at           TIMESTAMPTZ;
@@ -575,7 +575,7 @@ BEGIN
     'password_must_change', v_password_must_change
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -605,7 +605,7 @@ CREATE OR REPLACE FUNCTION admin_approve_operator(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status operator_status;
 BEGIN
@@ -650,7 +650,7 @@ BEGIN
 
   RETURN json_build_object('ok', true, 'operator_id', p_operator_id);
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -676,7 +676,7 @@ CREATE OR REPLACE FUNCTION admin_reject_operator(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status operator_status;
 BEGIN
@@ -705,7 +705,7 @@ BEGIN
 
   RETURN json_build_object('ok', true, 'operator_id', p_operator_id);
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -732,7 +732,7 @@ CREATE OR REPLACE FUNCTION admin_suspend_operator(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status    operator_status;
   v_sessions_revoked INT;
@@ -775,7 +775,7 @@ BEGIN
     'sessions_revoked', v_sessions_revoked
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -798,7 +798,7 @@ CREATE OR REPLACE FUNCTION admin_unsuspend_operator(p_operator_id UUID)
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status operator_status;
 BEGIN
@@ -823,7 +823,7 @@ BEGIN
 
   RETURN json_build_object('ok', true, 'operator_id', p_operator_id);
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -858,7 +858,7 @@ CREATE OR REPLACE FUNCTION admin_set_operator_documents(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status operator_status;
 BEGIN
@@ -886,7 +886,7 @@ BEGIN
 
   RETURN json_build_object('ok', true, 'operator_id', p_operator_id);
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -913,7 +913,7 @@ CREATE OR REPLACE FUNCTION admin_reset_operator_password(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status    operator_status;
   v_sessions_revoked INT;
@@ -959,7 +959,7 @@ BEGIN
     'sessions_revoked', v_sessions_revoked
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -999,7 +999,7 @@ CREATE OR REPLACE FUNCTION mint_operator_password_reset_token(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_operator_id UUID;
   v_token_id    UUID;
@@ -1042,7 +1042,7 @@ BEGIN
 
   RETURN json_build_object('ok', true, 'token_id', v_token_id);
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -1074,7 +1074,7 @@ CREATE OR REPLACE FUNCTION verify_operator_password_reset(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_operator_id      UUID;
   v_used_at          TIMESTAMPTZ;
@@ -1143,7 +1143,7 @@ BEGIN
     'sessions_revoked', v_sessions_revoked
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -1177,7 +1177,7 @@ CREATE OR REPLACE FUNCTION mint_operator_otp(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_signup_status operator_status;
   v_otp_id        UUID;
@@ -1224,7 +1224,7 @@ BEGIN
 
   RETURN json_build_object('ok', true, 'otp_id', v_otp_id);
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -1263,7 +1263,7 @@ CREATE OR REPLACE FUNCTION verify_operator_otp(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_otp_id           UUID;
   v_stored_hash      VARCHAR(64);
@@ -1338,7 +1338,7 @@ BEGIN
     'purpose', v_purpose
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -1373,7 +1373,7 @@ CREATE OR REPLACE FUNCTION convert_phase7_stub_to_operator(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_stub_status     TEXT;
   v_operator_status operator_status;
@@ -1429,7 +1429,7 @@ BEGIN
     'legs_reassigned', v_legs_reassigned
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
@@ -1469,7 +1469,7 @@ CREATE OR REPLACE FUNCTION consume_operator_welcome_token(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $body$
 DECLARE
   v_operator_id          UUID;
   v_signup_status        operator_status;
@@ -1543,7 +1543,7 @@ BEGIN
     'password_must_change', v_password_must_change
   );
 END;
-$$;
+$body$;
 
 
 -- ============================================================
