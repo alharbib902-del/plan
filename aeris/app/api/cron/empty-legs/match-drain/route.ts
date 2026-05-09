@@ -41,8 +41,14 @@ import {
  *      handles dupes downstream).
  *   4. For every outcome, decide via
  *      `shouldMarkOutboxProcessed(outcome)`:
- *        - true  → UPDATE rows WHERE leg_id = X AND
- *                  event_type = T AND processed_at IS NULL.
+ *        - true  → UPDATE rows WHERE id IN (claimed
+ *                  outbox row ids for this leg/type) AND
+ *                  processed_at IS NULL. Codex round-2
+ *                  P1 #1 fix: marking by claimed row ids
+ *                  (not by `leg_id + event_type`) leaves
+ *                  any new row that landed for the same
+ *                  leg/type during the matcher run for
+ *                  the next cron tick to pick up.
  *        - false → leave the rows pending (replays on the
  *                  next cron tick after flag flip).
  *

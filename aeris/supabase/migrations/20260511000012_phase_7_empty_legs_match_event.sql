@@ -56,8 +56,15 @@ CREATE TABLE IF NOT EXISTS empty_leg_events_outbox (
   processed_at  TIMESTAMPTZ
 );
 
--- Drain index: pending rows ordered by emitted_at. The cron
--- claims a batch with FOR UPDATE SKIP LOCKED off this index.
+-- Drain index: pending rows ordered by emitted_at. The
+-- cron's claim-by-id route scan reads from this partial
+-- index (Codex round-3 P2 #2 fix on PR 2e #33: the prior
+-- comment promised FOR UPDATE SKIP LOCKED semantics, but
+-- the implemented pattern is "SELECT id WHERE
+-- processed_at IS NULL ORDER BY emitted_at LIMIT N" then
+-- "UPDATE WHERE id IN (...) AND processed_at IS NULL" —
+-- the IS NULL guard is what prevents two concurrent
+-- workers from double-processing, not row locks).
 CREATE INDEX IF NOT EXISTS idx_empty_leg_events_outbox_pending
   ON empty_leg_events_outbox(emitted_at ASC)
   WHERE processed_at IS NULL;
