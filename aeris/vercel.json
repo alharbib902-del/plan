@@ -1,4 +1,22 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/cron/empty-legs/dutch-auction-tick",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/empty-legs/expire-reservations",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/empty-legs/expire-windows",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/empty-legs/match-drain",
+      "schedule": "*/30 * * * *"
+    }
+  ]
 }
