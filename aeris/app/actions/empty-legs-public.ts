@@ -37,10 +37,23 @@ import type {
  *      token, updates `lead_inquiries.empty_legs_opt_in =
  *      FALSE` for the embedded lead_inquiry_id.
  *
- * Every action honours `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE`
- * (default `false`); the customer-facing pages also check
- * the flag and `notFound()` when disabled, so this is
- * defense in depth at the action layer.
+ * Flag posture (Codex round-2 P2 #1 fix):
+ *   - `reserveEmptyLeg` and `cancelMyReservation` honour
+ *     `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE` (default
+ *     `false`) — when off, the customer-facing pages
+ *     `notFound()` and the actions return
+ *     `flag_disabled_public`, so this is defense in depth
+ *     at the action layer.
+ *   - `confirmOptOut` is INTENTIONALLY available
+ *     independently of the marketplace flag. Opt-out
+ *     tokens never expire and are embedded in wa.me
+ *     outreach already in customers' inboxes; if the
+ *     founder later disables the marketplace as a kill
+ *     switch, those customers must still be able to
+ *     honour their non-expiring opt-out promise. The
+ *     HMAC + DB write boundary is the enforcement
+ *     perimeter — adding the flag here would
+ *     reintroduce the round-2 kill-switch bug.
  */
 
 export type PublicActionFailure = {
