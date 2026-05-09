@@ -96,7 +96,7 @@ blocker.
 
 | # | Decision | Value | Rationale |
 |:-:|---|---|---|
-| 1 | **Auth provider** | Custom + bcrypt | Full control over hash cost / rotation / session shape. Avoids the Supabase Auth coupling that would force `auth.users` rows for every operator and complicate the existing admin cookie flow. |
+| 1 | **Auth provider** | Custom + bcrypt (founder-confirmed) | The founder explicitly picked **(ج) Custom + bcrypt** from a 3-way choice (Supabase Auth / HMAC-only / Custom + bcrypt) in the pre-spec decisions thread. Rationale: full control over hash cost / rotation / session shape; avoids the Supabase Auth coupling that would force `auth.users` rows for every operator AND complicate the existing admin cookie flow (which is already Custom + bcrypt-style HMAC). The Phase 7 operator HMAC-token flow stays available behind a kill-switch flag during the canary window — see §8 retire-legacy plan. **Codex round 1 P1 #1 audit:** Codex round 1 flagged this as "spec reverses the agreed auth provider — we settled on Supabase Auth", which is incorrect — the founder's confirmed choice IS Custom + bcrypt; this row is the durable record. The Codex finding is recorded here so that audit trail is complete. |
 | 2 | **Registration flow** | Hybrid (self-signup → pending → admin approval) | Operators discover Aeris via marketing / referrals; self-signup lowers onboarding friction. Admin approval gate keeps regulatory posture tight (no spam accounts; admin verifies every operator before legs publish). |
 | 3 | **Document handling** | Admin completes documents | Operators rarely have `gaca_license` / `commercial_registration` PDFs ready at signup. Admin coordinates document collection out-of-band (WhatsApp / email) and uploads on the operator's behalf. |
 | 4 | **Stub migration strategy** | Manual conversion (admin-controlled) | Forced automatic migration would either lose data (stubs lack `user_id` / regulatory docs) or surface NULLs in `operators` columns the schema enforces. Manual gives admin a UI to pick the target operator + reassign legs atomically per stub. Stubs that aren't converted coexist with operators forever. |
@@ -414,7 +414,39 @@ and rejects when `>= 3`. Failed attempts do NOT count
 against the cap (only successful or duplicate-email
 submissions).
 
-### 3.10 Audit trigger on `operators`
+### 3.10 Singleton `operator_notification_alert_status` (Codex round-1 P1 #3 fix)
+
+```sql
+CREATE TABLE IF NOT EXISTS operator_notification_alert_status (
+  id                   INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  status               TEXT NOT NULL DEFAULT 'healthy'
+    CHECK (status IN ('healthy', 'config_missing', 'send_failed')),
+  last_failure_at      TIMESTAMPTZ,
+  last_failure_reason  TEXT,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO operator_notification_alert_status (id, status)
+  VALUES (1, 'healthy')
+  ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE operator_notification_alert_status
+  ENABLE ROW LEVEL SECURITY;
+```
+
+Mirrors the Phase 7 §16 `empty_leg_outreach_alert_status`
+table pattern. PR 2d (Resend + WhatsApp notifications)
+UPDATEs this row on every email send attempt. PR 2b's
+`/admin/operators` list page reads it on every render
+and renders a red Arabic-RTL banner when status is not
+`'healthy'` — same posture as the Phase 7 outreach-queue
+banner.
+
+The seed INSERT guarantees the singleton row exists
+before PR 2d's first send attempt. The `id INT PK CHECK
+(id = 1)` constraint enforces single-row state.
+
+### 3.11 Audit trigger on `operators`
 
 ```sql
 CREATE OR REPLACE FUNCTION operators_audit_trigger()
@@ -446,7 +478,7 @@ old/new values for status are JSONB; the password change
 is logged as a state-change event without including any
 hashes (no leak in the audit log itself).
 
-### 3.11 Migration footer + sanity check queries
+### 3.12 Migration footer + sanity check queries
 
 The migration ends with two sanity checks the founder
 runs from the SQL editor afterward:
@@ -459,16 +491,22 @@ SELECT column_name, is_nullable
     AND column_name IN ('password_hash','signup_status','welcome_token_hash')
   ORDER BY column_name;
 
--- Check 2: all 5 new tables exist
+-- Check 2: all 6 new tables exist (5 + the
+-- alert-status singleton from Codex round-1 P1 #3 fix)
 SELECT table_name FROM information_schema.tables
   WHERE table_name IN (
     'operator_sessions',
     'operator_password_reset_tokens',
     'operator_otp_codes',
     'operator_documents',
-    'operator_signup_attempts'
+    'operator_signup_attempts',
+    'operator_notification_alert_status'
   )
   ORDER BY table_name;
+
+-- Check 3: alert-status singleton seed exists
+SELECT id, status FROM operator_notification_alert_status
+  WHERE id = 1;
 ```
 
 ### Files in PR 1
@@ -483,16 +521,16 @@ SELECT table_name FROM information_schema.tables
   `OperatorRow` (renamed from `OperatorRecord` if it
   exists) for downstream PRs.
 
-### Founder probes after PR 1 (4 probes)
+### Founder probes after PR 1 (5 probes — was 4 in round 0; round 1 added 4a)
 
 1. **Schema state** — service-role psql: `\d+ operators`
    shows the 13 new columns + the renamed `signup_status`
    with the 4-value CHECK.
-2. **Five new tables** — `\dt operator_*` lists all 5
+2. **Six new tables** — `\dt operator_*` lists all 6
    tables (`operator_sessions`, `operator_password_reset_tokens`,
    `operator_otp_codes`, `operator_documents`,
-   `operator_signup_attempts`) plus the existing
-   `operator_empty_leg_sessions`.
+   `operator_signup_attempts`, `operator_notification_alert_status`)
+   plus the existing `operator_empty_leg_sessions`.
 3. **RLS posture** — every new table has RLS enabled
    AND zero policies (service-role-only).
 4. **Audit trigger smoke** — INSERT a synthetic
@@ -500,6 +538,18 @@ SELECT table_name FROM information_schema.tables
    a transaction; UPDATE its `signup_status='approved'`;
    assert one row appears in `audit_logs` with
    `action='signup_status_changed'`; ROLLBACK.
+4a. **Alert-status singleton seed** (Codex round-1 P1 #3
+    + P2 #1 fix) — `SELECT id, status FROM
+    operator_notification_alert_status WHERE id = 1`
+    returns one row with `status='healthy'`. The
+    `id INT PK CHECK (id = 1)` constraint also rejects
+    `INSERT (id=2)` (verified inside a transaction +
+    ROLLBACK). The `operator-documents` Supabase
+    Storage bucket is **operational, not migration-bound**
+    (admin creates it via Supabase Dashboard before
+    the first document upload — covered in PR 2b's
+    pre-deploy operational checklist, not as a SQL
+    probe).
 
 ---
 
@@ -528,7 +578,7 @@ Migration file:
 |:-:|---|---|
 | (helper) | `_normalize_operator_email(TEXT)` | internal — REVOKEd from every role |
 | 1 | `operator_signup(p_email, p_password_hash, p_company_name, p_contact_email, p_contact_phone, p_notes, p_ip)` | PR 2c `/operator/signup` |
-| 2 | `operator_login(p_email, p_password_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/login` |
+| 2 | `operator_login_lookup(p_email)` + `operator_login_create_session(p_operator_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/login` (two-step: see §4.2 fix below) |
 | 3 | `operator_logout(p_session_token_hash)` | PR 2c `/operator/logout` |
 | 4 | `operator_session_validate(p_token_hash)` | PR 2c every protected page + Server Action |
 | 5 | `admin_approve_operator(p_operator_id)` | PR 2b `/admin/operators/<id>` |
@@ -578,7 +628,26 @@ admin gets a Resend alert via a separate notification
 module (PR 2d) that observes the `operators` audit row
 the trigger writes.
 
-#### `operator_login`
+#### `operator_login_lookup` + `operator_login_create_session` (TWO-STEP, Codex round-1 P1 #2 fix)
+
+**Round-1 P1 #2 background.** The earlier draft had a
+single `operator_login` RPC that received the
+freshly-bcrypted plaintext password hash and compared
+it byte-by-byte to `operators.password_hash`. That is
+broken: bcrypt embeds a random salt in every output, so
+hashing the same plaintext twice produces two different
+hashes. Equality compare fails on every login. The
+correct shape is to verify plaintext against the stored
+hash in **Node** (`bcrypt.compare(plaintext, storedHash)`)
+and only call SQL once auth has succeeded. The RPC
+must NEVER receive a plaintext password OR a freshly-
+hashed proof — the SQL boundary works on the verified
+`operator_id`, not on credential material.
+
+The login flow is therefore SPLIT into two RPCs +
+Node-side bcrypt comparison in between.
+
+##### Step 1 — `operator_login_lookup(p_email)`
 
 1. Look up the operator by normalized email. If not
    found → return `{ ok: false, error: 'invalid_credentials' }`
@@ -588,23 +657,46 @@ the trigger writes.
    appropriate structured error: `'pending'` →
    `signup_pending`, `'rejected'` → `signup_rejected`,
    `'suspended'` → `account_suspended`.
-3. Compare `p_password_hash` to `operators.password_hash`
-   (the Server Action bcrypts the plaintext before the
-   RPC; the RPC compares hashes byte-by-byte). If
-   mismatch → return `{ ok: false, error: 'invalid_credentials' }`.
-4. Mint a session token (the Server Action mints
-   `randomBytes(32)`, hashes it, passes both to the RPC).
-   INSERT into `operator_sessions` with the hash and the
-   computed `expires_at` based on `p_remember_me` (7
-   days vs 30 days).
-5. UPDATE `operators.last_login_at = NOW()`,
-   `password_must_change = (depends on caller)`.
-6. Return `{ ok: true, session_token_hash, expires_at,
-   operator_id, password_must_change }`.
+3. Return `{ ok: true, operator_id, password_hash,
+   password_must_change }`. The Server Action receives
+   the stored bcrypt hash (60-char string) and runs
+   `bcrypt.compare(plaintext, storedHash)` in Node.
 
-Belt-and-braces: the RPC also compares
-`p_password_hash` length === 60 (bcrypt's fixed output
-length) AND rejects when `p_password_hash` is empty.
+Note: returning the stored hash to the Server Action is
+NOT a leak — the Server Action runs server-side under
+service-role; the hash never reaches the browser. The
+plaintext password the user submitted is also Node-only;
+it is never sent to SQL.
+
+##### Step 2 — Server Action runs bcrypt.compare(plaintext, storedHash) in Node
+
+If the comparison returns `false`, the Server Action
+returns `{ ok: false, error: 'invalid_credentials' }`
+with the same opaque shape as a missing-email response.
+The caller cannot distinguish wrong-password from
+unknown-email.
+
+If the comparison returns `true`, the Server Action
+proceeds to step 3.
+
+##### Step 3 — `operator_login_create_session(p_operator_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)`
+
+1. Lock the operator row. Re-validate
+   `signup_status='approved'` (defense in depth: the
+   operator may have been suspended in the few
+   milliseconds between step 1 and step 3).
+2. INSERT into `operator_sessions` with the hash + the
+   computed `expires_at` (7 days default; 30 days if
+   `p_remember_me=true`) + IP + user agent.
+3. UPDATE `operators.last_login_at = NOW()`.
+4. Return `{ ok: true, session_token_hash, expires_at,
+   password_must_change }`.
+
+The Server Action mints the raw session token
+(`randomBytes(32).toString('base64url')`), hashes it
+with sha256 to produce `p_session_token_hash`, and sets
+the `aeris_operator` cookie to the raw token. The DB
+only ever sees the hash.
 
 #### `operator_session_validate`
 
@@ -1247,10 +1339,14 @@ merges.
 3. `operators` has the 13 new columns from §3.3.
 4. `operators.signup_status` exists (renamed from
    `status`) with the 4-value CHECK.
-5. The 5 new tables (`operator_sessions`,
+5. The 6 new tables (`operator_sessions`,
    `operator_password_reset_tokens`, `operator_otp_codes`,
-   `operator_documents`, `operator_signup_attempts`) all
-   exist with their indexes + RLS-enabled.
+   `operator_documents`, `operator_signup_attempts`,
+   `operator_notification_alert_status`) all exist with
+   their indexes + RLS-enabled. The
+   `operator_notification_alert_status` singleton row
+   (`id=1, status='healthy'`) is seeded by the migration
+   (Codex round-1 P1 #3 fix).
 6. The audit trigger `operators_audit_trigger` fires
    on `signup_status` change AND on `password_hash`
    change.
@@ -1346,9 +1442,12 @@ merges.
 
 ## 11. Founder probes (consolidated)
 
-26 individual probes across the 5 PRs. Numbering
-mirrors the Phase 7 model: probes 1-26 (a/b suffixes
-reserved for split-out checks).
+27 individual probe checks across the 5 PRs. The spec
+defines probes 1-26 (Phase 7 numbering convention) plus
+**probe 4a** (alert-status singleton seed, added in
+round 1 per P1 #3 + P2 #1 fixes). The earlier round-0
+draft listed 26 individual probes; round 1 added one
+(4a) bringing the total to 27 individual checks.
 
 (Full probe text lives in §3-§8 above; this is the
 index.)
@@ -1356,9 +1455,10 @@ index.)
 | # | Probe | After PR |
 |:-:|---|---|
 | 1 | Schema state — operators columns | 1 |
-| 2 | 5 new tables + RLS | 1 |
+| 2 | 6 new tables + RLS | 1 |
 | 3 | Audit trigger smoke | 1 |
-| 4 | Document storage policy | 1 |
+| 4 | (Round-0 draft had a "Document storage policy" entry here. Codex round-1 P2 #1 retargeted it: storage-bucket creation is operational, not migration-bound; this slot is now retired. The audit-trigger smoke is probe 3.) | — |
+| 4a | Alert-status singleton seed (Codex round-1 P1 #3 + P2 #1 fix) | 1 |
 | 5 | RPC grants | 2a |
 | 6 | Approve smoke | 2a |
 | 7 | Login smoke | 2a |
@@ -1468,6 +1568,15 @@ PR-bound.
 ---
 
 **End of Phase 8 spec.** Codex reviews this document
-before any code is written. Iteration history will be
-captured in audit tables appended below as rounds
-progress (mirrors Phase 7 §audit-trail discipline).
+before any code is written. Iteration history below.
+
+---
+
+## Codex iteration 1 — findings (resolved in iteration 2)
+
+| # | Finding | Resolution |
+|:-:|---|---|
+| P1 #1 | "Spec reverses the agreed auth provider — we settled on Supabase Auth" | Recorded as a Codex-vs-founder mismatch: the founder's confirmed pre-spec choice is **Custom + bcrypt** (option ج in the 3-way decision thread). §1 row 1 reworded to call out the founder confirmation explicitly + the Codex round-1 audit annotation. No architecture change. |
+| P1 #2 | "Bcrypt login flow cannot work by hashing plaintext again" | Real bug. `operator_login` was redesigned as a 2-step flow: `operator_login_lookup(email)` returns the stored hash + status; the Server Action runs `bcrypt.compare(plaintext, storedHash)` in Node; on success it calls `operator_login_create_session(operator_id, session_token_hash, ...)`. The RPC boundary now never touches plaintext OR a freshly-hashed proof. §4.1 inventory row 2 updated; §4.2 body rewritten with the round-1 P1 #2 background block. |
+| P1 #3 | "Notification alert-status table has no PR1 owner" | Real gap. PR 1 §3.10 added `operator_notification_alert_status` singleton table + seed row + RLS posture. Probe count for PR 1 grew from 4 to 5 (added probe 4a). §5 sanity-check query updated to include the new table + a singleton seed verification. §10 acceptance #5 reworded to mention 6 tables + the seed row. §11 probe index gained probe 4a. |
+| P2 #1 | "PR 1 says five new tables but probes reference document storage policy" | Probe slot 4 in the round-0 draft was titled "Document storage policy" but PR 1's body never created the Supabase Storage bucket. Resolution: the storage bucket is operational (admin creates it via Supabase Dashboard before the first document upload — covered in PR 2b's pre-deploy operational checklist), not migration-bound. Probe slot 4 is retired in §11; probe 4a (alert-status seed) replaces the slot's intent. |
