@@ -277,10 +277,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_operators_auth_email_unique
   ON operators(LOWER(auth_email));
 ```
 
-The signup form writes the same email to both
-`auth_email` AND `contact_email`. Profile edits can
-change `contact_email`; `auth_email` is read-only.
-Login + password-reset look up by `auth_email`. The
+The signup form passes `auth_email` and
+`contact_email` as separate parameters to
+`operator_signup` and MAY seed them with different
+values: `auth_email` is the immutable login identity
+(used at every subsequent login + password-reset
+lookup), while `contact_email` is the mutable
+operational contact (the address admin + Resend send
+notifications to). They can match if the operator
+chose to reuse the login email at signup, but the
+schema and the signup contract treat them as
+independent columns from row 1 (Codex round-5 P2
+fix: prior wording said the form wrote the same
+value to both, contradicting the round-4 fix to
+`operator_signup` step 6 that already persists
+`contact_email=p_contact_email`). Profile edits
+change `contact_email` only; `auth_email` is
+read-only post-signup. Login + password-reset look
+up by `auth_email`. The
 `LOWER()` index normalizes on read — see helper
 `_normalize_operator_email()` in §4 — so
 `Founder@Aeris.sa` and `founder@aeris.sa` resolve to
@@ -1750,15 +1764,21 @@ index.)
    add-on.
 
 4. **Email change flow** — RESOLVED in round 2 per Codex
-   round-2 P1 #1: `auth_email` is now a real column in
-   PR 1 §3.3 (added in this iteration). The signup
-   form writes the same email to both `auth_email` AND
-   `contact_email`. Profile edits change `contact_email`
-   only; `auth_email` is immutable post-signup (admin
-   can override via the admin reset flow if a real
-   email-change request lands). Login + password-reset
-   look up by `auth_email`; the duplicate-email check
-   in `operator_signup` is also against `auth_email`.
+   round-2 P1 #1, with prose corrected in round 5 per
+   Codex round-5 P2: `auth_email` is a real column in
+   PR 1 §3.3 (added in round 2, NOT NULL in round 3).
+   The signup form passes `auth_email` and
+   `contact_email` as separate parameters to
+   `operator_signup` and MAY seed them with different
+   values: `auth_email` is the immutable login
+   identity, `contact_email` is the mutable
+   operational contact. Profile edits change
+   `contact_email` only; `auth_email` is immutable
+   post-signup (admin can override via the admin
+   reset flow if a real email-change request lands).
+   Login + password-reset look up by `auth_email`;
+   the duplicate-email check in `operator_signup` is
+   also against `auth_email`.
 
 ---
 
@@ -1830,3 +1850,9 @@ before any code is written. Iteration history below.
 | P1 #1 | "Signup validates but ignores contact_email" | Real bug. `operator_signup` validated `p_contact_email` in step 5 but the INSERT in step 6 set `contact_email=p_email`, silently discarding the explicitly-submitted operational contact email even when the operator entered a different value. The §0 objective says signup submits `company_name + contact_email + contact_phone`, so the contact email is a first-class parameter and must be persisted. Round 4 changed the INSERT to `contact_email=p_contact_email` and rewrote the narrative to clarify `auth_email` is the immutable login identifier (entered into the login form) while `contact_email` is the operational contact submitted alongside `company_name` — they can match if the operator reused the login email but they are seeded from separate RPC parameters. |
 | P2 #1 | "Probe 1 still says 13 new columns" | After round 2 added `auth_email` (taking §3.3 from 13 to 14 columns) and round 3 enforced NOT NULL, Probe 1 still said 13 columns and did not assert the NOT NULL invariant. Round 4 updated Probe 1 to "14 new columns" + added an explicit `auth_email NOT NULL` check based on the `\d+ operators` modifier column. §10 acceptance #3 (Schema, PR 1) was carrying the same stale "13 new columns" wording and was updated 13→14 in the same pass to keep all column-count references consistent across the spec. |
 | P2 #2 | "Implementation order omits Probe 4a" | §14 step 1 said the founder "verifies probes 1-4" but PR 1 actually ships 5 probes after round 1 added 4a for the alert-status singleton seed. Round 4 changed the wording to "probes 1, 2, 3, 4, and 4a" so the handoff checklist matches §3 founder probes. |
+
+## Codex iteration 5 — findings (resolved in iteration 6)
+
+| # | Finding | Resolution |
+|:-:|---|---|
+| P2 #1 | "Auth/contact email prose still says same value" | Round 4 fixed the operative `operator_signup` body to persist `contact_email=p_contact_email`, but two prose locations still asserted that the signup form writes the same email to both columns: (a) §3.3 schema prose immediately after the `auth_email` migration block, and (b) §13.4 RESOLVED email-change-flow note. Both contradicted the round-4 RPC contract. Round 5 reworded both spots per Codex's prescription: signup may seed `auth_email` and `contact_email` with different values; `auth_email` is the immutable login identity, `contact_email` is the mutable operational contact. The round-5 note in §13.4 chains forward to the round-2 + round-3 audit annotations so the resolution history stays traceable. |
