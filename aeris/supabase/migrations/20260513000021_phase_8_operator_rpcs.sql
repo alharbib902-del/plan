@@ -1626,28 +1626,53 @@ GRANT EXECUTE ON FUNCTION consume_operator_welcome_token(VARCHAR, VARCHAR, BOOLE
 --   - All publics SET search_path = public, pg_temp
 --
 -- Founder probes (per spec §4 founder probes 5-8):
---   5. RPC grants — TWO commands needed because _is_sha256_hex
---      does not contain 'operator' in its name (Codex round-5
---      P2 fix on PR 2a: prior probe wording assumed the
---      \df+ public.*operator* pattern would match all functions,
---      but ripgrep / psql pattern matching is literal):
---        (a) \df+ public.*operator* shows 17 publics +
---            _normalize_operator_email (18 rows)
---        (b) \df+ public._is_sha256_hex shows the 2nd helper
---            (1 row); zero grantees
---      Each public has EXECUTE granted to service_role; BOTH
---      helpers have zero grantees. A combined catalog query
---      that asserts the count + grantees in one pass:
+--   5. RPC grants — exact allowlist (Codex round-5 P2 fix on
+--      PR 2a: split into helpers; round-6 P2 fix: switched
+--      from a name pattern to an exact proname IN (...) list
+--      because the prior wildcard *operator* matched older
+--      functions outside the PR 2a surface — submit_phase4_
+--      operator_offer, submit_phase5_operator_offer, and
+--      operators_audit_trigger — inflating the row count
+--      beyond the documented 19).
+--
+--      The single audit query that asserts the EXACT PR 2a
+--      surface + grants in one pass:
+--
 --        SELECT p.proname,
 --               array_to_string(p.proacl, ',') AS acl
 --          FROM pg_proc p
 --          JOIN pg_namespace n ON n.oid = p.pronamespace
 --          WHERE n.nspname = 'public'
---            AND (p.proname LIKE '%operator%'
---                 OR p.proname IN ('_is_sha256_hex'))
+--            AND p.proname IN (
+--              -- 17 PR 2a publics
+--              'operator_signup',
+--              'operator_login_lookup',
+--              'operator_login_create_session',
+--              'operator_logout',
+--              'operator_session_validate',
+--              'admin_approve_operator',
+--              'admin_reject_operator',
+--              'admin_suspend_operator',
+--              'admin_unsuspend_operator',
+--              'admin_set_operator_documents',
+--              'admin_reset_operator_password',
+--              'mint_operator_password_reset_token',
+--              'verify_operator_password_reset',
+--              'mint_operator_otp',
+--              'verify_operator_otp',
+--              'convert_phase7_stub_to_operator',
+--              'consume_operator_welcome_token',
+--              -- 2 PR 2a helpers
+--              '_normalize_operator_email',
+--              '_is_sha256_hex'
+--            )
 --          ORDER BY p.proname;
---      expect 19 rows: 17 publics with service_role= in acl,
---      _normalize_operator_email + _is_sha256_hex with empty acl
+--
+--      Expect EXACTLY 19 rows:
+--        - 17 publics: acl contains service_role= grant
+--        - 2 helpers: acl is empty (NULL or {})
+--      A row count <19 means a function is missing; >19 is
+--      impossible because the IN list is closed.
 --   6. Approve smoke — INSERT pending operator + call
 --      admin_approve_operator + assert signup_status='approved'
 --   7. Login smoke — 5-step 2-step login flow with bcrypt

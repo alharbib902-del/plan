@@ -1139,56 +1139,57 @@ operator. Used once on first login.
    split + the welcome-token reclassification; PR 2a
    Codex round-4 P2 fix: count updated to 17 publics
    + **2 helpers** after round-3 added `_is_sha256_hex`;
-   PR 2a Codex round-5 P2 fix: probe split into TWO
-   commands because `_is_sha256_hex` does not contain
-   `operator` in its name and the `\df+ public.*operator*`
-   pattern misses it).
+   PR 2a Codex round-5 P2 fix: probe split because
+   `_is_sha256_hex` lacks `operator` in its name; PR 2a
+   Codex round-6 P2 fix: switched from name pattern
+   to exact `proname IN (...)` allowlist because the
+   `*operator*` wildcard ALSO matches older functions
+   outside the PR 2a surface — `submit_phase4_operator_offer`,
+   `submit_phase5_operator_offer`, and `operators_audit_trigger`).
 
-   Run BOTH of the following:
+   Single catalog query that asserts the EXACT PR 2a
+   surface + grants in one pass:
 
-   **(a)** `\df+ public.*operator*` — shows 17 publics
-   PLUS the `_normalize_operator_email` helper (18 rows
-   total):
-     1. `operator_signup`
-     2. `operator_login_lookup`
-     3. `operator_login_create_session`
-     4. `operator_logout`
-     5. `operator_session_validate`
-     6. `admin_approve_operator`
-     7. `admin_reject_operator`
-     8. `admin_suspend_operator`
-     9. `admin_unsuspend_operator`
-     10. `admin_set_operator_documents`
-     11. `admin_reset_operator_password`
-     12. `mint_operator_password_reset_token`
-     13. `verify_operator_password_reset`
-     14. `mint_operator_otp`
-     15. `verify_operator_otp`
-     16. `convert_phase7_stub_to_operator`
-     17. `consume_operator_welcome_token`
-     + `_normalize_operator_email` (helper)
-
-   **(b)** `\df+ public._is_sha256_hex` — shows the 2nd
-   helper (1 row). Zero grantees.
-
-   Each public has `EXECUTE` granted to `service_role`
-   ONLY. **Both** helpers have zero grantees.
-
-   Alternative: a single catalog query that asserts both
-   count + grantees in one pass:
    ```sql
    SELECT p.proname,
           array_to_string(p.proacl, ',') AS acl
      FROM pg_proc p
      JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public'
-       AND (p.proname LIKE '%operator%'
-            OR p.proname IN ('_is_sha256_hex'))
+       AND p.proname IN (
+         -- 17 PR 2a publics
+         'operator_signup',
+         'operator_login_lookup',
+         'operator_login_create_session',
+         'operator_logout',
+         'operator_session_validate',
+         'admin_approve_operator',
+         'admin_reject_operator',
+         'admin_suspend_operator',
+         'admin_unsuspend_operator',
+         'admin_set_operator_documents',
+         'admin_reset_operator_password',
+         'mint_operator_password_reset_token',
+         'verify_operator_password_reset',
+         'mint_operator_otp',
+         'verify_operator_otp',
+         'convert_phase7_stub_to_operator',
+         'consume_operator_welcome_token',
+         -- 2 PR 2a helpers
+         '_normalize_operator_email',
+         '_is_sha256_hex'
+       )
      ORDER BY p.proname;
    ```
-   Expect 19 rows: 17 publics with `service_role=` in
-   their `acl`; `_normalize_operator_email` and
-   `_is_sha256_hex` with empty `acl`.
+
+   **Expect EXACTLY 19 rows:**
+   - **17 publics**: `acl` contains `service_role=` grant
+   - **2 helpers** (`_normalize_operator_email`,
+     `_is_sha256_hex`): `acl` is empty (NULL or `{}`)
+
+   A row count `<19` means a function is missing (regression
+   in the migration); `>19` is impossible because the IN
+   list is closed.
 6. **Approve smoke** — admin RPC dry-run: INSERT a
    pending operator row with **all required fixture
    columns** (Codex round-3 P1 #1 fix: `auth_email` is
