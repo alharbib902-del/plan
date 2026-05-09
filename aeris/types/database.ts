@@ -1529,7 +1529,9 @@ export type AdminApproveOperatorArgs = {
 
 export type AdminApproveOperatorError =
   | 'operator_not_found'
-  | 'not_pending';
+  | 'not_pending'
+  | 'welcome_token_hash_invalid'
+  | 'welcome_token_expires_at_invalid';
 
 export type AdminApproveOperatorResult =
   | { ok: true; operator_id: string }
@@ -1621,12 +1623,21 @@ export type MintOperatorPasswordResetTokenArgs = {
   p_ip: string | null;
 };
 
-// No error case — missing email returns no_op:true to prevent
-// email enumeration (same posture as operator_login_lookup's
-// 'invalid_credentials' opacity).
+// Missing email returns no_op:true to prevent email enumeration
+// (same posture as operator_login_lookup's 'invalid_credentials'
+// opacity). Codex round-1 P2 #1 fix on PR 2a: malformed input
+// (NULL hash, out-of-bounds expiry) returns a structured error
+// up-front BEFORE the email lookup, so a Server Action bug
+// surfaces deterministically without leaking email-existence
+// information.
+export type MintOperatorPasswordResetTokenError =
+  | 'token_hash_invalid'
+  | 'expires_at_invalid';
+
 export type MintOperatorPasswordResetTokenResult =
   | { ok: true; token_id: string }
-  | { ok: true; no_op: true };
+  | { ok: true; no_op: true }
+  | { ok: false; error: MintOperatorPasswordResetTokenError };
 
 // --- 13. verify_operator_password_reset ---
 
@@ -1657,7 +1668,9 @@ export type MintOperatorOtpArgs = {
 export type MintOperatorOtpError =
   | 'operator_not_found'
   | 'invalid_purpose'
-  | 'not_otp_eligible';
+  | 'not_otp_eligible'
+  | 'code_hash_invalid'
+  | 'expires_at_invalid';
 
 export type MintOperatorOtpResult =
   | { ok: true; otp_id: string }
@@ -1717,7 +1730,8 @@ export type ConsumeOperatorWelcomeTokenError =
   | 'token_not_found'
   | 'already_used'
   | 'expired'
-  | 'account_not_approved';
+  | 'account_not_approved'
+  | 'session_token_hash_invalid';
 
 export type ConsumeOperatorWelcomeTokenResult =
   | {

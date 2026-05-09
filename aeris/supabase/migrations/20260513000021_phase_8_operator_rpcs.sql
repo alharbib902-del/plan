@@ -117,6 +117,25 @@ DECLARE
 BEGIN
   v_normalized := _normalize_operator_email(p_email);
 
+  -- Codex round-1 P1 #2 fix on PR 2a: advisory transaction lock
+  -- keyed by the normalized email hash. Without this, a SELECT
+  -- ... FOR UPDATE on a non-existent row provides NO gap lock
+  -- against the unique LOWER(auth_email) index, so two
+  -- concurrent signups for the same email could both pass the
+  -- duplicate-email check and the second would raise a raw
+  -- unique_violation instead of returning the structured
+  -- 'email_in_use' contract.
+  --
+  -- pg_advisory_xact_lock takes a bigint key; we derive it from
+  -- the first 16 hex chars of md5(normalized) interpreted as
+  -- bit(64) → bigint. Collisions across distinct emails are
+  -- harmless (worst case: brief serialization on different
+  -- emails that happen to hash-collide), but real concurrent
+  -- signups for the same email serialize correctly.
+  PERFORM pg_advisory_xact_lock(
+    ('x' || substr(md5(v_normalized), 1, 16))::bit(64)::bigint
+  );
+
   -- Step 1+2: Lock the email range. Since LOWER(auth_email) is
   -- the unique index, we lookup by the same expression.
   SELECT id INTO v_existing_id
@@ -192,13 +211,27 @@ BEGIN
   -- Step 6: INSERT the operator. auth_email is the immutable
   -- login identifier; contact_email is the mutable operational
   -- contact (Codex round-4 P1 #1 fix on spec — they MAY differ).
-  INSERT INTO operators
-    (auth_email, contact_email, contact_phone, company_name,
-     signup_status, password_hash, password_set_at)
-  VALUES
-    (p_email, p_contact_email, p_contact_phone, p_company_name,
-     'pending', p_password_hash, NOW())
-  RETURNING id INTO v_new_id;
+  --
+  -- Codex round-1 P1 #2 fix on PR 2a (defense-in-depth on top
+  -- of the advisory lock above): if a unique_violation slips
+  -- through (advisory lock failure, connection pool yank, or
+  -- a future migration that rewrites the unique index), catch
+  -- it here and return the structured 'email_in_use' contract
+  -- instead of letting a raw 23505 reach the Server Action.
+  BEGIN
+    INSERT INTO operators
+      (auth_email, contact_email, contact_phone, company_name,
+       signup_status, password_hash, password_set_at)
+    VALUES
+      (p_email, p_contact_email, p_contact_phone, p_company_name,
+       'pending', p_password_hash, NOW())
+    RETURNING id INTO v_new_id;
+  EXCEPTION WHEN unique_violation THEN
+    INSERT INTO operator_signup_attempts
+      (ip_address, email_attempted, result)
+      VALUES (p_ip, p_email, 'duplicate_email');
+    RETURN json_build_object('ok', false, 'error', 'email_in_use');
+  END;
 
   -- Notes column does not exist on `operators` (it's on
   -- phase7_operator_stubs). Notes from signup are stashed in
@@ -501,6 +534,25 @@ AS $$
 DECLARE
   v_signup_status operator_status;
 BEGIN
+  -- Codex round-1 P2 #1 fix on PR 2a: validate the token-mint
+  -- contract at the SQL boundary so a buggy admin Server Action
+  -- cannot approve with a NULL hash or an out-of-bounds
+  -- expiry. The 7-day spec contract (admin_approve_operator
+  -- §6) gets a 1-hour buffer on the upper bound to absorb
+  -- clock skew between the Server Action and Postgres.
+  IF p_welcome_token_hash IS NULL
+     OR length(p_welcome_token_hash) <> 64
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'welcome_token_hash_invalid');
+  END IF;
+
+  IF p_welcome_token_expires_at IS NULL
+     OR p_welcome_token_expires_at <= NOW() + INTERVAL '1 minute'
+     OR p_welcome_token_expires_at > NOW() + INTERVAL '7 days 1 hour'
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'welcome_token_expires_at_invalid');
+  END IF;
+
   SELECT signup_status INTO v_signup_status
     FROM operators
     WHERE id = p_operator_id
@@ -872,6 +924,26 @@ DECLARE
   v_operator_id UUID;
   v_token_id    UUID;
 BEGIN
+  -- Codex round-1 P2 #1 fix on PR 2a: validate the token-mint
+  -- contract at the SQL boundary. The 30-min spec contract
+  -- (§3.6) gets a 30-min buffer on the upper bound for clock
+  -- skew. Validation errors are returned BEFORE the email
+  -- lookup so a Server Action bug surfaces deterministically
+  -- regardless of whether the email is registered (does not
+  -- defeat the no_op enumeration-prevention posture: a
+  -- well-formed call still gets no_op:true on missing email;
+  -- only malformed calls see these structured errors).
+  IF p_token_hash IS NULL OR length(p_token_hash) <> 64 THEN
+    RETURN json_build_object('ok', false, 'error', 'token_hash_invalid');
+  END IF;
+
+  IF p_expires_at IS NULL
+     OR p_expires_at <= NOW() + INTERVAL '1 minute'
+     OR p_expires_at > NOW() + INTERVAL '1 hour'
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'expires_at_invalid');
+  END IF;
+
   SELECT id INTO v_operator_id
     FROM operators
     WHERE LOWER(auth_email) = _normalize_operator_email(p_email);
@@ -929,6 +1001,14 @@ DECLARE
   v_token_id         UUID;
   v_sessions_revoked INT;
 BEGIN
+  -- Codex round-1 P2 #1 fix on PR 2a: validate the token hash
+  -- input. NULL would hit zero rows below (token_not_found),
+  -- which is fine, but rejecting up-front gives the Server
+  -- Action a deterministic error code without a DB round-trip.
+  IF p_token_hash IS NULL OR length(p_token_hash) <> 64 THEN
+    RETURN json_build_object('ok', false, 'error', 'token_not_found');
+  END IF;
+
   IF p_new_password_hash IS NULL
      OR length(p_new_password_hash) <> 60
      OR p_new_password_hash !~ '^\$2[aby]\$'
@@ -1016,6 +1096,22 @@ DECLARE
   v_signup_status operator_status;
   v_otp_id        UUID;
 BEGIN
+  -- Codex round-1 P2 #1 fix on PR 2a: validate the token-mint
+  -- contract at the SQL boundary. The 10-min spec contract
+  -- (§3.7) gets a 5-min buffer on the upper bound for clock
+  -- skew, capped at 15 min so a buggy admin Server Action
+  -- cannot mint long-lived OTPs.
+  IF p_code_hash IS NULL OR length(p_code_hash) <> 64 THEN
+    RETURN json_build_object('ok', false, 'error', 'code_hash_invalid');
+  END IF;
+
+  IF p_expires_at IS NULL
+     OR p_expires_at <= NOW() + INTERVAL '1 minute'
+     OR p_expires_at > NOW() + INTERVAL '15 minutes'
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'expires_at_invalid');
+  END IF;
+
   IF p_purpose NOT IN ('login', 'recovery') THEN
     RETURN json_build_object('ok', false, 'error', 'invalid_purpose');
   END IF;
@@ -1088,6 +1184,17 @@ DECLARE
   v_used_at          TIMESTAMPTZ;
   v_attempt_count    INT;
 BEGIN
+  -- Codex round-1 P1 #1 fix on PR 2a: explicit NULL check on
+  -- the supplied hash. SQL three-valued logic means
+  -- `v_stored_hash <> NULL` evaluates to NULL (not TRUE), which
+  -- silently bypasses the mismatch branch and would mark the
+  -- OTP used + return ok:true. Reject NULL up front and
+  -- additionally use IS DISTINCT FROM in the compare for
+  -- defense in depth.
+  IF p_code_hash IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'code_mismatch');
+  END IF;
+
   -- Confirm operator exists (defense-in-depth; the Server
   -- Action should have validated, but RLS on operator_otp_codes
   -- means we cannot rely on FK enforcement here).
@@ -1119,7 +1226,10 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'expired');
   END IF;
 
-  IF v_stored_hash <> p_code_hash THEN
+  -- IS DISTINCT FROM is NULL-safe (always TRUE/FALSE, never
+  -- NULL). The explicit NULL guard above plus this operator
+  -- give two-layer defense against the round-1 P1 #1 bypass.
+  IF v_stored_hash IS DISTINCT FROM p_code_hash THEN
     UPDATE operator_otp_codes
       SET attempt_count = attempt_count + 1
       WHERE id = v_otp_id;
@@ -1278,6 +1388,20 @@ DECLARE
   v_session_id           UUID;
   v_password_must_change BOOLEAN;
 BEGIN
+  -- Codex round-1 P2 #1 fix on PR 2a: validate both hashes at
+  -- the SQL boundary. NULL inputs would otherwise either
+  -- silently match (welcome_token_hash IS DISTINCT FROM is
+  -- safe but the equality would hit zero rows) or insert a
+  -- NULL session token_hash which a later session_validate
+  -- could match against any other NULL-hash session.
+  IF p_token_hash IS NULL OR length(p_token_hash) <> 64 THEN
+    RETURN json_build_object('ok', false, 'error', 'token_not_found');
+  END IF;
+
+  IF p_session_token_hash IS NULL OR length(p_session_token_hash) <> 64 THEN
+    RETURN json_build_object('ok', false, 'error', 'session_token_hash_invalid');
+  END IF;
+
   SELECT id, signup_status, welcome_token_used_at,
          welcome_token_expires_at, password_hash
     INTO v_operator_id, v_signup_status, v_used_at,
