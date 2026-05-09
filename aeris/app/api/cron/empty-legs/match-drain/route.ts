@@ -72,17 +72,22 @@ interface PendingRow {
   event_type: 'published' | 'price_dropped';
 }
 
-async function markOutboxProcessed(
+/**
+ * Codex round-2 P1 #1 fix. The mark MUST be scoped to the
+ * exact outbox row ids the cron read in step 2 of GET()
+ * — never by `leg_id + event_type` predicates, which
+ * would also flip the `processed_at` of any new row that
+ * landed for the same leg/type during the matcher run.
+ */
+async function markOutboxRowsProcessed(
   client: ReturnType<typeof createAdminClient>,
-  legIds: string[],
-  eventType: 'published' | 'price_dropped'
+  outboxRowIds: string[]
 ): Promise<void> {
-  if (legIds.length === 0) return;
+  if (outboxRowIds.length === 0) return;
   const { error } = await client
     .from('empty_leg_events_outbox')
     .update({ processed_at: new Date().toISOString() })
-    .in('leg_id', legIds)
-    .eq('event_type', eventType)
+    .in('id', outboxRowIds)
     .is('processed_at', null);
   if (error) {
     console.error('[cron.match-drain] outbox mark error', error);
@@ -119,45 +124,47 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  // Group unique leg ids per event_type. A leg with
+  // Group rows by (leg_id, event_type). A leg with
   // multiple pending rows of the same event_type only
   // runs through matchLeg once — replay safety via the
   // unique notifications index handles intra-cycle dupes.
-  const byType: Record<
-    'published' | 'price_dropped',
-    Set<string>
-  > = {
-    published: new Set(),
-    price_dropped: new Set(),
-  };
+  // We track the exact row ids per (leg_id, event_type)
+  // pair so the eventual mark scopes to ONLY the rows
+  // this cron tick claimed (Codex round-2 P1 #1).
+  const byKey: Map<string, { eventType: 'published' | 'price_dropped'; legId: string; rowIds: string[] }> =
+    new Map();
   for (const r of rows) {
-    byType[r.event_type].add(r.leg_id);
+    const key = `${r.event_type}:${r.leg_id}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.rowIds.push(r.id);
+    } else {
+      byKey.set(key, {
+        eventType: r.event_type,
+        legId: r.leg_id,
+        rowIds: [r.id],
+      });
+    }
   }
 
   const outcomes: MatchOutcome[] = [];
-  let processed = 0;
+  const rowIdsToMark: string[] = [];
 
-  for (const eventType of ['published', 'price_dropped'] as const) {
-    const legIds = Array.from(byType[eventType]);
-    if (legIds.length === 0) continue;
-
-    const toProcess: string[] = [];
-    for (const legId of legIds) {
-      const outcome = await matchLeg(legId, eventType);
-      outcomes.push(outcome);
-      if (shouldMarkOutboxProcessed(outcome)) {
-        toProcess.push(legId);
-      }
+  for (const entry of byKey.values()) {
+    const outcome = await matchLeg(entry.legId, entry.eventType);
+    outcomes.push(outcome);
+    if (shouldMarkOutboxProcessed(outcome)) {
+      rowIdsToMark.push(...entry.rowIds);
     }
-    await markOutboxProcessed(client, toProcess, eventType);
-    processed += toProcess.length;
   }
+
+  await markOutboxRowsProcessed(client, rowIdsToMark);
 
   return NextResponse.json(
     {
       ok: true,
       claimed: rows.length,
-      processed,
+      processed: rowIdsToMark.length,
       outcomes,
     },
     { status: 200 }

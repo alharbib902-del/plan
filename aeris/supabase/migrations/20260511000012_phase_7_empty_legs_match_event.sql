@@ -31,12 +31,21 @@
 -- ============================================================
 -- 1. empty_leg_events_outbox
 --
--- One row per fire of `publish_empty_leg_event`. The cron
--- drain holds row locks (SELECT ... FOR UPDATE SKIP LOCKED)
--- so concurrent invocations do not double-process. Per-leg
--- ordered branches in matching.ts dictate whether the row
--- is marked `processed_at = NOW()` or left NULL for replay
--- (Codex iteration-6 P1 #1 + iteration-7 P1 #3 contracts).
+-- One row per fire of `publish_empty_leg_event`. Codex
+-- round-2 P1 #1 fix on PR 2e #33: the route layer claims
+-- pending rows by reading `id` first, then UPDATEs
+-- WHERE id IN (claimed ids) AND processed_at IS NULL —
+-- so a new row landing for the same (leg, event_type)
+-- during the matcher run is left for the next cron tick
+-- to claim. The earlier comment promised
+-- `SELECT ... FOR UPDATE SKIP LOCKED` semantics; the
+-- claim-by-id pattern is the implemented equivalent
+-- (Supabase JS client cannot pass FOR UPDATE through
+-- PostgREST without a SECURITY DEFINER RPC). Per-leg
+-- ordered branches in matching.ts dictate whether the
+-- row is marked `processed_at = NOW()` or left NULL for
+-- replay (Codex iteration-6 P1 #1 + iteration-7 P1 #3
+-- contracts).
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS empty_leg_events_outbox (

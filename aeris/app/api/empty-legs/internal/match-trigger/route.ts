@@ -66,17 +66,23 @@ function isValidPayload(value: unknown): value is RequestPayload {
   return true;
 }
 
-async function markOutboxProcessed(
-  legIds: string[],
-  eventType: 'published' | 'price_dropped'
+/**
+ * Codex round-2 P1 #1 fix. Mark MUST be scoped to the
+ * exact outbox row ids this invocation read at claim
+ * time — never by `leg_id + event_type` predicates,
+ * which would also flip the `processed_at` of any new
+ * row that landed for the same leg/type during the
+ * matcher run.
+ */
+async function markOutboxRowsProcessed(
+  client: ReturnType<typeof createAdminClient>,
+  outboxRowIds: string[]
 ): Promise<void> {
-  if (legIds.length === 0) return;
-  const client = createAdminClient();
+  if (outboxRowIds.length === 0) return;
   const { error } = await client
     .from('empty_leg_events_outbox')
     .update({ processed_at: new Date().toISOString() })
-    .in('leg_id', legIds)
-    .eq('event_type', eventType)
+    .in('id', outboxRowIds)
     .is('processed_at', null);
   if (error) {
     console.error('[match-trigger] outbox mark error', error);
@@ -105,24 +111,48 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
+  // Codex round-2 P1 #1 fix. Read the exact outbox row
+  // ids that exist for the requested legs/event NOW,
+  // before running the matcher. The eventual mark scopes
+  // to ONLY these ids — a new row that lands for the
+  // same leg/event during the matcher run is left for
+  // the next match-drain cron tick to claim.
+  const client = createAdminClient();
+  const { data: claimedRows, error: claimError } = await client
+    .from('empty_leg_events_outbox')
+    .select('id, leg_id')
+    .in('leg_id', parsed.leg_ids)
+    .eq('event_type', parsed.event)
+    .is('processed_at', null);
+  if (claimError) {
+    console.error('[match-trigger] outbox claim error', claimError);
+  }
+  const claimedByLeg: Map<string, string[]> = new Map();
+  for (const r of claimedRows ?? []) {
+    const list = claimedByLeg.get(r.leg_id) ?? [];
+    list.push(r.id);
+    claimedByLeg.set(r.leg_id, list);
+  }
+
   const outcomes: MatchOutcome[] = [];
-  const toProcess: string[] = [];
+  const rowIdsToMark: string[] = [];
 
   for (const legId of parsed.leg_ids) {
     const outcome = await matchLeg(legId, parsed.event);
     outcomes.push(outcome);
     if (shouldMarkOutboxProcessed(outcome)) {
-      toProcess.push(legId);
+      const ids = claimedByLeg.get(legId) ?? [];
+      rowIdsToMark.push(...ids);
     }
   }
 
-  await markOutboxProcessed(toProcess, parsed.event);
+  await markOutboxRowsProcessed(client, rowIdsToMark);
 
   return NextResponse.json(
     {
       ok: true,
       total: parsed.leg_ids.length,
-      processed: toProcess.length,
+      processed: rowIdsToMark.length,
       outcomes,
     },
     { status: 200 }
