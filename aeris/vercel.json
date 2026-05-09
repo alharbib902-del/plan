@@ -13,6 +13,10 @@
     {
       "path": "/api/cron/empty-legs/expire-windows",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/empty-legs/match-drain",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
