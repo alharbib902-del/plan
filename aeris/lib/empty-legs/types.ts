@@ -41,6 +41,14 @@ export type {
   EmptyLegEventsOutboxRow,
   EmptyLegEventsOutboxInsert,
   EmptyLegEventsOutboxUpdate,
+  // Phase 8 PR 1 — operators table now exposed via
+  // database.ts. Re-exported here so PR 2b's stub-conversion
+  // RPC + admin pages have a single Empty-Legs-scoped surface
+  // for operator types (mirrors the Phase 7 alias-layer ritual).
+  OperatorRow,
+  OperatorInsert,
+  OperatorUpdate,
+  OperatorSignupStatus,
 } from '@/types/database';
 
 // PR 2a RPC arg + result types
