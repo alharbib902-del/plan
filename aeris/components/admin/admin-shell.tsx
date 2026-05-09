@@ -55,6 +55,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </Link>
                 </>
               ) : null}
+              {process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'false' ? (
+                <Link
+                  href="/admin/operators"
+                  className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                >
+                  المشغّلون
+                </Link>
+              ) : null}
             </nav>
           </div>
 
