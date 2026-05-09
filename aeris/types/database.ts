@@ -1414,6 +1414,322 @@ export type OperatorNotificationAlertStatusUpdate = Partial<
 >;
 
 // ============================================================================
+// Phase 8 PR 2a — Operator RPC layer (17 publics + 1 helper)
+//
+// Migration file: 20260513000021_phase_8_operator_rpcs.sql
+//
+// All publics: SECURITY DEFINER + service-role-only EXECUTE +
+// structured-error contract on every validation failure (no
+// raises). Helper `_normalize_operator_email` is REVOKEd from
+// every role and not exposed via the Functions map below
+// (callable only from inside the publics).
+//
+// Args/Result types below are exported so PR 2b/2c/2d Server
+// Actions get strict typing on `supabase.rpc(...)` calls.
+// ============================================================================
+
+// --- 1. operator_signup ---
+
+export type OperatorSignupArgs = {
+  p_email: string;
+  p_password_hash: string;
+  p_company_name: string;
+  p_contact_email: string;
+  p_contact_phone: string;
+  p_notes: string | null;
+  p_ip: string;
+};
+
+export type OperatorSignupError =
+  | 'email_in_use'
+  | 'rate_limited'
+  | 'password_hash_malformed'
+  | 'company_name_invalid'
+  | 'contact_email_invalid'
+  | 'contact_phone_invalid';
+
+export type OperatorSignupResult =
+  | { ok: true; operator_id: string; signup_status: 'pending' }
+  | { ok: false; error: OperatorSignupError };
+
+// --- 2. operator_login_lookup (Step 1 of 2-step login) ---
+
+export type OperatorLoginLookupArgs = { p_email: string };
+
+export type OperatorLoginLookupError =
+  | 'invalid_credentials'
+  | 'signup_pending'
+  | 'signup_rejected'
+  | 'account_suspended';
+
+export type OperatorLoginLookupResult =
+  | {
+      ok: true;
+      operator_id: string;
+      password_hash: string;
+      password_must_change: boolean;
+    }
+  | { ok: false; error: OperatorLoginLookupError };
+
+// --- 3. operator_login_create_session (Step 2 of 2-step login) ---
+
+export type OperatorLoginCreateSessionArgs = {
+  p_operator_id: string;
+  p_session_token_hash: string;
+  p_remember_me: boolean;
+  p_ip: string | null;
+  p_user_agent: string | null;
+};
+
+export type OperatorLoginCreateSessionError =
+  | 'operator_not_found'
+  | 'account_not_approved';
+
+export type OperatorLoginCreateSessionResult =
+  | {
+      ok: true;
+      session_id: string;
+      expires_at: string;
+      password_must_change: boolean;
+    }
+  | { ok: false; error: OperatorLoginCreateSessionError };
+
+// --- 4. operator_logout ---
+
+export type OperatorLogoutArgs = { p_session_token_hash: string };
+
+export type OperatorLogoutResult =
+  | { ok: true; session_id: string }
+  | { ok: true; no_op: true };
+
+// --- 5. operator_session_validate ---
+
+export type OperatorSessionValidateArgs = { p_token_hash: string };
+
+export type OperatorSessionValidateError =
+  | 'invalid_session'
+  | 'account_not_approved';
+
+export type OperatorSessionValidateResult =
+  | {
+      ok: true;
+      operator_id: string;
+      expires_at: string;
+      password_must_change: boolean;
+    }
+  | { ok: false; error: OperatorSessionValidateError };
+
+// --- 6. admin_approve_operator ---
+
+export type AdminApproveOperatorArgs = {
+  p_operator_id: string;
+  p_welcome_token_hash: string;
+  p_welcome_token_expires_at: string;
+};
+
+export type AdminApproveOperatorError =
+  | 'operator_not_found'
+  | 'not_pending';
+
+export type AdminApproveOperatorResult =
+  | { ok: true; operator_id: string }
+  | { ok: false; error: AdminApproveOperatorError };
+
+// --- 7. admin_reject_operator ---
+
+export type AdminRejectOperatorArgs = {
+  p_operator_id: string;
+  p_reason: string;
+};
+
+export type AdminRejectOperatorError =
+  | 'operator_not_found'
+  | 'not_pending'
+  | 'reason_required';
+
+export type AdminRejectOperatorResult =
+  | { ok: true; operator_id: string }
+  | { ok: false; error: AdminRejectOperatorError };
+
+// --- 8. admin_suspend_operator ---
+
+export type AdminSuspendOperatorArgs = {
+  p_operator_id: string;
+  p_reason: string;
+};
+
+export type AdminSuspendOperatorError =
+  | 'operator_not_found'
+  | 'not_approved'
+  | 'reason_required';
+
+export type AdminSuspendOperatorResult =
+  | { ok: true; operator_id: string; sessions_revoked: number }
+  | { ok: false; error: AdminSuspendOperatorError };
+
+// --- 9. admin_unsuspend_operator ---
+
+export type AdminUnsuspendOperatorArgs = { p_operator_id: string };
+
+export type AdminUnsuspendOperatorError =
+  | 'operator_not_found'
+  | 'not_suspended';
+
+export type AdminUnsuspendOperatorResult =
+  | { ok: true; operator_id: string }
+  | { ok: false; error: AdminUnsuspendOperatorError };
+
+// --- 10. admin_set_operator_documents ---
+
+export type AdminSetOperatorDocumentsArgs = {
+  p_operator_id: string;
+  p_commercial_registration: string | null;
+  p_gaca_license: string | null;
+  p_license_expiry: string | null;
+};
+
+export type AdminSetOperatorDocumentsError =
+  | 'operator_not_found'
+  | 'not_writable';
+
+export type AdminSetOperatorDocumentsResult =
+  | { ok: true; operator_id: string }
+  | { ok: false; error: AdminSetOperatorDocumentsError };
+
+// --- 11. admin_reset_operator_password ---
+
+export type AdminResetOperatorPasswordArgs = {
+  p_operator_id: string;
+  p_new_password_hash: string;
+};
+
+export type AdminResetOperatorPasswordError =
+  | 'operator_not_found'
+  | 'not_resettable'
+  | 'password_hash_malformed';
+
+export type AdminResetOperatorPasswordResult =
+  | { ok: true; operator_id: string; sessions_revoked: number }
+  | { ok: false; error: AdminResetOperatorPasswordError };
+
+// --- 12. mint_operator_password_reset_token ---
+
+export type MintOperatorPasswordResetTokenArgs = {
+  p_email: string;
+  p_token_hash: string;
+  p_expires_at: string;
+  p_ip: string | null;
+};
+
+// No error case — missing email returns no_op:true to prevent
+// email enumeration (same posture as operator_login_lookup's
+// 'invalid_credentials' opacity).
+export type MintOperatorPasswordResetTokenResult =
+  | { ok: true; token_id: string }
+  | { ok: true; no_op: true };
+
+// --- 13. verify_operator_password_reset ---
+
+export type VerifyOperatorPasswordResetArgs = {
+  p_token_hash: string;
+  p_new_password_hash: string;
+};
+
+export type VerifyOperatorPasswordResetError =
+  | 'token_not_found'
+  | 'token_already_used'
+  | 'token_expired'
+  | 'password_hash_malformed';
+
+export type VerifyOperatorPasswordResetResult =
+  | { ok: true; operator_id: string; sessions_revoked: number }
+  | { ok: false; error: VerifyOperatorPasswordResetError };
+
+// --- 14. mint_operator_otp ---
+
+export type MintOperatorOtpArgs = {
+  p_operator_id: string;
+  p_code_hash: string;
+  p_purpose: OperatorOtpPurpose;
+  p_expires_at: string;
+};
+
+export type MintOperatorOtpError =
+  | 'operator_not_found'
+  | 'invalid_purpose'
+  | 'not_otp_eligible';
+
+export type MintOperatorOtpResult =
+  | { ok: true; otp_id: string }
+  | { ok: false; error: MintOperatorOtpError };
+
+// --- 15. verify_operator_otp ---
+
+export type VerifyOperatorOtpArgs = {
+  p_operator_id: string;
+  p_code_hash: string;
+};
+
+export type VerifyOperatorOtpError =
+  | 'operator_not_found'
+  | 'no_active_otp'
+  | 'code_mismatch'
+  | 'expired'
+  | 'locked';
+
+export type VerifyOperatorOtpResult =
+  | { ok: true; otp_id: string; purpose: OperatorOtpPurpose }
+  | { ok: false; error: VerifyOperatorOtpError };
+
+// --- 16. convert_phase7_stub_to_operator ---
+
+export type ConvertPhase7StubToOperatorArgs = {
+  p_stub_id: string;
+  p_operator_id: string;
+};
+
+export type ConvertPhase7StubToOperatorError =
+  | 'stub_not_found'
+  | 'operator_not_found'
+  | 'stub_already_archived'
+  | 'operator_not_writable';
+
+export type ConvertPhase7StubToOperatorResult =
+  | {
+      ok: true;
+      stub_id: string;
+      operator_id: string;
+      legs_reassigned: number;
+    }
+  | { ok: false; error: ConvertPhase7StubToOperatorError };
+
+// --- 17. consume_operator_welcome_token ---
+
+export type ConsumeOperatorWelcomeTokenArgs = {
+  p_token_hash: string;
+  p_session_token_hash: string;
+  p_remember_me: boolean;
+  p_ip: string | null;
+  p_user_agent: string | null;
+};
+
+export type ConsumeOperatorWelcomeTokenError =
+  | 'token_not_found'
+  | 'already_used'
+  | 'expired'
+  | 'account_not_approved';
+
+export type ConsumeOperatorWelcomeTokenResult =
+  | {
+      ok: true;
+      operator_id: string;
+      session_id: string;
+      expires_at: string;
+      password_must_change: boolean;
+    }
+  | { ok: false; error: ConsumeOperatorWelcomeTokenError };
+
+// ============================================================================
 // Phase 7 PR 2a: SECURITY DEFINER RPC layer
 //
 // Migration file: 20260510000011_phase_7_empty_legs_rpcs.sql.
@@ -2051,6 +2367,78 @@ export type Database = {
       expire_empty_leg_window: {
         Args: ExpireEmptyLegWindowArgs;
         Returns: ExpireEmptyLegWindowResult;
+      };
+      // Phase 8 PR 2a: 17 operator-account RPCs (all SECURITY
+      // DEFINER + service-role-only EXECUTE; structured-error
+      // contract). Helper _normalize_operator_email is REVOKEd
+      // from every role and intentionally NOT exposed here.
+      operator_signup: {
+        Args: OperatorSignupArgs;
+        Returns: OperatorSignupResult;
+      };
+      operator_login_lookup: {
+        Args: OperatorLoginLookupArgs;
+        Returns: OperatorLoginLookupResult;
+      };
+      operator_login_create_session: {
+        Args: OperatorLoginCreateSessionArgs;
+        Returns: OperatorLoginCreateSessionResult;
+      };
+      operator_logout: {
+        Args: OperatorLogoutArgs;
+        Returns: OperatorLogoutResult;
+      };
+      operator_session_validate: {
+        Args: OperatorSessionValidateArgs;
+        Returns: OperatorSessionValidateResult;
+      };
+      admin_approve_operator: {
+        Args: AdminApproveOperatorArgs;
+        Returns: AdminApproveOperatorResult;
+      };
+      admin_reject_operator: {
+        Args: AdminRejectOperatorArgs;
+        Returns: AdminRejectOperatorResult;
+      };
+      admin_suspend_operator: {
+        Args: AdminSuspendOperatorArgs;
+        Returns: AdminSuspendOperatorResult;
+      };
+      admin_unsuspend_operator: {
+        Args: AdminUnsuspendOperatorArgs;
+        Returns: AdminUnsuspendOperatorResult;
+      };
+      admin_set_operator_documents: {
+        Args: AdminSetOperatorDocumentsArgs;
+        Returns: AdminSetOperatorDocumentsResult;
+      };
+      admin_reset_operator_password: {
+        Args: AdminResetOperatorPasswordArgs;
+        Returns: AdminResetOperatorPasswordResult;
+      };
+      mint_operator_password_reset_token: {
+        Args: MintOperatorPasswordResetTokenArgs;
+        Returns: MintOperatorPasswordResetTokenResult;
+      };
+      verify_operator_password_reset: {
+        Args: VerifyOperatorPasswordResetArgs;
+        Returns: VerifyOperatorPasswordResetResult;
+      };
+      mint_operator_otp: {
+        Args: MintOperatorOtpArgs;
+        Returns: MintOperatorOtpResult;
+      };
+      verify_operator_otp: {
+        Args: VerifyOperatorOtpArgs;
+        Returns: VerifyOperatorOtpResult;
+      };
+      convert_phase7_stub_to_operator: {
+        Args: ConvertPhase7StubToOperatorArgs;
+        Returns: ConvertPhase7StubToOperatorResult;
+      };
+      consume_operator_welcome_token: {
+        Args: ConsumeOperatorWelcomeTokenArgs;
+        Returns: ConsumeOperatorWelcomeTokenResult;
       };
     };
     CompositeTypes: { [_ in never]: never };
