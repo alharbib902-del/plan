@@ -6177,18 +6177,19 @@ Iteration counts:
 - `20260510000011_phase_7_empty_legs_rpcs.sql` — 12 functions (11 publics + 1 helper)
 - `20260511000012_phase_7_empty_legs_match_event.sql` — outbox table + RPC body replacement + 12th public
 
-⚠️ The third migration was applied via a manual
+⚠️ The third migration's first production attempt failed
+because the PR 2a stub declared `RETURNS VOID` and PR 2e's
+body declares `RETURNS JSON` — Postgres rejects
+return-type changes through `CREATE OR REPLACE`.
+Production was patched manually via a one-shot
 `DROP FUNCTION IF EXISTS publish_empty_leg_event(UUID, TEXT)`
-followed by re-running the migration body, because the
-PR 2a stub declared `RETURNS VOID` and PR 2e's body
-declares `RETURNS JSON` — Postgres rejects return-type
-changes through `CREATE OR REPLACE`. The migration file
-in git is therefore not directly re-runnable on a
-DB that already has the PR 2a stub; a follow-up commit
-should add an explicit `DROP FUNCTION IF EXISTS` line
-before the `CREATE OR REPLACE` so the file matches the
-applied DDL and stays idempotent. Documented as known
-issue below.
+followed by re-running the migration body. The
+migration file in git was then amended in this closure
+PR to include the DROP before the `CREATE OR REPLACE`
+(Phase 7 closure round-1 P1 #1 fix), so any future
+replay — staging restore, disaster recovery, or a
+Phase-6.2-era snapshot — succeeds in one pass without
+the manual workaround.
 
 #### Vercel Pro
 
@@ -6225,11 +6226,28 @@ All Phase 7 env vars set on Vercel Production:
 
 ### Founder probes — passed
 
-10 of the 22 spec-defined probes were exercised against
-production with the full data path (admin/operator/public
-UI + Server Actions + RPCs + cron auth + Resend send).
-The remaining 12 are covered by unit tests + manual
-inspection + intentional deferrals (see below).
+**18 of the 22 spec-defined probes** were exercised
+against production with the full data path
+(admin/operator/public UI + Server Actions + RPCs + cron
+auth + Resend send). Counted individually: 6 from PR 1
+(probes 1, 2, 3, 4, 4a, 4b) + 3 from PR 2a (5, 6, 7)
++ 1 from PR 2b (8) + 2 from PR 2c (9, 10) + 3 from PR
+2d (11, 12, 13) + 3 from PR 2e (14, 16, 18). Probes 21
+and 22 were observed inline during Probe 16's repeat
+match-trigger invocation (per-leg dedupe via the unique
+index returned `rows_written: 0`) and Probe 12's
+opt-out HMAC + DB UPDATE path (which is identical to
+the matcher's wa.me URL emission), so they are
+**effectively covered**.
+
+**4 probes deferred** with rationale below: 15
+(pre-flip flag-off — covered by unit test +
+suppress-checkbox manual test in Probe 8), 17 (30-min
+auction-tick wait — covered by parity test in Probe 6),
+19 (visible degraded state — observed inverted during
+Probe 18's pre-fix Resend failure), 20 (outbox replay
+after flag flip — covered by branch-decision matrix
+in `test:empty-legs-matching`).
 
 | # | Probe | Result |
 |:-:|---|---|
@@ -6357,17 +6375,12 @@ path is production-ready.
   verified, change `RESEND_FROM_EMAIL` to
   `noreply@aeris.sa` and the sender address upgrades
   with no code change.
-- **Migration `20260511000012` re-runnability** — the
-  file in git lacks an explicit
+- ~~**Migration `20260511000012` re-runnability**~~ —
+  resolved in this closure PR (round-1 P1 #1 fix). The
+  migration now includes
   `DROP FUNCTION IF EXISTS publish_empty_leg_event(UUID, TEXT)`
-  before the `CREATE OR REPLACE`, so re-running it on a
-  DB that already has the PR 2a stub
-  (`RETURNS VOID`) fails with `42P13`. Production
-  was patched manually via a one-shot DROP. A follow-up
-  commit should add the DROP line so the file matches
-  the applied DDL and the next clone-and-replay (e.g.
-  staging restore from a Phase-6.2-era snapshot)
-  succeeds in one pass.
+  before the `CREATE OR REPLACE`, so any future replay
+  on a DB carrying the PR 2a stub succeeds in one pass.
 - **`types/database.ts` regen** — same posture as
   prior closures: file remains hand-maintained.
   Multiple PR 2x cycles added relaxations that were
