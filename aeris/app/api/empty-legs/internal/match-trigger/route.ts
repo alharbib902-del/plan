@@ -26,24 +26,34 @@ import {
  * Body:
  *   1. Auth via shared CRON_SECRET helper.
  *   2. Parse `leg_ids` (UUID[]) + `event`.
- *   3. For EACH leg id, call `matchLeg(legId, event)` and
+ *   3. SELECT outbox `id` (and leg_id) for the requested
+ *      legs/event NOW, before running the matcher — that's
+ *      the claim set for THIS invocation (Codex round-2
+ *      P1 #1 fix on PR 2e #33).
+ *   4. For EACH leg id, call `matchLeg(legId, event)` and
  *      collect outcomes. The matcher applies the per-leg
  *      ordered branches (suppress → disabled → candidates).
- *   4. For every outcome, decide via
+ *   5. For every outcome, decide via
  *      `shouldMarkOutboxProcessed(outcome)`:
- *        - true  → UPDATE outbox WHERE leg_id = X AND
- *                  processed_at IS NULL; SET processed_at
- *                  = NOW().
+ *        - true  → UPDATE outbox WHERE id IN (claimed
+ *                  outbox row ids for this leg) AND
+ *                  processed_at IS NULL. Marking by
+ *                  claimed row ids (not by `leg_id`) leaves
+ *                  any new row that landed for the same
+ *                  leg/event during the matcher run for
+ *                  the next match-drain cron tick to pick
+ *                  up.
  *        - false → leave the row pending (replays on next
  *                  cron tick after flag flip).
- *   5. Returns the per-leg outcome list.
+ *   6. Returns the per-leg outcome list.
  *
  * Idempotent: if the synchronous fire and the cron drain
- * race on the same leg, whichever wins marks the outbox row
- * processed (`AND processed_at IS NULL` filter); the loser
- * sees zero rows updated and the matcher's per-leg dedupe
- * via the `(lead_inquiry_id, leg_id)` unique index ensures
- * no double-notification.
+ * race on the same leg, whichever wins marks the claimed
+ * outbox rows processed (`AND processed_at IS NULL`
+ * filter); the loser sees zero rows updated and the
+ * matcher's per-leg dedupe via the
+ * `(lead_inquiry_id, leg_id)` unique index ensures no
+ * double-notification.
  */
 
 export const dynamic = 'force-dynamic';
