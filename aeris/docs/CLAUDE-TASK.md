@@ -1138,9 +1138,17 @@ operator. Used once on first login.
    updated to 17 publics + 1 helper after the login
    split + the welcome-token reclassification; PR 2a
    Codex round-4 P2 fix: count updated to 17 publics
-   + **2 helpers** after round-3 added `_is_sha256_hex`)
-   — service-role psql: `\df+ public.*operator*` shows
-   17 publics:
+   + **2 helpers** after round-3 added `_is_sha256_hex`;
+   PR 2a Codex round-5 P2 fix: probe split into TWO
+   commands because `_is_sha256_hex` does not contain
+   `operator` in its name and the `\df+ public.*operator*`
+   pattern misses it).
+
+   Run BOTH of the following:
+
+   **(a)** `\df+ public.*operator*` — shows 17 publics
+   PLUS the `_normalize_operator_email` helper (18 rows
+   total):
      1. `operator_signup`
      2. `operator_login_lookup`
      3. `operator_login_create_session`
@@ -1158,10 +1166,29 @@ operator. Used once on first login.
      15. `verify_operator_otp`
      16. `convert_phase7_stub_to_operator`
      17. `consume_operator_welcome_token`
-   plus the 2 helpers (`_normalize_operator_email`,
-   `_is_sha256_hex`). Each public has `EXECUTE` granted
-   to `service_role` ONLY. **Both** helpers have zero
-   grantees.
+     + `_normalize_operator_email` (helper)
+
+   **(b)** `\df+ public._is_sha256_hex` — shows the 2nd
+   helper (1 row). Zero grantees.
+
+   Each public has `EXECUTE` granted to `service_role`
+   ONLY. **Both** helpers have zero grantees.
+
+   Alternative: a single catalog query that asserts both
+   count + grantees in one pass:
+   ```sql
+   SELECT p.proname,
+          array_to_string(p.proacl, ',') AS acl
+     FROM pg_proc p
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public'
+       AND (p.proname LIKE '%operator%'
+            OR p.proname IN ('_is_sha256_hex'))
+     ORDER BY p.proname;
+   ```
+   Expect 19 rows: 17 publics with `service_role=` in
+   their `acl`; `_normalize_operator_email` and
+   `_is_sha256_hex` with empty `acl`.
 6. **Approve smoke** — admin RPC dry-run: INSERT a
    pending operator row with **all required fixture
    columns** (Codex round-3 P1 #1 fix: `auth_email` is
