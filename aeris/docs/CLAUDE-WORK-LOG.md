@@ -6226,28 +6226,42 @@ All Phase 7 env vars set on Vercel Production:
 
 ### Founder probes — passed
 
-**18 of the 22 spec-defined probes** were exercised
-against production with the full data path
-(admin/operator/public UI + Server Actions + RPCs + cron
-auth + Resend send). Counted individually: 6 from PR 1
-(probes 1, 2, 3, 4, 4a, 4b) + 3 from PR 2a (5, 6, 7)
-+ 1 from PR 2b (8) + 2 from PR 2c (9, 10) + 3 from PR
-2d (11, 12, 13) + 3 from PR 2e (14, 16, 18). Probes 21
-and 22 were observed inline during Probe 16's repeat
-match-trigger invocation (per-leg dedupe via the unique
-index returned `rows_written: 0`) and Probe 12's
-opt-out HMAC + DB UPDATE path (which is identical to
-the matcher's wa.me URL emission), so they are
-**effectively covered**.
+**Counting model.** The Phase 7 spec numbers probes
+**1 through 22**, but probe 4 was split into **4a** and
+**4b** during Codex iteration-9 P1 #2 (alert-status
+seed verification + AFTER INSERT trigger smoke). So the
+spec defines **24 individual probe checks** —
+`{1, 2, 3, 4, 4a, 4b, 5..22}`. The arithmetic below
+counts those 24 individual checks.
 
-**4 probes deferred** with rationale below: 15
-(pre-flip flag-off — covered by unit test +
-suppress-checkbox manual test in Probe 8), 17 (30-min
-auction-tick wait — covered by parity test in Probe 6),
-19 (visible degraded state — observed inverted during
-Probe 18's pre-fix Resend failure), 20 (outbox replay
-after flag flip — covered by branch-decision matrix
-in `test:empty-legs-matching`).
+**18 directly exercised + 2 effectively covered + 4
+deferred = 24 individual probe checks**, against
+production with the full data path
+(admin/operator/public UI + Server Actions + RPCs + cron
+auth + Resend send).
+
+- **18 directly exercised:** 6 from PR 1
+  (probes 1, 2, 3, 4, 4a, 4b) + 3 from PR 2a (5, 6, 7)
+  + 1 from PR 2b (8) + 2 from PR 2c (9, 10) + 3 from
+  PR 2d (11, 12, 13) + 3 from PR 2e (14, 16, 18).
+- **2 effectively covered** (observed inline during
+  another probe rather than re-run as a standalone
+  step): probe 21 (per-leg dedupe — observed during
+  Probe 16's repeat match-trigger invocation, which
+  returned `rows_written: 0` thanks to the unique
+  `(lead_inquiry_id, leg_id)` index) and probe 22
+  (end-to-end opt-out via wa.me URL — the HMAC
+  verify + DB UPDATE path is identical to Probe 12,
+  which passed; Probe 16 verified the wa.me body
+  contains the opt-out URL).
+- **4 deferred** with rationale: 15 (pre-flip flag-off
+  — covered by unit test + suppress-checkbox manual
+  test in Probe 8), 17 (30-min auction-tick wait —
+  covered by parity test in Probe 6), 19 (visible
+  degraded state — observed inverted during Probe 18's
+  pre-fix Resend failure), 20 (outbox replay after
+  flag flip — covered by branch-decision matrix in
+  `test:empty-legs-matching`).
 
 | # | Probe | Result |
 |:-:|---|---|
