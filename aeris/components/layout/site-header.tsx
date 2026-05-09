@@ -7,11 +7,29 @@ import { cn } from '@/lib/utils/cn';
 import { whatsappLink } from '@/lib/utils/format';
 import { AERIS_DEFAULT_WHATSAPP_MESSAGE } from '@/lib/config/contact';
 
-const NAV_ITEMS = [
+const BASE_NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/#services', label: 'الخدمات' },
   { href: '/#why', label: 'لماذا Aeris' },
   { href: '/#contact', label: 'تواصل معنا' },
 ];
+
+// Phase 7 PR 2d: nav entry for the public marketplace.
+// `NEXT_PUBLIC_ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE` mirrors
+// the server-side `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE`
+// flag and is exposed to the browser only for the visual
+// nav surface. The Server Actions + page modules still
+// enforce the server-side flag — flipping the public flag
+// alone will surface the link but produce a notFound() on
+// click, by design.
+const SHOW_EMPTY_LEGS_LINK =
+  process.env.NEXT_PUBLIC_ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE === 'true';
+
+const NAV_ITEMS: { href: string; label: string }[] = SHOW_EMPTY_LEGS_LINK
+  ? [
+      ...BASE_NAV_ITEMS,
+      { href: '/empty-legs', label: 'رحلات فارغة' },
+    ]
+  : BASE_NAV_ITEMS;
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);

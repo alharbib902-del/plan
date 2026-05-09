@@ -5684,4 +5684,205 @@ callable Server Actions. Behind
 `false`; flips together with `ENABLE_EMPTY_LEGS_NOTIFICATIONS`
 in the canary plan).
 
+## Phase 7 — PR 2d (Public marketplace + reserve flow)
+
+Phase 7 PR 2d ships the **anon-readable public marketplace**
+for Empty Legs: list page, per-leg detail (URL keyed by
+human-readable `EL-XXXX`), 10-minute reserve flow,
+post-reservation page with countdown + WhatsApp confirm
+link, and the opt-out lander. Behind feature flag
+`ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE` (default `false`
+until the canary-flip plan flips this and
+`ENABLE_EMPTY_LEGS_NOTIFICATIONS` simultaneously per
+Codex iteration-5 P2 #2 fix).
+
+PR 2d is the 4th Phase-7 application PR. Stack at this
+point: PR 1 (schema) → PR 2a (RPCs) → PR 2b (admin) →
+PR 2c (operator) → **PR 2d (public)**. PR 2d does NOT
+ship any DDL — it consumes the schema from PR 1 and the
+RPCs from PR 2a (`reserve_empty_leg`,
+`release_empty_leg_reservation`).
+
+### Two HMAC token modules
+
+- **Reservation token** (`reservation-token.ts`) — 10-minute
+  TTL. Bound to one leg row. The DB-side counterpart is
+  `empty_legs.reservation_token_hash` set by
+  `reserve_empty_leg`. The customer's "cancel my
+  reservation" Server Action SHA256-hashes the raw token
+  before calling `release_empty_leg_reservation` per
+  Codex iteration-1 P1 #3 contract. Separate secret
+  `EMPTY_LEGS_RESERVATION_TOKEN_SECRET`.
+- **Opt-out token** (`opt-out-token.ts`) — no expiry.
+  Single-purpose: flips
+  `lead_inquiries.empty_legs_opt_in` to FALSE. Embedded
+  in every wa.me notification body (Codex iteration-3
+  P2 #1 fix). Separate secret
+  `EMPTY_LEGS_OPT_OUT_TOKEN_SECRET`.
+
+Both modules are fail-closed: missing/empty secret →
+mint throws + verify returns `{ valid: false }`. Source
+files include a `Server-side ONLY` comment in lieu of
+`import 'server-only'` because the Layer-1 token test
+(`test:empty-legs-token`) runs under tsx outside the
+Next.js bundler and cannot resolve the `'server-only'`
+shim.
+
+### Three anon-callable Server Actions
+
+| # | Action | Backed by | Side-effects |
+|:-:|---|---|---|
+| 1 | `reserveEmptyLeg(leg_number, name, phone, opt_in)` | `reserve_empty_leg` RPC | mints 10-min reservation token, hashes it into the RPC arg, INSERTs `lead_inquiries` row with `empty_legs_opt_in = opt_in` |
+| 2 | `cancelMyReservation(leg_number, reservation_token)` | `release_empty_leg_reservation` RPC | sha256-hashes the raw token before calling the RPC (Codex iteration-1 P1 #3) |
+| 3 | `confirmOptOut(opt_out_token)` | direct UPDATE on `lead_inquiries` | verifies HMAC, flips `empty_legs_opt_in = FALSE` |
+
+Every action honours `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE`
+(default `false`); the customer-facing pages also
+`notFound()` when disabled, so this is defense in depth
+at both the page and action layers.
+
+### Codex iteration-1 P1 #1 fix — opt-in defaults UNCHECKED
+
+Both customer-facing entry points (the `/request` form
+and the `/empty-legs/<>/reserve` form) ship the opt-in
+checkbox **UNCHECKED** by default. The Server Actions
+only write `lead_inquiries.empty_legs_opt_in = TRUE`
+when the customer explicitly ticks the box; an
+unticked submission keeps the column at the schema
+default `FALSE`.
+
+The new column on `LeadInquiryInsert` is optional —
+the DB has `BOOLEAN NOT NULL DEFAULT FALSE`, so callers
+that omit the field automatically write FALSE. PR 2d's
+Server Actions pass the boolean explicitly to make the
+contract traceable.
+
+### Files added (16)
+
+| Path | Purpose |
+|---|---|
+| `lib/empty-legs/reservation-token.ts` | HMAC mint + verify + sha256 hash for the 10-min reservation token. |
+| `lib/empty-legs/opt-out-token.ts` | HMAC mint + verify for the opt-out token (no expiry). |
+| `lib/empty-legs/__tests__/reservation-token.test.ts` | Layer-1 parity test (13 cases): mint+verify roundtrip, signature tamper, payload tamper, expiry rejection, opt-out has no expiry, missing-secret guards, cross-secret rejection. |
+| `lib/empty-legs/public-queries.ts` | `listPublicAvailableLegs`, `getPublicLegByNumber`, `listDistinctDepartures`. Server-only; admin client used so the page output mirrors the RLS-allowed anon view. |
+| `app/actions/empty-legs-public.ts` | 3 anon-callable Server Actions (above). |
+| `components/public/empty-legs/leg-card.tsx` | List card. |
+| `components/public/empty-legs/leg-detail.tsx` | Detail page body (route + window + price + auction trajectory + reserve CTA). |
+| `components/public/empty-legs/auction-trajectory.tsx` | "سيصل إلى X ريال خلال Y ساعة" inline trajectory summary. |
+| `components/public/empty-legs/reserve-form.tsx` | Reserve form with UNCHECKED opt-in checkbox. |
+| `components/public/empty-legs/countdown.tsx` | MM:SS countdown for the 10-min hold (client component, ticks every second). |
+| `components/public/empty-legs/reserved-actions.tsx` | "اتصل بنا" wa.me + "إلغاء حجزي" buttons on the post-reservation page. |
+| `components/public/empty-legs/opt-out-confirm-button.tsx` | "أتأكدت؟" confirm button on the opt-out lander. |
+| `app/(public)/empty-legs/page.tsx` | List page with departure / passenger / max-price filters. |
+| `app/(public)/empty-legs/[leg_number]/page.tsx` | Detail page (URL keyed by `leg_number`, not UUID, for shareable links). |
+| `app/(public)/empty-legs/[leg_number]/reserve/page.tsx` | Reserve form page. |
+| `app/(public)/empty-legs/[leg_number]/reserved/page.tsx` | Post-reservation page with countdown + cancel + wa.me confirm link to the founder's number. |
+| `app/(public)/empty-legs/opt-out/[token]/page.tsx` | Opt-out lander; verifies HMAC at render time + on confirm-click. |
+
+### Files edited (7)
+
+| Path | Change |
+|---|---|
+| `package.json` | Added `test:empty-legs-token` script. |
+| `.github/workflows/ci.yml` | Added "Empty Legs token roundtrip" CI step before type-check / build / lint. |
+| `app/(public)/page.tsx` | Added flag-gated `EmptyLegsCta` section between `WhyAeris` and `CtaBanner`. |
+| `components/layout/site-header.tsx` | Added flag-gated "رحلات فارغة" nav link. Reads `NEXT_PUBLIC_ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE` because the header is a client component. |
+| `components/forms/flight-request-form.tsx` | Added the UNCHECKED `empty_legs_opt_in` checkbox at the bottom of the form. |
+| `app/actions/flight-request.ts` | Reads `empty_legs_opt_in` from the form data and passes it through to `insertLead`. |
+| `lib/i18n/empty-legs-ar.ts` | Extended with PR 2d Arabic strings (~50 keys) covering list, detail, reserve, reserved, opt-out, home CTA, validator-error mappings. |
+| `lib/validators/empty-legs.ts` | Added `publicReserveEmptyLegSchema`, `publicCancelMyReservationSchema`, `publicConfirmOptOutSchema`. |
+| `components/admin/empty-legs/error-translator.ts` | Mapped the new PR 2d error codes (`leg_number_missing`, `opt_out_invalid`, `lead_inquiry_not_found`, `flag_disabled_public`, `reservation_mint_failed`, etc.) to Arabic strings. |
+| `.env.example` | Added `NEXT_PUBLIC_ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE` (mirror of the server flag, used by the client header). |
+
+### Quality gates run locally
+
+All passed:
+
+- `npm run type-check` — clean. (Round 1 surfaced one
+  `LeadInquiryInsert` shape mismatch on
+  `reserveEmptyLeg`'s lead-row insert: `trip_type`,
+  `origin`, `destination`, `departure_date`,
+  `passengers`, `notes` are all required by the typed
+  Insert. Fixed by populating them from the leg
+  snapshot — `trip_type = 'one_way'`, origin/destination
+  from `departure_airport` / `arrival_airport`,
+  `departure_date` from `departure_window_start`,
+  `passengers = 1`, `notes` includes the
+  `EL-XXXX` reference.)
+- `npm run lint:strict` — clean.
+- `npm run build` — green; route table shows the 5 new
+  public routes:
+  - `/empty-legs`
+  - `/empty-legs/[leg_number]`
+  - `/empty-legs/[leg_number]/reserve`
+  - `/empty-legs/[leg_number]/reserved`
+  - `/empty-legs/opt-out/[token]`
+- `npm run test:empty-legs-token` — 13/13 (new).
+- `npm run test:empty-legs-curve` — 16/16 (regression).
+- `npm run test:addons` — Phase 6.2 regression pass.
+- `npm run test:checkout-whatsapp` — 8/8 (regression).
+- `npm run test:checkout-site-url` — 16/16 (regression).
+
+### Founder probes (run by founder against production after PR 2d merges)
+
+PR 2d ships 3 founder probes per spec §Founder Probes:
+
+11. **Public marketplace** — visit `/empty-legs` in
+    incognito; verify a published leg appears with
+    correct RTL Arabic copy. Click reserve; fill name +
+    phone (do NOT tick opt-in for the probe); submit;
+    verify the leg flips to `reserved` in the admin
+    list and the reservation expires in 10 minutes.
+12. **Opt-out lander (manually-minted-token check)** —
+    from a service-role psql or Node session, mint a
+    one-shot opt-out token via
+    `lib/empty-legs/opt-out-token.ts` for a known
+    `lead_inquiries.id`. Open
+    `/empty-legs/opt-out/<token>` in incognito; verify
+    the page renders the "أتأكدت؟" lander; click
+    confirm; query `lead_inquiries` keyed on the same
+    id via service-role psql and verify
+    `empty_legs_opt_in = FALSE`.
+13. **Checkbox unchecked behavior** — submit `/request`
+    without ticking the empty-legs checkbox; verify the
+    resulting `lead_inquiries` row has
+    `empty_legs_opt_in = FALSE`. Submit `/request`
+    again WITH the checkbox ticked; verify the new row
+    has `empty_legs_opt_in = TRUE`. Both reads use a
+    service-role psql query.
+
+### Branch + PR
+
+- Branch: `phase-7/pr-2d-marketplace` (worktree)
+- PR URL: pending (filled after `gh pr create`)
+- CI run URL: pending
+
+### Pre-merge env requirements
+
+Before flipping `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE = true`
+on production, the founder must set per environment:
+
+- `EMPTY_LEGS_RESERVATION_TOKEN_SECRET` (`openssl rand
+  -base64 32`) — required for `reserveEmptyLeg` /
+  `cancelMyReservation`.
+- `EMPTY_LEGS_OPT_OUT_TOKEN_SECRET` (`openssl rand
+  -base64 32`) — required for `confirmOptOut` and the
+  opt-out lander's render-time verify.
+- `NEXT_PUBLIC_ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE=true`
+  — surfaces the "رحلات فارغة" link in the public
+  header. Server-side flag is the enforcement boundary.
+
+### Next PR
+
+**PR 2e** — matching engine + Dutch-auction tick cron +
+notification dispatch. Behind
+`ENABLE_EMPTY_LEGS_NOTIFICATIONS` flag (default `false`).
+Adds the 12th SECURITY DEFINER public
+(`expire_empty_leg_window`), the `/api/cron/empty-legs/...`
+routes, the `/api/empty-legs/internal/match-trigger`
+synchronous trigger, the wa.me URL emission, and the
+founder-batch alert email. Per the canary plan, both
+notifications + public flags flip simultaneously after
+internal-only test legs validate the flag-off path.
+
 

@@ -72,6 +72,17 @@ jobs:
       - name: Dutch-auction curve parity
         run: npm run test:empty-legs-curve
 
+      # Phase 7 PR 2d: reservation + opt-out HMAC token
+      # roundtrip + tamper-rejection + expiry-rejection
+      # parity test. Layer-1 (no DB), runs against the
+      # mint/verify modules in lib/empty-legs/. The test
+      # provides its OWN secrets via process.env, so this
+      # step does NOT need real
+      # EMPTY_LEGS_RESERVATION_TOKEN_SECRET / _OPT_OUT_*
+      # values in CI env.
+      - name: Empty Legs token roundtrip
+        run: npm run test:empty-legs-token
+
       - name: Type-check
         run: npm run type-check
 

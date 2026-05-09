@@ -340,6 +340,32 @@ export function FlightRequestForm({
           />
           {errors.notes && <p className={fieldError}>{errors.notes}</p>}
         </div>
+
+        {/*
+          Phase 7 PR 2d — Empty Legs opt-in checkbox.
+          Codex iteration-1 P1 #1 fix: defaults UNCHECKED. The
+          submitFlightRequest Server Action only writes
+          `lead_inquiries.empty_legs_opt_in = TRUE` when the
+          customer explicitly ticks this box. An unticked
+          submission keeps the column at the schema default
+          FALSE — no implicit consent.
+        */}
+        <label className="flex items-start gap-3 rounded-md border border-border bg-navy-secondary/40 p-4">
+          <input
+            type="checkbox"
+            name="empty_legs_opt_in"
+            className="mt-1"
+            disabled={pending}
+          />
+          <span>
+            <span className="font-ar block text-sm text-ink">
+              أبلغوني عند توفر رحلة فارغة بسعر مخفض
+            </span>
+            <span className="font-ar mt-1 block text-xs text-ink-muted">
+              اختياري — يمكنك إلغاء الإشتراك من أي رابط مستقبلي.
+            </span>
+          </span>
+        </label>
       </fieldset>
 
       {errors.form && (

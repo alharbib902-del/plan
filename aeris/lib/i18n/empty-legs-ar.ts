@@ -262,6 +262,82 @@ export const emptyLegsAr = {
   errorRpcContactPhoneInvalid: 'رقم الهاتف غير صالح.',
   errorRpcOperatorStubIdInvalid: 'معرّف سجلّ المشغّل غير صالح.',
   errorRpcInvalidSession: 'الجلسة غير صالحة.',
+
+  // ============================================================
+  // PR 2d — Public marketplace
+  // ============================================================
+  publicListTitle: 'الرحلات الفارغة',
+  publicListSubtitle:
+    'رحلات عودة بأسعار مخفضة. السعر ينخفض كلما اقتربت ساعة المغادرة.',
+  publicListEmpty: 'لا توجد رحلات متاحة في الوقت الحالي. عُد لاحقاً.',
+  publicListFilterDeparture: 'مدينة المغادرة',
+  publicListFilterPassengers: 'عدد الركاب (الحد الأدنى)',
+  publicListFilterMaxPrice: 'السعر الأقصى',
+  publicListFilterApply: 'تطبيق',
+  publicListFilterClear: 'إعادة تعيين',
+  publicListFilterAny: 'الكل',
+  publicListMostUrgent: 'الأقرب مغادرة',
+
+  publicLegPageBack: 'رجوع للقائمة',
+  publicLegRoute: 'المسار',
+  publicLegWindow: 'نافذة المغادرة',
+  publicLegPrice: 'السعر الحالي',
+  publicLegOriginalPrice: 'السعر الأصلي',
+  publicLegDiscount: 'الخصم الحالي',
+  publicLegMaxPassengers: 'العدد الأقصى للركاب',
+  publicLegSar: 'ريال',
+  publicLegReserveCta: 'احجز الآن',
+  publicLegSold: 'تم بيع هذه الرحلة',
+  publicLegExpired: 'انتهت نافذة المزاد',
+  publicLegNotFound: 'الرحلة غير موجودة.',
+
+  publicAuctionTrajectoryTitle: 'مسار الخصم',
+  publicAuctionTrajectoryHint:
+    'سيصل السعر إلى {floor} ريال عند انتهاء نافذة المزاد. كلّ تأخير في الحجز قد يعني سعراً أقل، لكن المقاعد تختفي بسرعة.',
+  publicAuctionFloorReached:
+    'وصل السعر إلى أدنى حد. احجز قبل اختفاء الرحلة.',
+  publicAuctionWillReachIn:
+    'سيصل إلى {floor} ريال خلال {hours} ساعة تقريباً.',
+
+  publicReserveTitle: 'حجز الرحلة',
+  publicReserveHint:
+    'الحجز صالح لمدة 10 دقائق. سنتواصل معك عبر واتساب لتأكيد الدفع.',
+  publicReserveFieldName: 'الاسم الكامل',
+  publicReserveFieldPhone: 'رقم الواتساب',
+  publicReserveOptInLabel:
+    'أبلغوني عند توفر رحلة فارغة بسعر مخفض على هذا المسار',
+  publicReserveOptInHint:
+    'اختياري — يمكنك إلغاء الإشتراك من أي رابط مستقبلي.',
+  publicReserveSubmit: 'تأكيد الحجز',
+  publicReservedTitle: 'تم تثبيت الحجز',
+  publicReservedHint:
+    'يجب التواصل معنا خلال 10 دقائق لتأكيد الدفع، وإلا سيُلغى الحجز تلقائياً.',
+  publicReservedExpiresAt: 'ينتهي التحفّظ في',
+  publicReservedCallUs: 'تواصل معنا عبر واتساب',
+  publicReservedCancelButton: 'إلغاء حجزي',
+  publicReservedCancelled: 'تم إلغاء الحجز.',
+
+  publicOptOutTitle: 'إلغاء الاشتراك',
+  publicOptOutHint:
+    'سنوقف إرسال إشعارات الرحلات الفارغة المخفّضة على هذا الرقم.',
+  publicOptOutConfirmCta: 'أتأكدت؟ نعم، أوقف الإشعارات',
+  publicOptOutDone: 'تم إيقاف الإشعارات. شكراً لاستخدامك Aeris.',
+  publicOptOutInvalid: 'الرابط غير صالح أو منتهي الصلاحية.',
+
+  homeEmptyLegsCtaTitle: 'اكتشف رحلات فارغة',
+  homeEmptyLegsCtaSubtitle:
+    'رحلات عودة بأسعار مخفضة من 40% إلى 70%. مزاد ينخفض مع اقتراب موعد المغادرة.',
+  homeEmptyLegsCtaButton: 'تصفّح الرحلات',
+  navEmptyLegsLabel: 'رحلات فارغة',
+
+  // PR 2d — Validator + Server Action error codes
+  errorRpcLegNumberMissing: 'رقم الرحلة مطلوب.',
+  errorRpcLegNumberInvalid: 'رقم الرحلة غير صالح.',
+  errorRpcReservationTokenMissing: 'رمز الحجز مفقود.',
+  errorRpcOptOutTokenMissing: 'رمز إلغاء الاشتراك مفقود.',
+  errorRpcOptOutInvalid: 'رابط إلغاء الاشتراك غير صالح.',
+  errorRpcLeadInquiryNotFound:
+    'سجل العميل غير موجود. ربما تم حذف الحساب من قاعدة البيانات.',
 } as const;
 
 export type EmptyLegsArKey = keyof typeof emptyLegsAr;
