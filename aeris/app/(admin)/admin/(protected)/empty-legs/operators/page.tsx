@@ -7,7 +7,9 @@ import {
   formatDateTimeAr,
 } from '@/components/admin/empty-legs/formatters';
 import { listActiveOperatorStubs } from '@/lib/admin/empty-legs/queries';
+import { getOperatorById } from '@/lib/admin/operators/queries';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
+import { operatorsAr } from '@/lib/i18n/operators-ar';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -17,10 +19,30 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function AdminOperatorStubsPage() {
+interface PageProps {
+  // Codex round 3 PR #41 P2 fix: when admin enters this page
+  // from the approved-operator detail CTA we receive the
+  // target operator id via `?convert_target=<id>`. We surface
+  // a banner naming the operator + propagate the param onto
+  // each stub's Convert link so the convert page lands with
+  // the target pre-selected.
+  searchParams?: { convert_target?: string };
+}
+
+export default async function AdminOperatorStubsPage({
+  searchParams,
+}: PageProps) {
   if (process.env.ENABLE_EMPTY_LEGS_ADMIN_UI === 'false') {
     notFound();
   }
+
+  const convertTargetId = searchParams?.convert_target ?? null;
+  const convertTargetOperator =
+    convertTargetId && process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'false'
+      ? await getOperatorById(convertTargetId)
+      : null;
+  const convertModeEnabled =
+    process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'false';
 
   const stubs = await listActiveOperatorStubs();
 
@@ -40,6 +62,18 @@ export default async function AdminOperatorStubsPage() {
           {emptyLegsAr.adminStubsPageSubtitle}
         </p>
       </header>
+
+      {convertTargetId && convertModeEnabled ? (
+        <div className="rounded-xl border border-gold/40 bg-gold/10 px-4 py-3">
+          <p className="font-ar text-sm text-gold-light">
+            {convertTargetOperator
+              ? operatorsAr.conversion.convertModeBanner(
+                  convertTargetOperator.company_name
+                )
+              : operatorsAr.conversion.convertModeBannerNoName}
+          </p>
+        </div>
+      ) : null}
 
       <section className="rounded-xl border border-border bg-navy-card/30 p-4">
         <h2 className="font-ar mb-3 text-base text-ink">
@@ -92,13 +126,27 @@ export default async function AdminOperatorStubsPage() {
                   <td className="font-ar px-4 py-4 text-xs text-ink-muted">
                     {formatDateTimeAr(stub.created_at)}
                   </td>
-                  <td className="px-4 py-4 text-right">
-                    <Link
-                      href={`/admin/empty-legs/operator-sessions?stub=${stub.id}`}
-                      className="font-ar inline-flex items-center gap-1 text-sm text-gold-light transition-colors hover:text-gold"
-                    >
-                      {emptyLegsAr.adminStubsRowMint}
-                    </Link>
+                  <td className="px-4 py-4 text-end">
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      <Link
+                        href={`/admin/empty-legs/operator-sessions?stub=${stub.id}`}
+                        className="font-ar inline-flex items-center gap-1 text-sm text-gold-light transition-colors hover:text-gold"
+                      >
+                        {emptyLegsAr.adminStubsRowMint}
+                      </Link>
+                      {convertModeEnabled ? (
+                        <Link
+                          href={
+                            convertTargetId
+                              ? `/admin/empty-legs/operators/${stub.id}/convert?convert_target=${convertTargetId}`
+                              : `/admin/empty-legs/operators/${stub.id}/convert`
+                          }
+                          className="font-ar inline-flex items-center gap-1 rounded-md border border-gold/40 bg-gold/10 px-3 py-1 text-xs text-gold-light transition-colors hover:bg-gold/20"
+                        >
+                          {operatorsAr.conversion.rowConvertLink}
+                        </Link>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
