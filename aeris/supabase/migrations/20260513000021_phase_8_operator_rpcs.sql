@@ -66,6 +66,31 @@ $$;
 
 REVOKE ALL ON FUNCTION _normalize_operator_email(TEXT) FROM PUBLIC;
 
+-- Codex round-3 P2 #1 fix on PR 2a: shared sha256-hex predicate
+-- used by every session / welcome / reset / OTP hash validation.
+-- The previous round-1/round-2 guards only checked length(...) = 64,
+-- which would have accepted any 64-char string — including a buggy
+-- Server Action that base64-encoded a 48-byte payload to a 64-char
+-- string, or sent the bcrypt prefix `$2a$12$...`. The lowercase-hex
+-- pattern matches what crypto.subtle.digest('SHA-256').toString('hex')
+-- produces in Node, which is the contract every Server Action follows.
+--
+-- REVOKEd from PUBLIC + every role; callable only from inside the
+-- SECURITY DEFINER publics (which run as the function-owner role
+-- and therefore see the helper despite the REVOKE).
+CREATE OR REPLACE FUNCTION _is_sha256_hex(p_hash TEXT)
+  RETURNS BOOLEAN
+  LANGUAGE sql
+  IMMUTABLE
+  SET search_path = public, pg_temp
+AS $$
+  SELECT p_hash IS NOT NULL
+     AND length(p_hash) = 64
+     AND p_hash ~ '^[0-9a-f]{64}$';
+$$;
+
+REVOKE ALL ON FUNCTION _is_sha256_hex(TEXT) FROM PUBLIC;
+
 
 -- ============================================================
 -- §1 — operator_signup
@@ -85,6 +110,7 @@ REVOKE ALL ON FUNCTION _normalize_operator_email(TEXT) FROM PUBLIC;
 --       p_ip                INET  (for rate-limit row)
 --   OUT JSON:
 --       { ok: true, operator_id, signup_status: 'pending' }  on success
+--       { ok: false, error: 'ip_required' }                  on NULL p_ip (Codex round-3 P2 #2)
 --       { ok: false, error: 'email_invalid' }                on NULL/format/length (Codex round-2 P1 #1)
 --       { ok: false, error: 'email_in_use' }                 on duplicate
 --       { ok: false, error: 'rate_limited' }                 on >= 3 successes / IP / 24h
@@ -93,9 +119,9 @@ REVOKE ALL ON FUNCTION _normalize_operator_email(TEXT) FROM PUBLIC;
 --       { ok: false, error: 'contact_email_invalid' }        on format
 --       { ok: false, error: 'contact_phone_invalid' }        on length
 --
--- Lock order: validate p_email shape, then advisory lock on
--- normalized email, then SELECT FOR UPDATE on operators key
--- range, then signup_attempts INSERTs.
+-- Lock order: ip_required guard, then validate p_email shape,
+-- then advisory lock on normalized email, then SELECT FOR UPDATE
+-- on operators key range, then signup_attempts INSERTs.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION operator_signup(
@@ -117,6 +143,19 @@ DECLARE
   v_recent_successes INT;
   v_new_id           UUID;
 BEGIN
+  -- Codex round-3 P2 #2 fix on PR 2a: p_ip MUST come first.
+  -- operator_signup_attempts.ip_address is NOT NULL (PR 1 §3.9),
+  -- so every downstream INSERT (validation_failed / duplicate_email
+  -- / rate_limited / success) would raise a raw 23502 if p_ip
+  -- were NULL. The Server Action MUST extract the IP from the
+  -- request headers (x-forwarded-for / x-real-ip) before calling
+  -- this RPC; an absent IP is a Server Action bug and gets a
+  -- structured 'ip_required' error rather than a DB constraint
+  -- error reaching the user.
+  IF p_ip IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'ip_required');
+  END IF;
+
   -- Codex round-2 P1 #1 fix on PR 2a: validate p_email BEFORE
   -- _normalize_operator_email + pg_advisory_xact_lock. Without
   -- this guard:
@@ -398,13 +437,12 @@ DECLARE
   v_expires_at           TIMESTAMPTZ;
   v_session_id           UUID;
 BEGIN
-  -- Codex round-2 P2 #1 fix on PR 2a: validate the session token
-  -- hash at the SQL boundary. Without this, a NULL would surface
-  -- as a raw NOT NULL error on operator_sessions.token_hash, and
-  -- a short / non-hash string could be stored as a live session
-  -- token. Mirrors the consume_operator_welcome_token guard
-  -- added in round 1.
-  IF p_session_token_hash IS NULL OR length(p_session_token_hash) <> 64 THEN
+  -- Codex round-2 P2 #1 + round-3 P2 #1 fixes on PR 2a: validate
+  -- the session token hash at the SQL boundary. Round 2 added the
+  -- NULL + length=64 guard; round 3 tightened it to lowercase-hex
+  -- via the shared _is_sha256_hex helper so a buggy Server Action
+  -- cannot store a 64-char non-hex string as a live session token.
+  IF NOT _is_sha256_hex(p_session_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'session_token_hash_invalid');
   END IF;
 
@@ -571,15 +609,14 @@ AS $$
 DECLARE
   v_signup_status operator_status;
 BEGIN
-  -- Codex round-1 P2 #1 fix on PR 2a: validate the token-mint
-  -- contract at the SQL boundary so a buggy admin Server Action
-  -- cannot approve with a NULL hash or an out-of-bounds
-  -- expiry. The 7-day spec contract (admin_approve_operator
-  -- §6) gets a 1-hour buffer on the upper bound to absorb
-  -- clock skew between the Server Action and Postgres.
-  IF p_welcome_token_hash IS NULL
-     OR length(p_welcome_token_hash) <> 64
-  THEN
+  -- Codex round-1 P2 #1 + round-3 P2 #1 fixes on PR 2a: validate
+  -- the token-mint contract at the SQL boundary. Round 1 added
+  -- the NULL + length guard; round 3 tightened it to lowercase-hex
+  -- via _is_sha256_hex. The 7-day spec contract
+  -- (admin_approve_operator §6) gets a 1-hour buffer on the upper
+  -- bound to absorb clock skew between the Server Action and
+  -- Postgres.
+  IF NOT _is_sha256_hex(p_welcome_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'welcome_token_hash_invalid');
   END IF;
 
@@ -967,16 +1004,17 @@ DECLARE
   v_operator_id UUID;
   v_token_id    UUID;
 BEGIN
-  -- Codex round-1 P2 #1 fix on PR 2a: validate the token-mint
-  -- contract at the SQL boundary. The 30-min spec contract
-  -- (§3.6) gets a 30-min buffer on the upper bound for clock
-  -- skew. Validation errors are returned BEFORE the email
-  -- lookup so a Server Action bug surfaces deterministically
-  -- regardless of whether the email is registered (does not
-  -- defeat the no_op enumeration-prevention posture: a
-  -- well-formed call still gets no_op:true on missing email;
-  -- only malformed calls see these structured errors).
-  IF p_token_hash IS NULL OR length(p_token_hash) <> 64 THEN
+  -- Codex round-1 P2 #1 + round-3 P2 #1 fixes on PR 2a: validate
+  -- the token-mint contract at the SQL boundary. Round 1 added
+  -- the NULL + length guard; round 3 tightened it to lowercase-hex
+  -- via _is_sha256_hex. The 30-min spec contract (§3.6) gets a
+  -- 30-min buffer on the upper bound for clock skew. Validation
+  -- errors are returned BEFORE the email lookup so a Server Action
+  -- bug surfaces deterministically regardless of whether the email
+  -- is registered (does not defeat the no_op enumeration-prevention
+  -- posture: a well-formed call still gets no_op:true on missing
+  -- email; only malformed calls see these structured errors).
+  IF NOT _is_sha256_hex(p_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'token_hash_invalid');
   END IF;
 
@@ -1044,11 +1082,14 @@ DECLARE
   v_token_id         UUID;
   v_sessions_revoked INT;
 BEGIN
-  -- Codex round-1 P2 #1 fix on PR 2a: validate the token hash
-  -- input. NULL would hit zero rows below (token_not_found),
-  -- which is fine, but rejecting up-front gives the Server
-  -- Action a deterministic error code without a DB round-trip.
-  IF p_token_hash IS NULL OR length(p_token_hash) <> 64 THEN
+  -- Codex round-1 P2 #1 + round-3 P2 #1 fixes on PR 2a: validate
+  -- the token hash input. Round 1 added the NULL + length guard;
+  -- round 3 tightened it to lowercase-hex via _is_sha256_hex.
+  -- A non-hex value would hit zero rows below (token_not_found
+  -- naturally), but rejecting up-front gives the Server Action a
+  -- deterministic error code without a DB lookup AND keeps the
+  -- DB-boundary invariant tight.
+  IF NOT _is_sha256_hex(p_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'token_not_found');
   END IF;
 
@@ -1141,12 +1182,14 @@ DECLARE
   v_signup_status operator_status;
   v_otp_id        UUID;
 BEGIN
-  -- Codex round-1 P2 #1 fix on PR 2a: validate the token-mint
-  -- contract at the SQL boundary. The 10-min spec contract
-  -- (§3.7) gets a 5-min buffer on the upper bound for clock
-  -- skew, capped at 15 min so a buggy admin Server Action
-  -- cannot mint long-lived OTPs.
-  IF p_code_hash IS NULL OR length(p_code_hash) <> 64 THEN
+  -- Codex round-1 P2 #1 + round-3 P2 #1 fixes on PR 2a: validate
+  -- the token-mint contract at the SQL boundary. Round 1 added
+  -- the NULL + length guard; round 3 tightened it to lowercase-hex
+  -- via _is_sha256_hex. The 10-min spec contract (§3.7) gets a
+  -- 5-min buffer on the upper bound for clock skew, capped at
+  -- 15 min so a buggy admin Server Action cannot mint long-lived
+  -- OTPs.
+  IF NOT _is_sha256_hex(p_code_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'code_hash_invalid');
   END IF;
 
@@ -1229,14 +1272,17 @@ DECLARE
   v_used_at          TIMESTAMPTZ;
   v_attempt_count    INT;
 BEGIN
-  -- Codex round-1 P1 #1 fix on PR 2a: explicit NULL check on
-  -- the supplied hash. SQL three-valued logic means
-  -- `v_stored_hash <> NULL` evaluates to NULL (not TRUE), which
-  -- silently bypasses the mismatch branch and would mark the
-  -- OTP used + return ok:true. Reject NULL up front and
-  -- additionally use IS DISTINCT FROM in the compare for
-  -- defense in depth.
-  IF p_code_hash IS NULL THEN
+  -- Codex round-1 P1 #1 + round-3 P2 #1 fixes on PR 2a: explicit
+  -- shape check on the supplied hash. SQL three-valued logic
+  -- means `v_stored_hash <> NULL` evaluates to NULL (not TRUE),
+  -- which silently bypasses the mismatch branch and would mark
+  -- the OTP used + return ok:true. Reject NULL or non-hex up
+  -- front (collapses into the same opaque 'code_mismatch' error
+  -- to keep the no-leak posture) and additionally use IS DISTINCT
+  -- FROM in the compare for defense in depth. _is_sha256_hex is
+  -- the round-3 helper that combines NULL + length=64 + lowercase-
+  -- hex pattern.
+  IF NOT _is_sha256_hex(p_code_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'code_mismatch');
   END IF;
 
@@ -1434,17 +1480,18 @@ DECLARE
   v_session_id           UUID;
   v_password_must_change BOOLEAN;
 BEGIN
-  -- Codex round-1 P2 #1 fix on PR 2a: validate both hashes at
-  -- the SQL boundary. NULL inputs would otherwise either
-  -- silently match (welcome_token_hash IS DISTINCT FROM is
-  -- safe but the equality would hit zero rows) or insert a
-  -- NULL session token_hash which a later session_validate
-  -- could match against any other NULL-hash session.
-  IF p_token_hash IS NULL OR length(p_token_hash) <> 64 THEN
+  -- Codex round-1 P2 #1 + round-3 P2 #1 fixes on PR 2a: validate
+  -- both hashes at the SQL boundary. Round 1 added the NULL +
+  -- length guards; round 3 tightened both to lowercase-hex via
+  -- _is_sha256_hex. NULL/non-hex p_token_hash collapses into the
+  -- same opaque 'token_not_found' as a missing welcome row;
+  -- p_session_token_hash gets its own structured error since the
+  -- Server Action OWNS that hash (no opacity needed).
+  IF NOT _is_sha256_hex(p_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'token_not_found');
   END IF;
 
-  IF p_session_token_hash IS NULL OR length(p_session_token_hash) <> 64 THEN
+  IF NOT _is_sha256_hex(p_session_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'session_token_hash_invalid');
   END IF;
 

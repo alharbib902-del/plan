@@ -1441,6 +1441,7 @@ export type OperatorSignupArgs = {
 };
 
 export type OperatorSignupError =
+  | 'ip_required'
   | 'email_invalid'
   | 'email_in_use'
   | 'rate_limited'
