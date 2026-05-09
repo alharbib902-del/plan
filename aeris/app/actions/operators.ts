@@ -363,8 +363,20 @@ export async function adminSetOperatorDocuments(input: {
 // manually.
 // ============================================================
 
+// Codex round 1 (PR #41) P1 #1 fix: result shape now exposes
+// email-delivery status. When email_delivered=false the action
+// returns the plaintext password in `manual_password` so admin
+// can relay it via WhatsApp/SMS/voice; the UI surfaces a
+// degraded warning instead of claiming success silently.
 export type AdminResetOperatorPasswordResult =
-  | { ok: true; operator_id: string; sessions_revoked: number }
+  | {
+      ok: true;
+      operator_id: string;
+      sessions_revoked: number;
+      email_delivered: boolean;
+      email_failure_reason?: 'env_missing' | 'send_failed' | 'operator_lookup_failed';
+      manual_password?: string;
+    }
   | AdminOperatorActionFailure;
 
 export async function adminResetOperatorPassword(input: {
@@ -408,19 +420,42 @@ export async function adminResetOperatorPassword(input: {
   };
   if (!result.ok) return { ok: false, error: result.error ?? 'unknown' };
 
-  // Send email with the temporary password.
-  const { data: opRow } = await client
+  // Look up operator email + send. Both can fail; either way
+  // we MUST return the plaintext to admin so they can relay
+  // manually. Without this the operator is locked out — the
+  // password is rotated and sessions are revoked, but the
+  // delivery silently no-op'd.
+  const { data: opRow, error: opErr } = await client
     .from('operators')
     .select('contact_email, company_name')
     .eq('id', parsed.data.operator_id)
     .maybeSingle();
-  if (opRow) {
-    await sendOperatorPasswordResetEmail({
+
+  let emailDelivered = false;
+  let emailFailureReason:
+    | 'env_missing'
+    | 'send_failed'
+    | 'operator_lookup_failed'
+    | undefined;
+
+  if (opErr || !opRow) {
+    console.error(
+      '[operators.adminResetOperatorPassword] operator lookup failed after reset',
+      opErr
+    );
+    emailFailureReason = 'operator_lookup_failed';
+  } else {
+    const sendResult = await sendOperatorPasswordResetEmail({
       to: opRow.contact_email,
       company_name: opRow.company_name,
       new_password: parsed.data.new_password,
       login_url: `${siteUrl()}/operator/login`,
     });
+    if (sendResult.ok) {
+      emailDelivered = true;
+    } else {
+      emailFailureReason = sendResult.reason;
+    }
   }
 
   revalidateOperator(parsed.data.operator_id);
@@ -428,6 +463,9 @@ export async function adminResetOperatorPassword(input: {
     ok: true,
     operator_id: parsed.data.operator_id,
     sessions_revoked: result.sessions_revoked ?? 0,
+    email_delivered: emailDelivered,
+    email_failure_reason: emailDelivered ? undefined : emailFailureReason,
+    manual_password: emailDelivered ? undefined : parsed.data.new_password,
   };
 }
 
@@ -593,7 +631,25 @@ export async function adminUploadOperatorDocument(
     return { ok: false, error: 'not_writable' };
   }
 
-  // Upload to Supabase Storage.
+  // Codex round 1 (PR #41) P1 #2 fix: snapshot the existing
+  // storage_path BEFORE any mutation so we can clean it up
+  // AFTER the new metadata row is committed. The previous
+  // delete-then-insert pattern would lose the existing row
+  // if the insert failed (no transaction across the two ops),
+  // leaving the operator with no metadata for the required
+  // document type.
+  const { data: existing } = await client
+    .from('operator_documents')
+    .select('storage_path')
+    .eq('operator_id', parsed.data.operator_id)
+    .eq('document_type', parsed.data.document_type)
+    .maybeSingle();
+  const oldStoragePath = existing?.storage_path ?? null;
+
+  // Upload the new file to a fresh path. We don't reuse the
+  // old path because Supabase Storage `upsert: false` would
+  // collide; using a unique random suffix lets the old file
+  // stay reachable until we cleanup at the end.
   const safeName = parsed.data.file_name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 100);
   const randomSuffix = randomBytes(8).toString('hex');
   const storagePath = `${parsed.data.operator_id}/${parsed.data.document_type}/${randomSuffix}-${safeName}`;
@@ -610,43 +666,60 @@ export async function adminUploadOperatorDocument(
     return { ok: false, error: 'upload_failed' };
   }
 
-  // DELETE old metadata row if exists, then INSERT new row.
-  // The unique index (operator_id, document_type) enforces one
-  // doc per type per operator. We do delete-then-insert in a
-  // single transaction at the application boundary; a future
-  // hardening pass could move this to a SECURITY DEFINER RPC.
-  await client
+  // UPSERT metadata. The unique (operator_id, document_type)
+  // index makes this an atomic UPDATE if a row exists, INSERT
+  // otherwise — Supabase JS handles both via onConflict. The
+  // existing row (if any) keeps its `id` and `created_at`,
+  // which preserves the audit trail for the document type.
+  const { data: upsertRow, error: upsertErr } = await client
     .from('operator_documents')
-    .delete()
-    .eq('operator_id', parsed.data.operator_id)
-    .eq('document_type', parsed.data.document_type);
-
-  const { data: insertRow, error: insertErr } = await client
-    .from('operator_documents')
-    .insert({
-      operator_id: parsed.data.operator_id,
-      document_type: parsed.data.document_type,
-      storage_path: storagePath,
-      file_name: parsed.data.file_name,
-      file_size: parsed.data.file_size,
-      content_type: parsed.data.content_type,
-      uploaded_by_admin: true,
-    })
+    .upsert(
+      {
+        operator_id: parsed.data.operator_id,
+        document_type: parsed.data.document_type,
+        storage_path: storagePath,
+        file_name: parsed.data.file_name,
+        file_size: parsed.data.file_size,
+        content_type: parsed.data.content_type,
+        uploaded_by_admin: true,
+        uploaded_at: new Date().toISOString(),
+      },
+      { onConflict: 'operator_id,document_type' }
+    )
     .select('id')
     .single();
 
-  if (insertErr) {
-    console.error('[operators.adminUploadOperatorDocument] meta insert error', insertErr);
-    // Try to clean up the uploaded file so we don't leak orphans.
+  if (upsertErr) {
+    console.error('[operators.adminUploadOperatorDocument] meta upsert error', upsertErr);
+    // Rollback the new storage file so we don't leak orphans.
+    // The existing metadata row + old storage file are
+    // untouched (the upsert failed before mutating either).
     await client.storage.from(STORAGE_BUCKET).remove([storagePath]);
     return { ok: false, error: 'meta_insert_failed' };
+  }
+
+  // Best-effort cleanup of the previous storage object now
+  // that the new metadata row points at the new file. If this
+  // fails the operator still has a working document — only a
+  // dangling file remains in storage, which a future janitor
+  // can sweep.
+  if (oldStoragePath && oldStoragePath !== storagePath) {
+    const { error: cleanupErr } = await client.storage
+      .from(STORAGE_BUCKET)
+      .remove([oldStoragePath]);
+    if (cleanupErr) {
+      console.warn(
+        '[operators.adminUploadOperatorDocument] old storage cleanup failed (orphan left in bucket)',
+        { oldStoragePath, error: cleanupErr.message }
+      );
+    }
   }
 
   revalidateOperator(parsed.data.operator_id);
   return {
     ok: true,
     operator_id: parsed.data.operator_id,
-    document_id: insertRow.id,
+    document_id: upsertRow.id,
     storage_path: storagePath,
   };
 }

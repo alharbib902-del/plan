@@ -191,13 +191,34 @@ export interface SendOperatorPasswordResetEmailInput {
   login_url: string;
 }
 
+export type EmailDeliveryResult =
+  | { ok: true }
+  | { ok: false; reason: 'env_missing' | 'send_failed' };
+
+/**
+ * Codex round 1 (PR #41) P1 #1 fix: password-reset email
+ * MUST report delivery status so the Server Action can
+ * surface a degraded state to the admin UI. Without this,
+ * a missing RESEND_API_KEY or a Resend outage silently
+ * locks the operator out — the password is rotated and
+ * sessions are revoked, but the operator never receives
+ * the new password.
+ *
+ * Welcome + rejection emails stay best-effort because
+ * they don't lock the operator out: a missing welcome
+ * email leaves the operator at "pending" UX (they can
+ * still log in via existing password if they had one),
+ * and a missing rejection email is purely informational.
+ * The password-reset path is the one that turns silent
+ * delivery failure into account loss.
+ */
 export async function sendOperatorPasswordResetEmail(
   input: SendOperatorPasswordResetEmailInput
-): Promise<void> {
+): Promise<EmailDeliveryResult> {
   const env = envCredentials();
   if (!env) {
     console.warn('[operator-email] password-reset: missing env — skipping send');
-    return;
+    return { ok: false, reason: 'env_missing' };
   }
 
   const body = `
@@ -224,7 +245,9 @@ export async function sendOperatorPasswordResetEmail(
         ctaLabel: 'تسجيل الدخول',
       }),
     });
+    return { ok: true };
   } catch (err) {
     console.error('[operator-email] password-reset resend send failed', err);
+    return { ok: false, reason: 'send_failed' };
   }
 }

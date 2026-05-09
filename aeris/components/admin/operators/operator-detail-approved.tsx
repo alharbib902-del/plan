@@ -13,6 +13,10 @@ import type { OperatorRow } from '@/types/database';
 
 type Toast =
   | { kind: 'success'; message: string; details?: string }
+  // 'warning' renders a yellow banner used when the
+  // password-reset action succeeded at the DB but email
+  // delivery failed (Codex round 1 PR #41 P1 #1 fix).
+  | { kind: 'warning'; message: string; manual_password?: string }
   | { kind: 'error'; message: string }
   | null;
 
@@ -72,11 +76,22 @@ export function OperatorDetailApproved({ operator }: { operator: OperatorRow }) 
         new_password: newPassword,
       });
       if (result.ok) {
-        setToast({
-          kind: 'success',
-          message: operatorsAr.toasts.passwordReset,
-          details: `تمّ إلغاء ${result.sessions_revoked} جلسة وإرسال البريد للمشغّل.`,
-        });
+        // Codex round 1 PR #41 P1 #1 fix: surface degraded
+        // delivery state so admin doesn't think the operator
+        // received the password when they didn't.
+        if (result.email_delivered) {
+          setToast({
+            kind: 'success',
+            message: operatorsAr.toasts.passwordReset,
+            details: `تمّ إلغاء ${result.sessions_revoked} جلسة.`,
+          });
+        } else {
+          setToast({
+            kind: 'warning',
+            message: operatorsAr.toasts.passwordResetEmailFailed,
+            manual_password: result.manual_password ?? newPassword,
+          });
+        }
         setNewPassword('');
       } else {
         setToast({ kind: 'error', message: errorMessage(result.error) });
@@ -112,12 +127,22 @@ export function OperatorDetailApproved({ operator }: { operator: OperatorRow }) 
           className={`font-ar rounded-xl border px-4 py-3 text-sm ${
             toast.kind === 'success'
               ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+              : toast.kind === 'warning'
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
               : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
           }`}
         >
           <p>{toast.message}</p>
           {toast.kind === 'success' && toast.details ? (
             <p className="mt-2 break-all text-xs text-emerald-200">{toast.details}</p>
+          ) : null}
+          {toast.kind === 'warning' && toast.manual_password ? (
+            <p
+              dir="ltr"
+              className="mt-3 select-all rounded-md border border-amber-500/40 bg-navy-secondary/60 px-3 py-2 text-center font-mono text-base text-amber-50"
+            >
+              {toast.manual_password}
+            </p>
           ) : null}
         </div>
       ) : null}
