@@ -6089,6 +6089,43 @@ the migration the publish flow would still succeed (the
 RPC's INSERT raises and the publish itself rolls back) —
 but Probe 15 cannot pass.
 
+### Scheduling deviation — Vercel Hobby blocks per-minute cron
+
+The original spec listed `vercel.json` cron entries for the
+4 routes (`*/30`, `*/5`, hourly, `*/30`). The first deploy
+of PR 2e to production failed because **Vercel Hobby plan
+limits cron expressions to once per day**; expressions that
+would run more frequently fail at deployment time. The 4
+business contracts (5-min reservation expiry, 30-min auction
+tick, etc.) cannot be downgraded to once-daily without
+breaking the spec — a held leg expiring after 24h instead
+of 10min is not a viable customer experience.
+
+Resolution: shipped PR 2e WITHOUT the `vercel.json` cron
+entries so the deploy succeeds. The 4 routes themselves are
+fully implemented and ready; pick ONE of the following
+before flipping `ENABLE_EMPTY_LEGS_NOTIFICATIONS = true`:
+
+1. **Vercel Pro ($20/mo)** — re-add the 4 cron entries
+   from PR #33's git history. Per-minute scheduling
+   unlocks immediately.
+2. **External scheduler** (cron-job.org / EasyCron /
+   GitHub Actions schedule) — call each route via GET
+   with `Authorization: Bearer <CRON_SECRET>` at the
+   schedule documented in the route's docstring.
+   `cron-job.org` is free with per-minute precision.
+3. **Manual invocation** for a smoke window — `curl` each
+   route by hand. Not viable for steady production use.
+
+All four routes are idempotent (IS NULL guards on outbox +
+reservation columns), so any scheduler choice is safe under
+overlapping invocations. Founder Probe 14 (cron auth)
+already verifies the routes reject missing/wrong secret;
+the scheduler choice does not affect the auth contract.
+
+`.env.example`'s `CRON_SECRET` block carries the same
+documentation for the next maintainer.
+
 ### Phase 7 closure
 
 PR 2e is the **final application PR** of Phase 7. After
