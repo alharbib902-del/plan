@@ -85,6 +85,7 @@ REVOKE ALL ON FUNCTION _normalize_operator_email(TEXT) FROM PUBLIC;
 --       p_ip                INET  (for rate-limit row)
 --   OUT JSON:
 --       { ok: true, operator_id, signup_status: 'pending' }  on success
+--       { ok: false, error: 'email_invalid' }                on NULL/format/length (Codex round-2 P1 #1)
 --       { ok: false, error: 'email_in_use' }                 on duplicate
 --       { ok: false, error: 'rate_limited' }                 on >= 3 successes / IP / 24h
 --       { ok: false, error: 'password_hash_malformed' }      on bcrypt format
@@ -92,8 +93,9 @@ REVOKE ALL ON FUNCTION _normalize_operator_email(TEXT) FROM PUBLIC;
 --       { ok: false, error: 'contact_email_invalid' }        on format
 --       { ok: false, error: 'contact_phone_invalid' }        on length
 --
--- Lock order: existing-email lookup uses FOR UPDATE on
--- operators (key range), then any signup_attempts INSERTs.
+-- Lock order: validate p_email shape, then advisory lock on
+-- normalized email, then SELECT FOR UPDATE on operators key
+-- range, then signup_attempts INSERTs.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION operator_signup(
@@ -115,6 +117,28 @@ DECLARE
   v_recent_successes INT;
   v_new_id           UUID;
 BEGIN
+  -- Codex round-2 P1 #1 fix on PR 2a: validate p_email BEFORE
+  -- _normalize_operator_email + pg_advisory_xact_lock. Without
+  -- this guard:
+  --   - NULL p_email surfaces as a raw NOT NULL / advisory-lock
+  --     error instead of a structured 'email_invalid' contract
+  --   - a malformed but non-null p_email is stored forever as
+  --     the immutable auth_email column (it is NOT NULL post-PR
+  --     1 and the LOWER() unique index is the only constraint
+  --     on the address itself)
+  -- The validation rules mirror the p_contact_email check below
+  -- (RFC-shape regex + 255-char ceiling); same pattern PR 2c
+  -- uses on the stub bootstrap form.
+  IF p_email IS NULL
+     OR p_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+     OR length(p_email) > 255
+  THEN
+    INSERT INTO operator_signup_attempts
+      (ip_address, email_attempted, result)
+      VALUES (p_ip, p_email, 'validation_failed');
+    RETURN json_build_object('ok', false, 'error', 'email_invalid');
+  END IF;
+
   v_normalized := _normalize_operator_email(p_email);
 
   -- Codex round-1 P1 #2 fix on PR 2a: advisory transaction lock
@@ -342,12 +366,13 @@ $$;
 --
 -- Contract:
 --   IN  p_operator_id        UUID
---       p_session_token_hash TEXT (sha256 hex / base64)
+--       p_session_token_hash TEXT (sha256 hex, 64 chars)
 --       p_remember_me        BOOLEAN
 --       p_ip                 INET (nullable)
 --       p_user_agent         TEXT (nullable)
 --   OUT JSON:
 --       { ok: true, session_id, expires_at, password_must_change }   on success
+--       { ok: false, error: 'session_token_hash_invalid' }           on NULL / wrong length (Codex round-2 P2 #1)
 --       { ok: false, error: 'operator_not_found' }                   on missing
 --       { ok: false, error: 'account_not_approved' }                 on race-suspended
 --
@@ -373,6 +398,16 @@ DECLARE
   v_expires_at           TIMESTAMPTZ;
   v_session_id           UUID;
 BEGIN
+  -- Codex round-2 P2 #1 fix on PR 2a: validate the session token
+  -- hash at the SQL boundary. Without this, a NULL would surface
+  -- as a raw NOT NULL error on operator_sessions.token_hash, and
+  -- a short / non-hash string could be stored as a live session
+  -- token. Mirrors the consume_operator_welcome_token guard
+  -- added in round 1.
+  IF p_session_token_hash IS NULL OR length(p_session_token_hash) <> 64 THEN
+    RETURN json_build_object('ok', false, 'error', 'session_token_hash_invalid');
+  END IF;
+
   -- Lock the operator row + re-read status / must-change flag.
   SELECT signup_status, password_must_change
     INTO v_signup_status, v_password_must_change
@@ -514,12 +549,14 @@ $$;
 --
 -- Contract:
 --   IN  p_operator_id              UUID
---       p_welcome_token_hash       VARCHAR(64)
---       p_welcome_token_expires_at TIMESTAMPTZ
+--       p_welcome_token_hash       VARCHAR(64)  (sha256 hex, 64 chars)
+--       p_welcome_token_expires_at TIMESTAMPTZ  (NOW+1min .. NOW+7d 1h)
 --   OUT JSON:
---       { ok: true, operator_id }                    on success
---       { ok: false, error: 'operator_not_found' }   on missing
---       { ok: false, error: 'not_pending' }          on wrong status
+--       { ok: true, operator_id }                              on success
+--       { ok: false, error: 'welcome_token_hash_invalid' }     on NULL / wrong length (Codex round-1 P2 #1)
+--       { ok: false, error: 'welcome_token_expires_at_invalid' } on out-of-bounds expiry (Codex round-1 P2 #1)
+--       { ok: false, error: 'operator_not_found' }             on missing
+--       { ok: false, error: 'not_pending' }                    on wrong status
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION admin_approve_operator(
@@ -902,12 +939,18 @@ $$;
 --
 -- Contract:
 --   IN  p_email      TEXT
---       p_token_hash VARCHAR(64) (sha256 of raw token)
---       p_expires_at TIMESTAMPTZ (Server Action sets NOW + 30min)
+--       p_token_hash VARCHAR(64) (sha256 hex, 64 chars)
+--       p_expires_at TIMESTAMPTZ (NOW+1min .. NOW+1h)
 --       p_ip         INET (nullable)
 --   OUT JSON:
---       { ok: true, token_id }              on operator found + token minted
---       { ok: true, no_op: true }           on email not registered
+--       { ok: true, token_id }                       on operator found + token minted
+--       { ok: true, no_op: true }                    on email not registered
+--       { ok: false, error: 'token_hash_invalid' }   on NULL / wrong length (Codex round-1 P2 #1)
+--       { ok: false, error: 'expires_at_invalid' }   on out-of-bounds expiry (Codex round-1 P2 #1)
+--
+-- Validation errors fire BEFORE the email lookup so a Server
+-- Action bug surfaces deterministically without leaking
+-- email-existence information.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION mint_operator_password_reset_token(
@@ -976,13 +1019,13 @@ $$;
 -- password).
 --
 -- Contract:
---   IN  p_token_hash         VARCHAR(64) (sha256 of URL token)
+--   IN  p_token_hash         VARCHAR(64) (sha256 hex, 64 chars)
 --       p_new_password_hash  TEXT        (bcrypt $2*$ 60-char)
 --   OUT JSON:
---       { ok: true, operator_id, sessions_revoked }   on success
---       { ok: false, error: 'token_not_found' }       on missing
---       { ok: false, error: 'token_already_used' }    on used_at set
---       { ok: false, error: 'token_expired' }         on expired
+--       { ok: true, operator_id, sessions_revoked }     on success
+--       { ok: false, error: 'token_not_found' }         on missing OR NULL/wrong-length p_token_hash (Codex round-1 P2 #1: NULL/short hash collapses into the same opaque error to keep the no-leak posture)
+--       { ok: false, error: 'token_already_used' }      on used_at set
+--       { ok: false, error: 'token_expired' }           on expired
 --       { ok: false, error: 'password_hash_malformed' } on bcrypt format
 -- ============================================================
 
@@ -1072,14 +1115,16 @@ $$;
 --
 -- Contract:
 --   IN  p_operator_id UUID
---       p_code_hash   VARCHAR(64) (sha256 of 6-digit code)
---       p_purpose     TEXT (login | recovery)
---       p_expires_at  TIMESTAMPTZ (Server Action sets NOW + 10min)
+--       p_code_hash   VARCHAR(64)  (sha256 hex, 64 chars)
+--       p_purpose     TEXT         (login | recovery)
+--       p_expires_at  TIMESTAMPTZ  (NOW+1min .. NOW+15min)
 --   OUT JSON:
---       { ok: true, otp_id }                       on success
---       { ok: false, error: 'operator_not_found' } on missing
---       { ok: false, error: 'invalid_purpose' }    on wrong enum value
---       { ok: false, error: 'not_otp_eligible' }   on operator status
+--       { ok: true, otp_id }                          on success
+--       { ok: false, error: 'code_hash_invalid' }     on NULL / wrong length (Codex round-1 P2 #1)
+--       { ok: false, error: 'expires_at_invalid' }    on out-of-bounds expiry (Codex round-1 P2 #1)
+--       { ok: false, error: 'invalid_purpose' }       on wrong enum value
+--       { ok: false, error: 'operator_not_found' }    on missing
+--       { ok: false, error: 'not_otp_eligible' }      on operator status
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION mint_operator_otp(
@@ -1161,9 +1206,9 @@ $$;
 --       p_code_hash   VARCHAR(64)
 --   OUT JSON:
 --       { ok: true, otp_id, purpose }                on success
+--       { ok: false, error: 'code_mismatch' }        on hash compare fail OR NULL p_code_hash (Codex round-1 P1 #1: NULL collapses into the same opaque error)
 --       { ok: false, error: 'operator_not_found' }   on missing operator
 --       { ok: false, error: 'no_active_otp' }        on no live row
---       { ok: false, error: 'code_mismatch' }        on hash compare fail
 --       { ok: false, error: 'expired' }              on expires_at <= NOW
 --       { ok: false, error: 'locked' }               on attempt_count >= 5
 -- ============================================================
@@ -1354,17 +1399,18 @@ $$;
 -- that skipped the signup form).
 --
 -- Contract:
---   IN  p_token_hash         VARCHAR(64)
---       p_session_token_hash VARCHAR(64)
+--   IN  p_token_hash         VARCHAR(64) (sha256 hex, 64 chars)
+--       p_session_token_hash VARCHAR(64) (sha256 hex, 64 chars)
 --       p_remember_me        BOOLEAN
 --       p_ip                 INET (nullable)
 --       p_user_agent         TEXT (nullable)
 --   OUT JSON:
 --       { ok: true, operator_id, session_id, expires_at, password_must_change } on success
---       { ok: false, error: 'token_not_found' }      on missing
---       { ok: false, error: 'already_used' }         on welcome_token_used_at set
---       { ok: false, error: 'expired' }              on welcome_token_expires_at past
---       { ok: false, error: 'account_not_approved' } on signup_status not approved
+--       { ok: false, error: 'token_not_found' }              on missing OR NULL/wrong-length p_token_hash (Codex round-1 P2 #1: NULL/short hash collapses into the same opaque error)
+--       { ok: false, error: 'session_token_hash_invalid' }   on NULL/wrong-length p_session_token_hash (Codex round-1 P2 #1)
+--       { ok: false, error: 'already_used' }                 on welcome_token_used_at set
+--       { ok: false, error: 'expired' }                      on welcome_token_expires_at past
+--       { ok: false, error: 'account_not_approved' }         on signup_status not approved
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION consume_operator_welcome_token(

@@ -1441,6 +1441,7 @@ export type OperatorSignupArgs = {
 };
 
 export type OperatorSignupError =
+  | 'email_invalid'
   | 'email_in_use'
   | 'rate_limited'
   | 'password_hash_malformed'
@@ -1483,7 +1484,8 @@ export type OperatorLoginCreateSessionArgs = {
 
 export type OperatorLoginCreateSessionError =
   | 'operator_not_found'
-  | 'account_not_approved';
+  | 'account_not_approved'
+  | 'session_token_hash_invalid';
 
 export type OperatorLoginCreateSessionResult =
   | {
