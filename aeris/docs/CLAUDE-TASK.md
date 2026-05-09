@@ -253,23 +253,47 @@ ALTER TABLE operators
   ADD COLUMN IF NOT EXISTS welcome_token_used_at TIMESTAMPTZ;
 
 -- auth_email is the immutable login identifier (Codex
--- round-2 P1 #1 fix). The signup form writes the same
--- email to both auth_email AND contact_email. Profile
--- edits can change contact_email; auth_email is
--- read-only. Login + password-reset look up by
--- auth_email. Unique index added below.
+-- round-2 P1 #1 + round-3 P1 #1 fix). Migration enforces
+-- the invariant in three steps:
+--   (1) ADD COLUMN IF NOT EXISTS auth_email TEXT
+--       — nullable on add to satisfy ALTER semantics on
+--       a non-empty table (defense in depth: production
+--       has zero operators, but a future replay on a
+--       populated DB must succeed).
+--   (2) UPDATE operators SET auth_email = contact_email
+--       WHERE auth_email IS NULL — backfill from the
+--       existing email column for any pre-existing row.
+--   (3) ALTER COLUMN auth_email SET NOT NULL — close
+--       the invariant. Every Phase-8-and-later operator
+--       row carries a non-null auth_email.
+UPDATE operators SET auth_email = contact_email
+  WHERE auth_email IS NULL;
+
+ALTER TABLE operators ALTER COLUMN auth_email SET NOT NULL;
+
+-- Unique index on the normalized column. No WHERE
+-- clause needed now that auth_email is NOT NULL.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_operators_auth_email_unique
-  ON operators(LOWER(auth_email))
-  WHERE auth_email IS NOT NULL;
+  ON operators(LOWER(auth_email));
 ```
 
-The `auth_email` column is nullable to keep the migration
-backward-safe on existing rows (production has zero
-`operators` rows; new rows from PR 2c's signup always
-populate both columns). The `LOWER()` index normalizes
-on read — see helper `_normalize_operator_email()` in
-§4 — so `Founder@Aeris.sa` and `founder@aeris.sa`
-resolve to the same row at lookup time.
+The signup form writes the same email to both
+`auth_email` AND `contact_email`. Profile edits can
+change `contact_email`; `auth_email` is read-only.
+Login + password-reset look up by `auth_email`. The
+`LOWER()` index normalizes on read — see helper
+`_normalize_operator_email()` in §4 — so
+`Founder@Aeris.sa` and `founder@aeris.sa` resolve to
+the same row at lookup time.
+
+**Probe-fixture impact** (Codex round-3 P1 #1 fix):
+every fixture INSERT in Probes 6, 7, and the smoke
+queries in §3 MUST set `auth_email` explicitly (and
+`password_hash` for Probe 7). The probe text in §4
+references this requirement inline; the §3 audit-trigger
+smoke also seeds `auth_email = 'probe-trigger@aeris.test'`
+to satisfy the NOT NULL constraint inside the
+transaction.
 
 `password_hash` is nullable for the welcome-magic-link
 path: an operator who completed signup with a password
@@ -561,10 +585,28 @@ SELECT id, status FROM operator_notification_alert_status
 3. **RLS posture** — every new table has RLS enabled
    AND zero policies (service-role-only).
 4. **Audit trigger smoke** — INSERT a synthetic
-   `operators` row with `signup_status='pending'` inside
-   a transaction; UPDATE its `signup_status='approved'`;
-   assert one row appears in `audit_logs` with
-   `action='signup_status_changed'`; ROLLBACK.
+   `operators` row with **all required fixture columns**
+   (Codex round-3 P1 #1 fix: `auth_email` is NOT NULL):
+   ```sql
+   BEGIN;
+   INSERT INTO operators
+     (auth_email, contact_email, contact_phone,
+      company_name, signup_status)
+   VALUES
+     ('probe-trigger@aeris.test', 'probe-trigger@aeris.test',
+      '+966500000004', 'Probe 4 Co', 'pending')
+   RETURNING id;
+   -- (use the returned id below)
+   UPDATE operators SET signup_status = 'approved'
+     WHERE id = '<returned-id>';
+   SELECT entity_type, action FROM audit_logs
+     WHERE entity_id = '<returned-id>'
+     ORDER BY created_at DESC LIMIT 1;
+   ROLLBACK;
+   ```
+   Assert: the SELECT returns
+   `('operator', 'signup_status_changed')`. ROLLBACK
+   guarantees production stays byte-identical.
 4a. **Alert-status singleton seed** (Codex round-1 P1 #3
     + P2 #1 fix) — `SELECT id, status FROM
     operator_notification_alert_status WHERE id = 1`
@@ -914,9 +956,17 @@ operator. Used once on first login.
 
 - **Add:** `supabase/migrations/20260513000021_phase_8_operator_rpcs.sql`
 - **Edit:** `types/database.ts` — Args + Result types for
-  the 15 publics, registered in `Database['public']['Functions']`.
+  **all 17 publics** enumerated in §4.1 (Codex round-3
+  P2 #1 fix: count updated from 15 to 17 after the
+  round-2 login split + welcome-token reclassification).
+  Each function gets its `Args*` + `Result*` exports +
+  one entry in `Database['public']['Functions']`. The
+  helper `_normalize_operator_email` is intentionally
+  NOT exposed in the Functions map (REVOKEd from every
+  role; callable only from inside the publics).
 - **Edit:** `lib/empty-legs/types.ts` — re-export the
-  Phase-8-scoped surface (helper not exposed; mirrors PR 2a discipline).
+  Phase-8-scoped surface (17 Args/Result type pairs;
+  helper not exposed; mirrors PR 2a discipline).
 
 ### Founder probes after PR 2a (4 probes)
 
@@ -946,26 +996,65 @@ operator. Used once on first login.
    public has `EXECUTE` granted to `service_role` ONLY.
    Helper has zero grantees.
 6. **Approve smoke** — admin RPC dry-run: INSERT a
-   pending operator row + call
-   `admin_approve_operator(operator_id, p_welcome_token_hash, p_welcome_token_expires_at)`;
-   assert `signup_status='approved'`, `approved_at`
+   pending operator row with **all required fixture
+   columns** (Codex round-3 P1 #1 fix: `auth_email` is
+   NOT NULL):
+   ```sql
+   INSERT INTO operators
+     (auth_email, contact_email, contact_phone,
+      company_name, signup_status,
+      password_hash, password_set_at)
+   VALUES
+     ('probe6@aeris.test', 'probe6@aeris.test',
+      '+966500000006', 'Probe 6 Aviation Co',
+      'pending',
+      '$2a$12$abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopq',
+      NOW())
+   RETURNING id;
+   ```
+   Then call `admin_approve_operator(<id>,
+   <welcome_token_hash>, NOW() + INTERVAL '7 days')`.
+   Assert `signup_status='approved'`, `approved_at`
    non-NULL, `welcome_token_hash` matches the input.
-7. **Login smoke** (Codex round-2 P1 #2 fix: probe
-   updated for the 2-step login flow) — against the
-   just-approved operator (the founder uses a known
-   plaintext password, e.g. `Probe7TestPass!`, that
-   was bcrypted at probe-2-INSERT time):
-   1. Call `operator_login_lookup(email)` →
+   The placeholder `password_hash` above is a
+   syntactically-valid bcrypt string (60 chars, $2a$12$
+   prefix); Probe 6 doesn't actually log in, so the
+   hash plaintext doesn't matter.
+7. **Login smoke** (Codex round-2 P1 #2 + round-3 P1 #1
+   fixes — probe updated for the 2-step login flow with
+   explicit fixture seeding):
+   1. INSERT a fresh operator row with `auth_email`,
+      `contact_email`, `password_hash` (bcrypted from a
+      known plaintext, e.g. `Probe7TestPass!`),
+      `signup_status='approved'`. The bcrypt hash MUST
+      be generated by Node's `bcryptjs.hashSync('Probe7TestPass!', 12)`
+      — NOT a placeholder, because step 3 below
+      verifies against this stored hash.
+      ```sql
+      INSERT INTO operators
+        (auth_email, contact_email, contact_phone,
+         company_name, signup_status,
+         password_hash, password_set_at,
+         approved_at, approved_by_admin_at)
+      VALUES
+        ('probe7@aeris.test', 'probe7@aeris.test',
+         '+966500000007', 'Probe 7 Aviation Co',
+         'approved',
+         '<bcrypt-of-Probe7TestPass-from-Node>', NOW(),
+         NOW(), NOW())
+      RETURNING id;
+      ```
+   2. Call `operator_login_lookup('probe7@aeris.test')` →
       assert `{ ok: true, operator_id, password_hash, password_must_change }`.
-   2. In Node (or psql + crypto helper), run
-      `bcrypt.compare('Probe7TestPass!', password_hash)`
+   3. In Node, run
+      `bcryptjs.compareSync('Probe7TestPass!', password_hash)`
       → assert `true`.
-   3. Call `operator_login_create_session(operator_id,
-      session_token_hash, false, '127.0.0.1', 'probe')`
+   4. Call `operator_login_create_session(operator_id,
+      <sha256(raw_session_token)>, false, '127.0.0.1', 'probe')`
       → assert a session row appears in
-      `operator_sessions` with the right
-      `expires_at` (NOW + 7 days for `remember_me=false`).
-   4. Call `operator_session_validate(session_hash)` →
+      `operator_sessions` with the right `expires_at`
+      (NOW + 7 days for `remember_me=false`).
+   5. Call `operator_session_validate(<sha256(raw_session_token)>)` →
       returns `{ ok: true, operator_id }`.
 8. **Stub conversion smoke** — INSERT a synthetic stub +
    operator + 2 empty_legs rows linked to the stub.
@@ -1660,8 +1749,11 @@ index.)
 1. **PR 1 — Schema** (no application code; column adds +
    table creates + audit trigger). Founder runs
    migration on production; verifies probes 1-4.
-2. **PR 2a — RPC layer** (15 publics + 1 helper, all
-   SECURITY DEFINER). Founder runs migration; verifies
+2. **PR 2a — RPC layer** (**17 publics + 1 helper**, all
+   SECURITY DEFINER — Codex round-3 P2 #2 fix: count
+   updated from 15 to 17 to match §4.1 inventory after
+   the round-2 login split + welcome-token
+   reclassification). Founder runs migration; verifies
    probes 5-8.
 3. **PR 2b — Admin surfaces**. Founder verifies probes
    9-13.
@@ -1700,3 +1792,11 @@ before any code is written. Iteration history below.
 | P1 #2 | "Login split leaves function counts and probes stale" | Real cascade. Round 1's `operator_login` → 2-step split was applied to §4.2 but not to §4.1 inventory count, §10 acceptance #7 + #11, or §11 Founder Probe 5/7. Round 2 reworked §4.1 to enumerate each function on its own row (16 publics + the previously-mislabeled `consume_operator_welcome_token` reclassified from "stub" to public #17 = **17 publics + 1 helper**), §10 acceptance #7 + #11 updated, §11 Probe 5 enumerates all 17 by name, §11 Probe 7 walks the 2-step contract step-by-step. |
 | P1 #3 | "Bcrypt dependency has no PR owner" | Real gap. Round 1's `lib/operators/password.ts` reference assumed `bcryptjs` was available but the current `package.json` (verified against `6468dfb` main) has no bcrypt-family dependency. Round 2 added `package.json` + `package-lock.json` to PR 2c's "Files (Edit)" with `"bcryptjs": "^2.4.3"` + `"@types/bcryptjs": "^2.4.6"`. The choice of `bcryptjs` over `bcrypt` is intentional (pure JS, Vercel cold-start safe). |
 | P2 #1 | "PR 1 types bullet still says five tables" | After round 1's P1 #3 added `operator_notification_alert_status`, the types-extend bullet still mentioned 5 tables. Round 2 reworded to enumerate all 6 tables explicitly + the 14 new `operators` columns (including `auth_email` from P1 #1). |
+
+## Codex iteration 3 — findings (resolved in iteration 4)
+
+| # | Finding | Resolution |
+|:-:|---|---|
+| P1 #1 | "Auth-email invariant is still not enforced" | Round 2 added `auth_email` as a nullable column with a partial unique index, leaving the invariant unenforced. Round 3 closes it: §3.3 migration now does ADD COLUMN → UPDATE backfill from `contact_email` → `ALTER COLUMN SET NOT NULL`, and the unique index drops the WHERE clause. Probe 4 (audit-trigger smoke), Probe 6 (approve), and Probe 7 (login) fixtures now seed `auth_email` explicitly so the NOT NULL constraint never blocks a probe. Probe 7 also tightens the `password_hash` requirement: it MUST be a real bcrypt-of-known-plaintext (not a placeholder) because step 3 verifies against it. |
+| P2 #1 | "PR 2a file fence still says 15 publics" | The §4.1 inventory + §11 Probe 5 already said 17 publics after round 2. The PR 2a Files (Edit) bullet still said 15 — round 3 updated it to 17 + cross-references the §4.1 inventory by name. |
+| P2 #2 | "Implementation order still says 15-public RPC layer" | §14 step 2 said "15 publics + 1 helper". Round 3 updated to 17 + the round-3 P2 #2 audit annotation. The handoff checklist + §11 Probe 5 + §10 acceptance #7 are now all consistent at 17. |
