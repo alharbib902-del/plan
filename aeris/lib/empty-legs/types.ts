@@ -36,6 +36,11 @@ export type {
   EmptyLegOutreachAlertStatusValue,
   EmptyLegOutreachAlertStatusRow,
   EmptyLegOutreachAlertStatusUpdate,
+  // PR 2e — outbox row + event-type union
+  EmptyLegEventType,
+  EmptyLegEventsOutboxRow,
+  EmptyLegEventsOutboxInsert,
+  EmptyLegEventsOutboxUpdate,
 } from '@/types/database';
 
 // PR 2a RPC arg + result types
@@ -70,4 +75,7 @@ export type {
   AdminMarkEmptyLegSoldResult,
   PublishEmptyLegEventArgs,
   PublishEmptyLegEventResult,
+  // PR 2e RPC — 12th SECURITY DEFINER public
+  ExpireEmptyLegWindowArgs,
+  ExpireEmptyLegWindowResult,
 } from '@/types/database';

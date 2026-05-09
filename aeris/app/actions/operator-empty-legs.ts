@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { validateOperatorEmptyLegSession } from '@/lib/operator/empty-leg-session-store';
+import { fireAndForgetMatchTrigger } from '@/lib/empty-legs/match-trigger-fire';
 import {
   operatorPublishEmptyLegSchema,
   operatorUpdatePriceSchema,
@@ -153,6 +154,11 @@ export async function operatorPublishEmptyLeg(
   const result = data as PublishEmptyLegResult;
   revalidateOperatorPaths(token);
   if (result.ok) {
+    // Codex iteration-2 P2 #1 + iteration-3 P1 #1 fix:
+    // synchronous match-trigger fire-and-forget so the
+    // operator's published leg surfaces wa.me URLs to
+    // founder within seconds without blocking the form.
+    fireAndForgetMatchTrigger(result.leg_id);
     return {
       ok: true,
       leg_id: result.leg_id,
