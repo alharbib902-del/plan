@@ -575,8 +575,13 @@ SELECT id, status FROM operator_notification_alert_status
 ### Founder probes after PR 1 (5 probes — was 4 in round 0; round 1 added 4a)
 
 1. **Schema state** — service-role psql: `\d+ operators`
-   shows the 13 new columns + the renamed `signup_status`
-   with the 4-value CHECK.
+   shows the 14 new columns + the renamed `signup_status`
+   with the 4-value CHECK. Verify explicitly that
+   `auth_email` is `NOT NULL` (Codex round-4 P2 #1 fix:
+   the auth-email invariant added in round 2 + enforced
+   in round 3 must show as "not null" in the `\d+`
+   modifier column — assert this directly rather than
+   trust column-count parity).
 2. **Six new tables** — `\dt operator_*` lists all 6
    tables (`operator_sessions`, `operator_password_reset_tokens`,
    `operator_otp_codes`, `operator_documents`,
@@ -700,13 +705,22 @@ RPC-grants probe can reference each one directly.
    format, `p_contact_phone` length per the same
    patterns as PR 2c's stub bootstrap.
 6. INSERT into `operators` with `auth_email=p_email,
-   contact_email=p_email, signup_status='pending',
+   contact_email=p_contact_email, signup_status='pending',
    password_hash=p_password_hash,
-   password_set_at=NOW()`. Both `auth_email` and
-   `contact_email` are seeded with the same value at
-   signup time; `auth_email` stays immutable
-   afterward, `contact_email` can be edited via
-   `/operator/profile`. Return
+   password_set_at=NOW()`. `auth_email` is the
+   immutable login identifier (the email the operator
+   types into the login form); `contact_email` is the
+   operational contact submitted alongside
+   `company_name` + `contact_phone` per the §0
+   objective. They can match if the operator reused
+   the login email at signup, but they are seeded
+   from separate RPC parameters and live in separate
+   columns from row 1. `auth_email` stays immutable;
+   `contact_email` can be edited via
+   `/operator/profile` (Codex round-4 P1 #1 fix:
+   prior wording set both to `p_email`, silently
+   discarding `p_contact_email` even though step 5
+   validated it). Return
    `{ ok: true, operator_id, signup_status:'pending' }`.
 7. INSERT into `operator_signup_attempts` with
    `result='success'`.
@@ -1527,7 +1541,11 @@ merges.
 1. `operators.user_id` is nullable.
 2. `operators.commercial_registration`, `gaca_license`,
    `license_expiry` are all nullable.
-3. `operators` has the 13 new columns from §3.3.
+3. `operators` has the 14 new columns from §3.3
+   (including the round-2 `auth_email` column with
+   the round-3 NOT NULL invariant — Codex round-4
+   P2 #1 follow-on: §10 acceptance row 3 was also
+   stale at 13).
 4. `operators.signup_status` exists (renamed from
    `status`) with the 4-value CHECK.
 5. The 6 new tables (`operator_sessions`,
@@ -1748,7 +1766,11 @@ index.)
 
 1. **PR 1 — Schema** (no application code; column adds +
    table creates + audit trigger). Founder runs
-   migration on production; verifies probes 1-4.
+   migration on production; verifies probes 1, 2, 3,
+   4, and 4a (Codex round-4 P2 #2 fix: probe 4a was
+   added in round 1 to cover the alert-status
+   singleton seed but the handoff checklist still
+   said 1-4).
 2. **PR 2a — RPC layer** (**17 publics + 1 helper**, all
    SECURITY DEFINER — Codex round-3 P2 #2 fix: count
    updated from 15 to 17 to match §4.1 inventory after
@@ -1800,3 +1822,11 @@ before any code is written. Iteration history below.
 | P1 #1 | "Auth-email invariant is still not enforced" | Round 2 added `auth_email` as a nullable column with a partial unique index, leaving the invariant unenforced. Round 3 closes it: §3.3 migration now does ADD COLUMN → UPDATE backfill from `contact_email` → `ALTER COLUMN SET NOT NULL`, and the unique index drops the WHERE clause. Probe 4 (audit-trigger smoke), Probe 6 (approve), and Probe 7 (login) fixtures now seed `auth_email` explicitly so the NOT NULL constraint never blocks a probe. Probe 7 also tightens the `password_hash` requirement: it MUST be a real bcrypt-of-known-plaintext (not a placeholder) because step 3 verifies against it. |
 | P2 #1 | "PR 2a file fence still says 15 publics" | The §4.1 inventory + §11 Probe 5 already said 17 publics after round 2. The PR 2a Files (Edit) bullet still said 15 — round 3 updated it to 17 + cross-references the §4.1 inventory by name. |
 | P2 #2 | "Implementation order still says 15-public RPC layer" | §14 step 2 said "15 publics + 1 helper". Round 3 updated to 17 + the round-3 P2 #2 audit annotation. The handoff checklist + §11 Probe 5 + §10 acceptance #7 are now all consistent at 17. |
+
+## Codex iteration 4 — findings (resolved in iteration 5)
+
+| # | Finding | Resolution |
+|:-:|---|---|
+| P1 #1 | "Signup validates but ignores contact_email" | Real bug. `operator_signup` validated `p_contact_email` in step 5 but the INSERT in step 6 set `contact_email=p_email`, silently discarding the explicitly-submitted operational contact email even when the operator entered a different value. The §0 objective says signup submits `company_name + contact_email + contact_phone`, so the contact email is a first-class parameter and must be persisted. Round 4 changed the INSERT to `contact_email=p_contact_email` and rewrote the narrative to clarify `auth_email` is the immutable login identifier (entered into the login form) while `contact_email` is the operational contact submitted alongside `company_name` — they can match if the operator reused the login email but they are seeded from separate RPC parameters. |
+| P2 #1 | "Probe 1 still says 13 new columns" | After round 2 added `auth_email` (taking §3.3 from 13 to 14 columns) and round 3 enforced NOT NULL, Probe 1 still said 13 columns and did not assert the NOT NULL invariant. Round 4 updated Probe 1 to "14 new columns" + added an explicit `auth_email NOT NULL` check based on the `\d+ operators` modifier column. §10 acceptance #3 (Schema, PR 1) was carrying the same stale "13 new columns" wording and was updated 13→14 in the same pass to keep all column-count references consistent across the spec. |
+| P2 #2 | "Implementation order omits Probe 4a" | §14 step 1 said the founder "verifies probes 1-4" but PR 1 actually ships 5 probes after round 1 added 4a for the alert-status singleton seed. Round 4 changed the wording to "probes 1, 2, 3, 4, and 4a" so the handoff checklist matches §3 founder probes. |
