@@ -1123,6 +1123,297 @@ export type EmptyLegEventsOutboxUpdate = Partial<
 >;
 
 // ============================================================================
+// Phase 8 PR 1 — Operator account onboarding
+//
+// Migration file: 20260512000020_phase_8_operator_accounts.sql
+//
+// PR 1 ships:
+//   - Relax operators.user_id + 3 regulatory columns to nullable
+//   - 12 new auth/lifecycle columns on operators (auth_email,
+//     password_hash, password_set_at, password_must_change,
+//     last_login_at, approved_by_admin_at, rejected_at,
+//     suspended_at, suspension_reason, welcome_token_hash,
+//     welcome_token_expires_at, welcome_token_used_at) +
+//     auth_email NOT NULL invariant + unique LOWER() index
+//   - operator_status ENUM extended with 'rejected' (4th value)
+//     + column renamed status → signup_status
+//   - 6 new tables: operator_sessions, operator_password_reset_tokens,
+//     operator_otp_codes, operator_documents,
+//     operator_signup_attempts, operator_notification_alert_status
+//   - audit trigger on operators (signup_status + password_hash
+//     transitions write to audit_logs)
+//
+// Codex round-6 implementation reality fix: rounds 0-5 of the
+// spec said "14 new columns" but two (approved_at,
+// rejection_reason) already exist in 20260422000001_initial_schema.sql
+// and are reused. Rounds 0-5 also described status as TEXT + CHECK;
+// production uses the operator_status ENUM type, so the OperatorRow
+// shape below uses the ENUM-backed OperatorSignupStatus union.
+// ============================================================================
+
+// --- ENUMs ---
+
+// Phase 8 extends the existing operator_status ENUM with 'rejected'.
+// Order matches the PostgreSQL ALTER TYPE ADD VALUE order: original
+// 3 values first, then 'rejected' appended last.
+export type OperatorSignupStatus =
+  | 'pending'
+  | 'approved'
+  | 'suspended'
+  | 'rejected';
+
+export type OperatorOtpChannel = 'whatsapp';
+
+export type OperatorOtpPurpose = 'login' | 'recovery';
+
+export type OperatorDocumentType =
+  | 'commercial_registration'
+  | 'gaca_license'
+  | 'license_expiry_proof';
+
+export type OperatorSignupAttemptResult =
+  | 'success'
+  | 'duplicate_email'
+  | 'rate_limited'
+  | 'validation_failed';
+
+export type OperatorNotificationAlertStatusValue =
+  | 'healthy'
+  | 'config_missing'
+  | 'send_failed';
+
+// --- operators (existing table; Phase 8 extends) ---
+
+// Full row shape after Phase 8 PR 1 migration. Combines the
+// initial-schema columns (20260422000001_initial_schema.sql:141-167)
+// with the 12 new columns added by 20260512000020_phase_8_operator_accounts.sql.
+//
+// Notes:
+//   - signup_status was renamed from `status` (Phase 8 §3.4)
+//   - approved_at + rejection_reason are PRE-EXISTING — Phase 8
+//     reuses them rather than re-adding (Codex round-6 fix)
+//   - approved_by (UUID FK to users(id)) is unchanged from
+//     Phase 1 — admin's approve flow does not write to it;
+//     `approved_by_admin_at` is the Phase 8 timestamp
+//   - documents_urls JSONB array is the Phase-1-era shape;
+//     Phase 8 prefers the new `operator_documents` table for
+//     structured document storage but does NOT remove the JSONB
+//     column for backwards compat
+export type OperatorRow = {
+  id: string;
+  // Phase 8 §3.1: relaxed to nullable for custom-auth operators
+  // that don't have a corresponding users(id) row.
+  user_id: string | null;
+  company_name: string;
+  company_name_ar: string | null;
+  // Phase 8 §3.2: relaxed to nullable. Admin uploads the
+  // document later via /admin/operators/<id>/documents and
+  // populates the operator_documents table; this column may
+  // stay null indefinitely after Phase 8.
+  commercial_registration: string | null;
+  vat_number: string | null;
+  gaca_license: string | null;
+  license_expiry: string | null;
+  base_airport: string | null;
+  operating_airports: string[];
+  contact_email: string;
+  contact_phone: string;
+  bank_iban: string | null;
+  bank_name: string | null;
+  commission_rate: number;
+  rating: number;
+  total_trips: number;
+  response_time_avg: number | null;
+  documents_urls: unknown;
+  // Phase 8 §3.4: renamed from `status`. Typed as the
+  // operator_status ENUM with 4 values after Phase 8 extends it.
+  signup_status: OperatorSignupStatus;
+  // Pre-existing (Phase 1) — reused by Phase 8's admin-approve
+  // / admin-reject RPCs.
+  approved_at: string | null;
+  approved_by: string | null;
+  rejection_reason: string | null;
+  // --- Phase 8 §3.3: 12 new columns ---
+  auth_email: string;
+  password_hash: string | null;
+  password_set_at: string | null;
+  password_must_change: boolean;
+  last_login_at: string | null;
+  approved_by_admin_at: string | null;
+  rejected_at: string | null;
+  suspended_at: string | null;
+  suspension_reason: string | null;
+  welcome_token_hash: string | null;
+  welcome_token_expires_at: string | null;
+  welcome_token_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// PR 1 ships zero direct INSERT call sites — all writes to
+// operators go through PR 2a's SECURITY DEFINER RPCs
+// (operator_signup, admin_create_operator,
+// convert_phase7_stub_to_operator). The Insert / Update
+// shapes are declared for type-checking completeness so
+// list / get queries type-check.
+export type OperatorInsert = Partial<OperatorRow> & {
+  company_name: string;
+  contact_email: string;
+  contact_phone: string;
+  auth_email: string;
+};
+
+export type OperatorUpdate = Partial<
+  Omit<OperatorRow, 'id' | 'created_at'>
+>;
+
+// --- operator_sessions (Phase 8 §3.5) ---
+
+export type OperatorSessionRow = {
+  id: string;
+  operator_id: string;
+  token_hash: string;
+  issued_at: string;
+  expires_at: string;
+  remember_me: boolean;
+  ip_address: string | null;
+  user_agent: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+export type OperatorSessionInsert =
+  Partial<OperatorSessionRow> & {
+    operator_id: string;
+    token_hash: string;
+    expires_at: string;
+  };
+
+export type OperatorSessionUpdate = Partial<
+  Omit<OperatorSessionRow, 'id' | 'created_at'>
+>;
+
+// --- operator_password_reset_tokens (Phase 8 §3.6) ---
+
+export type OperatorPasswordResetTokenRow = {
+  id: string;
+  operator_id: string;
+  token_hash: string;
+  issued_at: string;
+  expires_at: string;
+  used_at: string | null;
+  ip_address: string | null;
+  created_at: string;
+};
+
+export type OperatorPasswordResetTokenInsert =
+  Partial<OperatorPasswordResetTokenRow> & {
+    operator_id: string;
+    token_hash: string;
+    expires_at: string;
+  };
+
+export type OperatorPasswordResetTokenUpdate = Partial<
+  Omit<OperatorPasswordResetTokenRow, 'id' | 'created_at'>
+>;
+
+// --- operator_otp_codes (Phase 8 §3.7) ---
+
+export type OperatorOtpCodeRow = {
+  id: string;
+  operator_id: string;
+  code_hash: string;
+  channel: OperatorOtpChannel;
+  purpose: OperatorOtpPurpose;
+  issued_at: string;
+  expires_at: string;
+  used_at: string | null;
+  attempt_count: number;
+  created_at: string;
+};
+
+export type OperatorOtpCodeInsert =
+  Partial<OperatorOtpCodeRow> & {
+    operator_id: string;
+    code_hash: string;
+    channel: OperatorOtpChannel;
+    purpose: OperatorOtpPurpose;
+    expires_at: string;
+  };
+
+export type OperatorOtpCodeUpdate = Partial<
+  Omit<OperatorOtpCodeRow, 'id' | 'created_at'>
+>;
+
+// --- operator_documents (Phase 8 §3.8) ---
+
+export type OperatorDocumentRow = {
+  id: string;
+  operator_id: string;
+  document_type: OperatorDocumentType;
+  storage_path: string;
+  file_name: string;
+  file_size: number;
+  content_type: string;
+  uploaded_at: string;
+  uploaded_by_admin: boolean;
+  created_at: string;
+};
+
+export type OperatorDocumentInsert =
+  Partial<OperatorDocumentRow> & {
+    operator_id: string;
+    document_type: OperatorDocumentType;
+    storage_path: string;
+    file_name: string;
+    file_size: number;
+    content_type: string;
+  };
+
+export type OperatorDocumentUpdate = Partial<
+  Omit<OperatorDocumentRow, 'id' | 'created_at'>
+>;
+
+// --- operator_signup_attempts (Phase 8 §3.9) ---
+
+export type OperatorSignupAttemptRow = {
+  id: string;
+  ip_address: string;
+  attempted_at: string;
+  email_attempted: string | null;
+  result: OperatorSignupAttemptResult;
+  created_at: string;
+};
+
+export type OperatorSignupAttemptInsert =
+  Partial<OperatorSignupAttemptRow> & {
+    ip_address: string;
+    result: OperatorSignupAttemptResult;
+  };
+
+export type OperatorSignupAttemptUpdate = Partial<
+  Omit<OperatorSignupAttemptRow, 'id' | 'created_at'>
+>;
+
+// --- operator_notification_alert_status (Phase 8 §3.10) ---
+
+// Singleton — id is always 1 (CHECK enforced by migration).
+// Mirrors the EmptyLegOutreachAlertStatusRow pattern from
+// Phase 7 §16. The seed row is INSERTed by the migration;
+// runtime code (PR 2d notification module) only UPDATEs.
+export type OperatorNotificationAlertStatusRow = {
+  id: 1;
+  status: OperatorNotificationAlertStatusValue;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+  updated_at: string;
+};
+
+export type OperatorNotificationAlertStatusUpdate = Partial<
+  Omit<OperatorNotificationAlertStatusRow, 'id'>
+>;
+
+// ============================================================================
 // Phase 7 PR 2a: SECURITY DEFINER RPC layer
 //
 // Migration file: 20260510000011_phase_7_empty_legs_rpcs.sql.
@@ -1569,6 +1860,77 @@ export type Database = {
         Update: EmptyLegEventsOutboxUpdate;
         Relationships: [];
       };
+      // Phase 8 PR 1: operators table — existed since Phase 1
+      // initial schema but was not exposed via Database['Tables']
+      // until Phase 8 added the auth columns + 6 companion
+      // tables. Direct table writes from app code are unsupported;
+      // every mutation goes through PR 2a's SECURITY DEFINER RPCs
+      // (operator_signup, admin_approve_operator, etc.). The
+      // Insert / Update shapes are declared so list / get queries
+      // type-check.
+      operators: {
+        Row: OperatorRow;
+        Insert: OperatorInsert;
+        Update: OperatorUpdate;
+        Relationships: [];
+      };
+      // Phase 8 PR 1 §3.5: cookie-based session storage for
+      // the operator portal. token_hash = sha256(rawToken).
+      operator_sessions: {
+        Row: OperatorSessionRow;
+        Insert: OperatorSessionInsert;
+        Update: OperatorSessionUpdate;
+        Relationships: [];
+      };
+      // Phase 8 PR 1 §3.6: 30-min single-use email reset
+      // tokens. token_hash = sha256(rawToken).
+      operator_password_reset_tokens: {
+        Row: OperatorPasswordResetTokenRow;
+        Insert: OperatorPasswordResetTokenInsert;
+        Update: OperatorPasswordResetTokenUpdate;
+        Relationships: [];
+      };
+      // Phase 8 PR 1 §3.7: 10-min single-use WhatsApp OTP
+      // codes for the recovery flow. code_hash =
+      // sha256(plaintext-6-digit). Max 5 verify attempts
+      // before the row locks.
+      operator_otp_codes: {
+        Row: OperatorOtpCodeRow;
+        Insert: OperatorOtpCodeInsert;
+        Update: OperatorOtpCodeUpdate;
+        Relationships: [];
+      };
+      // Phase 8 PR 1 §3.8: Supabase Storage object metadata
+      // for regulatory documents admin uploads on the
+      // operator's behalf.
+      operator_documents: {
+        Row: OperatorDocumentRow;
+        Insert: OperatorDocumentInsert;
+        Update: OperatorDocumentUpdate;
+        Relationships: [];
+      };
+      // Phase 8 PR 1 §3.9: anti-spam log for self-signup
+      // (3 attempts / IP / day rate limit per locked
+      // decision §12).
+      operator_signup_attempts: {
+        Row: OperatorSignupAttemptRow;
+        Insert: OperatorSignupAttemptInsert;
+        Update: OperatorSignupAttemptUpdate;
+        Relationships: [];
+      };
+      // Phase 8 PR 1 §3.10: singleton health row mirroring
+      // the Phase 7 §16 outreach-alert pattern. PR 2d
+      // notification module UPDATEs on every send attempt;
+      // PR 2b's /admin/operators page renders a banner when
+      // status <> 'healthy'. Insert is the same shape as Row
+      // because the migration seeds id=1 and runtime code
+      // never INSERTs.
+      operator_notification_alert_status: {
+        Row: OperatorNotificationAlertStatusRow;
+        Insert: OperatorNotificationAlertStatusRow;
+        Update: OperatorNotificationAlertStatusUpdate;
+        Relationships: [];
+      };
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -1707,7 +2069,13 @@ export type Database = {
       aircraft_status: 'active' | 'maintenance' | 'retired';
       crew_role: 'captain' | 'first_officer' | 'flight_attendant';
       offer_status: OfferStatus;
-      operator_status: 'pending' | 'approved' | 'suspended';
+      // Phase 8 PR 1 §3.4: extended with 'rejected' (4th value)
+      // via ALTER TYPE operator_status ADD VALUE IF NOT EXISTS.
+      // The associated column was renamed from `status` to
+      // `signup_status` in the same migration. Use the
+      // `OperatorSignupStatus` alias (defined above) to refer
+      // to this union from application code.
+      operator_status: OperatorSignupStatus;
       trip_request_status: TripRequestStatus;
       // Phase 5
       dispatch_target_status: DispatchTargetStatus;

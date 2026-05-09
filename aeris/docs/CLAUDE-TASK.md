@@ -119,18 +119,40 @@ Confirmed via `\d+` against the production Supabase as of
 
 ### `operators` (existing, from initial schema; Phase 8 extends)
 
+Confirmed against `20260422000001_initial_schema.sql:141-167`
+during PR 1 implementation (Codex round-6 implementation
+reality fix: rounds 0-5 of this spec described `status` /
+`commercial_registration` / `gaca_license` as
+`TEXT + CHECK`, but the initial-schema migration uses the
+PostgreSQL ENUM type `operator_status` and `VARCHAR(N)`
+column types respectively):
+
 ```
 id UUID PK DEFAULT uuid_generate_v4()
-user_id UUID NOT NULL REFERENCES users(id)         -- ← Phase 8 will RELAX to NULLABLE
-company_name TEXT NOT NULL
-contact_email TEXT NOT NULL
-contact_phone TEXT NOT NULL
-commercial_registration TEXT NOT NULL              -- ← Phase 8 will RELAX to NULLABLE
-gaca_license TEXT NOT NULL                         -- ← Phase 8 will RELAX to NULLABLE
-license_expiry DATE NOT NULL                       -- ← Phase 8 will RELAX to NULLABLE
-status TEXT NOT NULL CHECK (status IN ('pending','approved','suspended'))
-created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE   -- ← Phase 8 will RELAX to NULLABLE
+company_name VARCHAR(200) NOT NULL
+company_name_ar VARCHAR(200)
+commercial_registration VARCHAR(50) NOT NULL                   -- ← Phase 8 will RELAX to NULLABLE
+vat_number VARCHAR(20)
+gaca_license VARCHAR(100) NOT NULL                             -- ← Phase 8 will RELAX to NULLABLE
+license_expiry DATE NOT NULL                                   -- ← Phase 8 will RELAX to NULLABLE
+base_airport VARCHAR(10) REFERENCES airports(iata_code)
+operating_airports TEXT[] DEFAULT ARRAY[]::TEXT[]
+contact_email VARCHAR(255) NOT NULL
+contact_phone VARCHAR(20) NOT NULL
+bank_iban VARCHAR(50)
+bank_name VARCHAR(100)
+commission_rate DECIMAL(4,2) DEFAULT 8.0
+rating DECIMAL(3,2) DEFAULT 0
+total_trips INTEGER DEFAULT 0
+response_time_avg INTEGER
+documents_urls JSONB DEFAULT '[]'::jsonb
+status operator_status DEFAULT 'pending'                       -- ← ENUM TYPE; Phase 8 RENAMES to signup_status + ADDs 'rejected'
+approved_at TIMESTAMPTZ                                        -- ← EXISTS; Phase 8 REUSES (no add)
+approved_by UUID REFERENCES users(id)                          -- ← EXISTS; Phase 8 leaves untouched (admin reset audit goes to audit_logs, not this column)
+rejection_reason TEXT                                          -- ← EXISTS; Phase 8 REUSES (no add)
+created_at TIMESTAMPTZ DEFAULT NOW()
+updated_at TIMESTAMPTZ DEFAULT NOW()
 ```
 
 The `user_id NOT NULL REFERENCES users(id)` clause is the
@@ -140,11 +162,26 @@ need a row in `users` (which is the customer auth table).
 Phase 8 RELAXES `operators.user_id` to nullable + adds
 `operators.password_hash` etc.
 
-The `status` ENUM already has `'pending' / 'approved' /
-'suspended'`. Phase 8 ADDS `'rejected'` to the CHECK and
-renames the column to `signup_status` (to avoid confusion
-with `empty_legs.status`). The migration in §3 walks
-through the rename atomically.
+The `status` column is a **PostgreSQL ENUM** named
+`operator_status` (CREATE TYPE statement in
+`20260422000001_initial_schema.sql:19`), already containing
+`'pending' / 'approved' / 'suspended'`. Phase 8 EXTENDS the
+ENUM with `'rejected'` via `ALTER TYPE operator_status ADD
+VALUE IF NOT EXISTS 'rejected'` and renames the column to
+`signup_status` (to avoid confusion with `empty_legs.status`).
+The ENUM is preserved (NOT converted to TEXT + CHECK) — the
+type-safety of a real ENUM is worth more than the spec-text
+uniformity, and the migration is simpler. The rename is
+atomic; PostgreSQL automatically updates any dependent
+index (`idx_operators_status` becomes `idx_operators_signup_status`
+in the catalog without an explicit re-create).
+
+`approved_at` and `rejection_reason` already exist in the
+initial schema. Phase 8 REUSES them — they carry the same
+semantics they did at Phase 1 (set when admin approves /
+rejects). The §3.3 migration block therefore lists **12 new
+columns**, not 14; the prior round-2 + round-3 wording of
+"14" referenced two columns that production already has.
 
 ### `phase7_operator_stubs` (existing, Phase 7 §14)
 
@@ -233,7 +270,16 @@ ALTER TABLE operators ALTER COLUMN license_expiry DROP NOT NULL;
 Per decision §3 (admin completes documents). The columns
 stay typed-correct; admin uploads populate them later.
 
-### 3.3 Add custom-auth columns (14 columns)
+### 3.3 Add custom-auth columns (12 new + 2 reused)
+
+Codex round-6 implementation reality fix: the prior wording
+of "14 new columns" double-counted `approved_at` and
+`rejection_reason`, which already exist in production per
+§2 above. The migration adds **12 new columns**; PR 2a's
+admin-approve / admin-reject RPCs WRITE to the existing
+`approved_at` and `rejection_reason` columns rather than
+creating fresh ones (avoids duplicate columns + preserves
+any future Phase 1-era data the columns might carry).
 
 ```sql
 ALTER TABLE operators
@@ -242,10 +288,8 @@ ALTER TABLE operators
   ADD COLUMN IF NOT EXISTS password_set_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS password_must_change BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS approved_by_admin_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS rejection_reason TEXT,
   ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS suspension_reason TEXT,
   ADD COLUMN IF NOT EXISTS welcome_token_hash VARCHAR(64),
@@ -317,26 +361,90 @@ without a password gets one only after the first login.
 `welcome_token_*` columns are the magic-link state.
 `token_hash` matches the wire format `sha256(rawToken)`.
 
-### 3.4 Rename + extend the `operators.status` enum
+### 3.4 Extend the `operator_status` ENUM + rename the column
 
-The column is renamed to `signup_status` AND its CHECK
-extended:
+Codex round-6 implementation reality fix: rounds 0-5 of
+this spec assumed `operators.status` was `TEXT NOT NULL
+CHECK (...)` and used a DROP/ADD CONSTRAINT pattern. The
+production schema uses the `operator_status` PostgreSQL
+ENUM type (per `20260422000001_initial_schema.sql:19`),
+so the migration extends the ENUM with `'rejected'` and
+renames the column atomically:
 
 ```sql
-ALTER TABLE operators
-  RENAME COLUMN status TO signup_status;
+-- Extend the existing operator_status ENUM with the 4th
+-- value. ADD VALUE IF NOT EXISTS makes this replayable on
+-- any DB state (already-extended ENUM is a no-op).
+ALTER TYPE operator_status ADD VALUE IF NOT EXISTS 'rejected';
 
-ALTER TABLE operators
-  DROP CONSTRAINT IF EXISTS operators_status_check;
+-- Rename the column inside an idempotent guard so the
+-- migration is replayable on any DB state (Codex round-1
+-- P1 fix on PR 1: an unconditional RENAME would raise on
+-- every re-apply because the source column 'status' no
+-- longer exists after the first successful run).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'operators'
+      AND table_schema = 'public'
+      AND column_name = 'status'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'operators'
+      AND table_schema = 'public'
+      AND column_name = 'signup_status'
+  ) THEN
+    ALTER TABLE operators RENAME COLUMN status TO signup_status;
+  END IF;
+END $$;
 
-ALTER TABLE operators
-  ADD CONSTRAINT operators_signup_status_check
-    CHECK (signup_status IN ('pending','approved','rejected','suspended'));
+-- The companion index idx_operators_status (created by the
+-- initial schema at 20260422000001_initial_schema.sql:170)
+-- continues to index the renamed column — PostgreSQL updates
+-- the stored definition + catalog dependencies, but does NOT
+-- rename the index object itself (Codex round-1 P2 fix on
+-- PR 1: prior wording incorrectly claimed an automatic rename).
+-- Rename the index explicitly for catalog clarity, also
+-- guarded so the migration stays replayable.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relname = 'idx_operators_status'
+      AND relkind = 'i'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relname = 'idx_operators_signup_status'
+      AND relkind = 'i'
+  ) THEN
+    ALTER INDEX idx_operators_status RENAME TO idx_operators_signup_status;
+  END IF;
+END $$;
 ```
 
-The rename + re-CHECK is wrapped in a `DO $$ ... $$` block
-to handle the case where a previous Phase-1-era constraint
-existed under a different name.
+No CHECK constraint is added — the ENUM type itself enforces
+the 4-value invariant. After this block:
+  - `signup_status` is of type `operator_status`
+  - `operator_status` ENUM contains `('pending', 'approved',
+    'suspended', 'rejected')` in insertion order
+  - any INSERT/UPDATE with a value outside the ENUM raises
+    `invalid input value for enum operator_status: ...`
+    at the SQL boundary
+  - the catalog index name is `idx_operators_signup_status`
+    after the explicit ALTER INDEX RENAME
+
+PostgreSQL pre-12 required `ALTER TYPE ... ADD VALUE` to
+run outside a transaction. PostgreSQL 12+ (Supabase runs 15+)
+allows it inside a transaction block, so the migration can
+ship as a single atomic file. No special transaction wrapper
+required.
+
+Both DO blocks check `information_schema` / `pg_class` before
+mutating, so a re-apply on an already-migrated DB is a no-op
+on every statement (the spec's "every CREATE / ALTER is
+idempotent" promise from the §3 intro is now satisfied for
+RENAME as well).
 
 ### 3.5 New table `operator_sessions`
 
@@ -564,6 +672,13 @@ SELECT table_name FROM information_schema.tables
 -- Check 3: alert-status singleton seed exists
 SELECT id, status FROM operator_notification_alert_status
   WHERE id = 1;
+
+-- Check 4 (Codex round-6 implementation reality fix):
+-- the operator_status ENUM has been extended with 'rejected'.
+-- Without this, PR 2a's admin-reject RPC would raise
+-- `invalid input value for enum operator_status: rejected`.
+SELECT enum_range(NULL::operator_status);
+-- Expected: {pending,approved,suspended,rejected}
 ```
 
 ### Files in PR 1
@@ -573,9 +688,14 @@ SELECT id, status FROM operator_notification_alert_status
   with the **6** new tables (Codex round-2 P2 #1 fix:
   count updated to include
   `operator_notification_alert_status` from §3.10) plus
-  the 14 new columns on `operators` (including
-  `auth_email` from the round-2 P1 #1 fix). The 6
-  tables are: `operator_sessions`,
+  the **12 new columns** on `operators` (Codex round-6
+  implementation reality fix: `approved_at` and
+  `rejection_reason` already exist in the initial schema
+  and are reused, not re-added). Also adds `'rejected'`
+  to the existing `operator_status` Enums entry (now
+  4 values: `pending / approved / suspended / rejected`)
+  and renames the `OperatorRow.status` field to
+  `signup_status`. The 6 tables are: `operator_sessions`,
   `operator_password_reset_tokens`, `operator_otp_codes`,
   `operator_documents`, `operator_signup_attempts`,
   `operator_notification_alert_status`. Hand-maintained
@@ -589,13 +709,21 @@ SELECT id, status FROM operator_notification_alert_status
 ### Founder probes after PR 1 (5 probes — was 4 in round 0; round 1 added 4a)
 
 1. **Schema state** — service-role psql: `\d+ operators`
-   shows the 14 new columns + the renamed `signup_status`
-   with the 4-value CHECK. Verify explicitly that
-   `auth_email` is `NOT NULL` (Codex round-4 P2 #1 fix:
-   the auth-email invariant added in round 2 + enforced
-   in round 3 must show as "not null" in the `\d+`
-   modifier column — assert this directly rather than
-   trust column-count parity).
+   shows the **12 new columns** + the renamed `signup_status`
+   column (typed `operator_status` ENUM, not TEXT + CHECK —
+   Codex round-6 implementation reality fix). The two
+   pre-existing lifecycle columns `approved_at` and
+   `rejection_reason` MUST still be present (Phase 8 reuses
+   them; the migration does not drop or alter their types).
+   Verify explicitly that `auth_email` is `NOT NULL` (Codex
+   round-4 P2 #1 fix: the auth-email invariant added in
+   round 2 + enforced in round 3 must show as "not null"
+   in the `\d+` modifier column — assert this directly
+   rather than trust column-count parity). Also run
+   `SELECT enum_range(NULL::operator_status);` and assert
+   the result is `{pending,approved,suspended,rejected}`
+   (Codex round-6 fix: the 4-value invariant is enforced
+   by the ENUM type, not by a CHECK constraint).
 2. **Six new tables** — `\dt operator_*` lists all 6
    tables (`operator_sessions`, `operator_password_reset_tokens`,
    `operator_otp_codes`, `operator_documents`,
@@ -1555,13 +1683,25 @@ merges.
 1. `operators.user_id` is nullable.
 2. `operators.commercial_registration`, `gaca_license`,
    `license_expiry` are all nullable.
-3. `operators` has the 14 new columns from §3.3
+3. `operators` has the 12 new columns from §3.3
    (including the round-2 `auth_email` column with
-   the round-3 NOT NULL invariant — Codex round-4
-   P2 #1 follow-on: §10 acceptance row 3 was also
-   stale at 13).
+   the round-3 NOT NULL invariant). The pre-existing
+   `approved_at` and `rejection_reason` columns
+   remain in place untouched (Codex round-6
+   implementation reality fix: rounds 0-5 said "14
+   new columns"; the migration discovers they
+   already exist in the initial schema and reuses
+   them).
 4. `operators.signup_status` exists (renamed from
-   `status`) with the 4-value CHECK.
+   `status`), typed `operator_status` ENUM. The ENUM
+   contains the 4 values
+   `(pending, approved, suspended, rejected)` —
+   verify with `SELECT enum_range(NULL::operator_status);`.
+   Codex round-6 implementation reality fix: rounds
+   0-5 said "4-value CHECK" but the production schema
+   uses the ENUM type per
+   `20260422000001_initial_schema.sql:19`; Phase 8
+   extends the ENUM rather than converting to TEXT.
 5. The 6 new tables (`operator_sessions`,
    `operator_password_reset_tokens`, `operator_otp_codes`,
    `operator_documents`, `operator_signup_attempts`,
@@ -1856,3 +1996,25 @@ before any code is written. Iteration history below.
 | # | Finding | Resolution |
 |:-:|---|---|
 | P2 #1 | "Auth/contact email prose still says same value" | Round 4 fixed the operative `operator_signup` body to persist `contact_email=p_contact_email`, but two prose locations still asserted that the signup form writes the same email to both columns: (a) §3.3 schema prose immediately after the `auth_email` migration block, and (b) §13.4 RESOLVED email-change-flow note. Both contradicted the round-4 RPC contract. Round 5 reworded both spots per Codex's prescription: signup may seed `auth_email` and `contact_email` with different values; `auth_email` is the immutable login identity, `contact_email` is the mutable operational contact. The round-5 note in §13.4 chains forward to the round-2 + round-3 audit annotations so the resolution history stays traceable. |
+
+## Codex iteration 6 — implementation reality patches (PR 1)
+
+Codex round 6 (post-100/100 acceptance) discovered during PR 1
+implementation that §2 "Schema reality" misdescribed three
+columns of the production `operators` table. The findings below
+were caught while writing the migration; PR 1 ships **both** the
+migration AND these spec patches in a single commit so Codex's
+re-review of PR 1 sees an internally consistent spec + code pair.
+
+| # | Discovery | Resolution |
+|:-:|---|---|
+| P0 (would have failed at deploy) | "operators.status is the operator_status PostgreSQL ENUM, not TEXT + CHECK" | Verified against `20260422000001_initial_schema.sql:19,161`. The spec §3.4 DROP/ADD CONSTRAINT pattern would have been a no-op (no CHECK existed to drop) AND would have added a CHECK that PostgreSQL accepts but cannot enforce on an ENUM column, AND `'rejected'` would never have been admissible because the ENUM type itself only had 3 values. Round-6 patch: §3.4 rewritten to use `ALTER TYPE operator_status ADD VALUE IF NOT EXISTS 'rejected'` followed by `RENAME COLUMN status TO signup_status`. The ENUM is preserved (NOT converted to TEXT) — type-safety of a real ENUM beats spec-text uniformity, and the migration is simpler. §3.12 sanity check #4 + §3 founder Probe 1 + §10 acceptance #4 all updated to assert ENUM range rather than CHECK constraint. |
+| P1 (silent column duplication) | "approved_at and rejection_reason already exist in initial schema" | Verified at `20260422000001_initial_schema.sql:162,164`. The spec §3.3 listed both as part of "14 new columns" but `ADD COLUMN IF NOT EXISTS` would have silently no-op'd them while leaving the column count rhetoric in §3.3 / §10 / §3 founder probes saying "14". Round-6 patch: §3.3 trimmed from 14 to 12 columns + the two pre-existing columns documented as "REUSED, no add". PR 2a's admin-approve / admin-reject RPCs (specced in §4.2) write to the existing `approved_at` and `rejection_reason` rather than creating new fresh columns — preserves any Phase 1-era data and avoids duplicate-column ambiguity. §3 founder Probe 1 + §10 acceptance #3 + Files-in-PR-1 entry all updated to "12 new + 2 reused". |
+| P2 (cosmetic spec drift) | "commercial_registration / gaca_license are VARCHAR, not TEXT" | Verified at `20260422000001_initial_schema.sql:146,148`. Both columns were described in §2 as `TEXT NOT NULL`; production has `VARCHAR(50)` and `VARCHAR(100)` respectively. The §3.2 `DROP NOT NULL` works identically on either type, so this is purely a documentation accuracy fix, not a code change. Round-6 patch: §2 schema-reality block now lists the actual VARCHAR types + the other ~10 columns the rounds 0-5 §2 block omitted (`vat_number`, `bank_iban`, `documents_urls`, `commission_rate`, `rating`, `total_trips`, `response_time_avg`, `base_airport`, `operating_airports`, `company_name_ar`, `approved_by`). This makes the §2 block match `\d+ operators` in production. |
+
+## Codex round 1 on PR 1 — findings (resolved in round 2)
+
+| # | Finding | Resolution |
+|:-:|---|---|
+| P1 #1 | "Column rename is not replayable" | The migration header in §3 promises every statement is replayable, but `ALTER TABLE operators RENAME COLUMN status TO signup_status` was unconditional. After the first successful run a re-apply (staging restore, disaster recovery, snapshot replay) would raise `column "status" does not exist`. Round 2 wraps the RENAME in a `DO $$ ... $$` block that checks `information_schema.columns` for both `status` (must exist) AND `signup_status` (must NOT exist) before renaming. The block is a no-op on every subsequent re-apply. Same idempotency posture as the rest of the migration's `IF NOT EXISTS` / `IF EXISTS` guards. §3.4 spec block + the migration file both updated in lockstep. |
+| P2 #1 | "Index rename comment is inaccurate" | The §3.4 prose (and a comment in the migration file) claimed PostgreSQL "automatically renames `idx_operators_status` to `idx_operators_signup_status`" when the column is renamed. This is wrong: PostgreSQL updates the index's stored definition + catalog dependencies so it keeps indexing the renamed column, but the index object itself retains its old name. Round 2 corrects the wording AND adds an explicit `ALTER INDEX ... RENAME TO ...` inside a guarded `DO` block (same idempotency pattern as the column rename) so the catalog name matches the column name post-migration. §3.4 spec block + the migration file both updated. |
