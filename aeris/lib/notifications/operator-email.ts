@@ -94,13 +94,29 @@ export interface SendOperatorWelcomeEmailInput {
   expires_at: Date;
 }
 
+/**
+ * Codex round 2 (PR #41) P2 #2 fix: welcome email now reports
+ * delivery status (was previously void / best-effort). After
+ * `admin_approve_operator` runs, the operator row is approved
+ * and a one-time welcome token has been minted — the operator's
+ * ONLY way to set their first session is the magic-link URL in
+ * this email (or the URL the admin copies from the toast).
+ * Silent delivery failure is a soft-lockout: admin sees
+ * ok:true, but the operator never gets the link AND admin
+ * never knows.
+ *
+ * The `welcome_url` itself is always returned by
+ * adminApproveOperator regardless of email status, so admin
+ * can copy it to wa.me as a fallback. The degraded warning
+ * tells admin to do exactly that.
+ */
 export async function sendOperatorWelcomeEmail(
   input: SendOperatorWelcomeEmailInput
-): Promise<void> {
+): Promise<EmailDeliveryResult> {
   const env = envCredentials();
   if (!env) {
     console.warn('[operator-email] welcome: missing RESEND_API_KEY / RESEND_FROM_EMAIL — skipping send');
-    return;
+    return { ok: false, reason: 'env_missing' };
   }
 
   const expiresLabel = input.expires_at.toLocaleDateString('ar-SA', {
@@ -129,8 +145,10 @@ export async function sendOperatorWelcomeEmail(
         ctaLabel: 'تفعيل الحساب',
       }),
     });
+    return { ok: true };
   } catch (err) {
     console.error('[operator-email] welcome resend send failed', err);
+    return { ok: false, reason: 'send_failed' };
   }
 }
 
@@ -196,21 +214,26 @@ export type EmailDeliveryResult =
   | { ok: false; reason: 'env_missing' | 'send_failed' };
 
 /**
- * Codex round 1 (PR #41) P1 #1 fix: password-reset email
- * MUST report delivery status so the Server Action can
- * surface a degraded state to the admin UI. Without this,
- * a missing RESEND_API_KEY or a Resend outage silently
- * locks the operator out — the password is rotated and
- * sessions are revoked, but the operator never receives
- * the new password.
+ * Account-state-changing emails MUST report delivery status
+ * so the Server Action can surface a degraded state to admin
+ * when delivery fails. The two flavours that change account
+ * state and thus return EmailDeliveryResult:
  *
- * Welcome + rejection emails stay best-effort because
- * they don't lock the operator out: a missing welcome
- * email leaves the operator at "pending" UX (they can
- * still log in via existing password if they had one),
- * and a missing rejection email is purely informational.
- * The password-reset path is the one that turns silent
- * delivery failure into account loss.
+ *   - sendOperatorPasswordResetEmail (Codex round 1 P1 #1)
+ *     — silent failure locks the operator out (sessions
+ *     revoked, new password never delivered).
+ *   - sendOperatorWelcomeEmail (Codex round 2 P2 #2)
+ *     — silent failure locks a freshly-approved operator
+ *     out: the row is now `approved` and a one-time welcome
+ *     token has been minted, but the operator has no
+ *     password yet AND no link to set one. Admin still gets
+ *     the welcome URL in the action result toast so they
+ *     can relay manually via WhatsApp.
+ *
+ * sendOperatorRejectionEmail stays best-effort void — its
+ * delivery failure is purely informational. The rejected
+ * operator can still see the status if admin reaches out
+ * by other means; no account is lost either way.
  */
 export async function sendOperatorPasswordResetEmail(
   input: SendOperatorPasswordResetEmailInput

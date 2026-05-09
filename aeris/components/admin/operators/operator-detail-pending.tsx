@@ -11,6 +11,11 @@ import type { OperatorRow } from '@/types/database';
 
 type Toast =
   | { kind: 'success'; message: string; welcomeUrl?: string }
+  // 'warning' renders an amber banner when approve succeeded
+  // at the DB but welcome-email delivery failed (Codex round 2
+  // PR #41 P2 #2 fix). The welcome URL is always shown so admin
+  // can relay it manually.
+  | { kind: 'warning'; message: string; welcomeUrl: string }
   | { kind: 'error'; message: string }
   | null;
 
@@ -30,11 +35,22 @@ export function OperatorDetailPending({ operator }: { operator: OperatorRow }) {
     startTransition(async () => {
       const result = await adminApproveOperator({ operator_id: operator.id });
       if (result.ok) {
-        setToast({
-          kind: 'success',
-          message: operatorsAr.toasts.approved,
-          welcomeUrl: result.welcome_url,
-        });
+        // Codex round 2 PR #41 P2 #2 fix: surface degraded
+        // delivery state when welcome email fails (operator
+        // would otherwise have no way to reach the magic link).
+        if (result.email_delivered) {
+          setToast({
+            kind: 'success',
+            message: operatorsAr.toasts.approved,
+            welcomeUrl: result.welcome_url,
+          });
+        } else {
+          setToast({
+            kind: 'warning',
+            message: operatorsAr.toasts.approvedEmailFailed,
+            welcomeUrl: result.welcome_url,
+          });
+        }
       } else {
         setToast({ kind: 'error', message: errorMessage(result.error) });
       }
@@ -68,12 +84,22 @@ export function OperatorDetailPending({ operator }: { operator: OperatorRow }) {
           className={`font-ar rounded-xl border px-4 py-3 text-sm ${
             toast.kind === 'success'
               ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+              : toast.kind === 'warning'
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
               : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
           }`}
         >
           <p>{toast.message}</p>
           {toast.kind === 'success' && toast.welcomeUrl ? (
             <p className="mt-2 break-all font-mono text-xs text-emerald-200">
+              {toast.welcomeUrl}
+            </p>
+          ) : null}
+          {toast.kind === 'warning' && toast.welcomeUrl ? (
+            <p
+              dir="ltr"
+              className="mt-3 select-all break-all rounded-md border border-amber-500/40 bg-navy-secondary/60 px-3 py-2 font-mono text-xs text-amber-50"
+            >
               {toast.welcomeUrl}
             </p>
           ) : null}

@@ -85,12 +85,20 @@ function revalidateOperator(operatorId: string): void {
 // URL. The raw token never touches the DB.
 // ============================================================
 
+// Codex round 2 (PR #41) P2 #2 fix: result shape now exposes
+// welcome-email delivery status. The welcome_url is always
+// returned so admin can relay it manually if delivery failed.
 export type AdminApproveOperatorResult =
   | {
       ok: true;
       operator_id: string;
       welcome_url: string;
       expires_at: string;
+      email_delivered: boolean;
+      email_failure_reason?:
+        | 'env_missing'
+        | 'send_failed'
+        | 'operator_lookup_failed';
     }
   | AdminOperatorActionFailure;
 
@@ -138,33 +146,50 @@ export async function adminApproveOperator(input: {
     return { ok: false, error: result.error ?? 'unknown' };
   }
 
-  // Look up the operator's email + company name for the welcome email.
+  // Look up operator + send. Both failure paths MUST surface
+  // a degraded state to admin so they can relay the welcome
+  // URL manually (Codex round 2 PR #41 P2 #2). The approval
+  // RPC has already committed; the operator now NEEDS the
+  // magic-link URL to set their first session.
+  const welcomeUrl = `${siteUrl()}/operator/welcome/${minted.raw_token}`;
   const { data: opRow, error: opErr } = await client
     .from('operators')
     .select('contact_email, company_name')
     .eq('id', parsed.data.operator_id)
     .maybeSingle();
 
+  let emailDelivered = false;
+  let emailFailureReason:
+    | 'env_missing'
+    | 'send_failed'
+    | 'operator_lookup_failed'
+    | undefined;
+
   if (opErr || !opRow) {
     console.error('[operators.adminApproveOperator] op fetch error', opErr);
-    // Approval already committed in the RPC — return success
-    // with the URL so admin can copy/paste manually.
+    emailFailureReason = 'operator_lookup_failed';
   } else {
-    const welcomeUrl = `${siteUrl()}/operator/welcome/${minted.raw_token}`;
-    await sendOperatorWelcomeEmail({
+    const sendResult = await sendOperatorWelcomeEmail({
       to: opRow.contact_email,
       company_name: opRow.company_name,
       welcome_url: welcomeUrl,
       expires_at: minted.expires_at,
     });
+    if (sendResult.ok) {
+      emailDelivered = true;
+    } else {
+      emailFailureReason = sendResult.reason;
+    }
   }
 
   revalidateOperator(parsed.data.operator_id);
   return {
     ok: true,
     operator_id: parsed.data.operator_id,
-    welcome_url: `${siteUrl()}/operator/welcome/${minted.raw_token}`,
+    welcome_url: welcomeUrl,
     expires_at: minted.expires_at.toISOString(),
+    email_delivered: emailDelivered,
+    email_failure_reason: emailDelivered ? undefined : emailFailureReason,
   };
 }
 
@@ -550,12 +575,29 @@ export async function adminMintOperatorOtp(input: {
 // ============================================================
 // 8. adminUploadOperatorDocument
 //
-// Accepts a File via FormData. Uploads to Supabase Storage at
-// `operator-documents/<operator_id>/<document_type>/<random>-<filename>`
-// then INSERTs / UPSERTs the metadata row in `operator_documents`.
-// The unique (operator_id, document_type) index means re-upload
-// replaces — we DELETE the old metadata row first if it exists,
-// then INSERT.
+// Accepts a File via FormData. The replace-safe flow (Codex
+// round 1 PR #41 P1 #2 fix) is:
+//
+//   1. Snapshot the existing row's storage_path (if any) BEFORE
+//      any mutation so we can clean up the old object after the
+//      new metadata commits.
+//   2. Upload the new file to a fresh storage path
+//      `operator-documents/<operator_id>/<document_type>/<random>-<safe_name>`.
+//      Using a unique random suffix lets the old object stay
+//      reachable until step 4.
+//   3. UPSERT the metadata row on the unique
+//      (operator_id, document_type) index — atomic at the SQL
+//      boundary; on failure the existing row + old storage
+//      object are untouched and we rollback only the
+//      newly-uploaded storage object.
+//   4. On UPSERT success: best-effort cleanup of the old
+//      storage object. A cleanup failure leaves a dangling
+//      object in the bucket but the operator still has a
+//      working document; a future janitor can sweep.
+//
+// The unique index makes the upsert behave as REPLACE for the
+// (operator, document_type) pair while preserving the row's
+// `id` and `created_at` (good for the audit trail).
 // ============================================================
 
 const STORAGE_BUCKET = 'operator-documents';
