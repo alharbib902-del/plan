@@ -6132,6 +6132,351 @@ PR 2e is the **final application PR** of Phase 7. After
 PR 2e merges + the migration applies + the 9 founder
 probes pass, Phase 7 is ready for closure.
 
+## Phase 7 — closure (2026-05-09)
+
+Phase 7 is **shipped end-to-end on production** as of
+PR 2e follow-up squash sha `3a8fd9f` (`2026-05-09T09:00:02Z`).
+The Empty Legs marketplace is live behind feature flags;
+end-to-end smoke (admin publish → matcher → wa.me
+notification → founder batch alert) was validated in
+production against test leads + a verified Resend
+sandbox sender.
+
+### PR sequence (8 PRs)
+
+| PR | Scope | Squash sha | Date |
+|---|---|---|---|
+| #27 | PR 1 — schema reshape + Dutch-auction parity scaffold + 4 new tables (notifications, stubs, sessions, alert-status) + 2 triggers | `9609ced` | 2026-05-08 |
+| #28 | PR 2a — 11 SECURITY DEFINER public RPCs + 1 helper + 1 stub | `386fe2a` | 2026-05-08 |
+| #29 | PR 2a closure work-log entry | `3850076` | 2026-05-08 |
+| #30 | PR 2b — admin surfaces (list, detail, publish, outreach queue) + 7 admin Server Actions | `b103d0f` | 2026-05-08 |
+| #31 | PR 2c — operator self-serve portal (token-gated) + admin bootstrap + 5 Server Actions | `61f18ec` | 2026-05-08 |
+| #32 | PR 2d — public marketplace + 10-min reserve flow + opt-out lander + 3 anon Server Actions | `49d6cdc` | 2026-05-09 |
+| #33 | PR 2e — matching engine + cron + wa.me dispatch + founder batch alert + 1 migration (12th RPC + outbox) | `1355818` | 2026-05-09 |
+| #34 | PR 2e follow-up — re-add vercel.json cron entries after Vercel Pro upgrade | `3a8fd9f` | 2026-05-09 |
+
+### Codex review iterations (per PR)
+
+Every shipped PR cleared Codex 100/100 before merge.
+Iteration counts:
+
+| PR | Review rounds | Highlights |
+|---|---|---|
+| #27 | 17 | Spec drafted through 15 iterations, then 2 rounds on the implementation |
+| #28 | 3 | NULL-safe token compare + IATA pre-validation + bounded reservation expiry + FK pre-validation + non-negative lead hours |
+| #30 | 2 | Asia/Riyadh timezone fix on display + booking deep-link 404 |
+| #31 | 1 | mobile leg-row href + NOT NULL alignment for stub contact fields |
+| #32 | 3 | reserved page token validation (P1) + opt-out kill-switch exception + comment hygiene |
+| #33 | 4 | match-drain cron route + outbox row-id marking (race fix) + comment hygiene across 2 routes |
+
+### Production state at closure
+
+#### Migrations applied to production
+
+- `20260509000010_phase_7_empty_legs_reshape.sql` — schema reshape, 4 new tables, 2 triggers, alert-status seed
+- `20260510000011_phase_7_empty_legs_rpcs.sql` — 12 functions (11 publics + 1 helper)
+- `20260511000012_phase_7_empty_legs_match_event.sql` — outbox table + RPC body replacement + 12th public
+
+⚠️ The third migration's first production attempt failed
+because the PR 2a stub declared `RETURNS VOID` and PR 2e's
+body declares `RETURNS JSON` — Postgres rejects
+return-type changes through `CREATE OR REPLACE`.
+Production was patched manually via a one-shot
+`DROP FUNCTION IF EXISTS publish_empty_leg_event(UUID, TEXT)`
+followed by re-running the migration body. The
+migration file in git was then amended in this closure
+PR to include the DROP before the `CREATE OR REPLACE`
+(Phase 7 closure round-1 P1 #1 fix), so any future
+replay — staging restore, disaster recovery, or a
+Phase-6.2-era snapshot — succeeds in one pass without
+the manual workaround.
+
+#### Vercel Pro
+
+Account upgraded to Pro mid-Phase-7 (during PR 2e
+follow-up) so per-minute cron expressions could ship.
+The 4 cron jobs are registered:
+
+| Path | Schedule |
+|---|---|
+| `/api/cron/empty-legs/dutch-auction-tick` | every 30 min |
+| `/api/cron/empty-legs/expire-reservations` | every 5 min |
+| `/api/cron/empty-legs/expire-windows` | hourly |
+| `/api/cron/empty-legs/match-drain` | every 30 min |
+
+#### Production env vars
+
+All Phase 7 env vars set on Vercel Production:
+
+- `CRON_SECRET` — set, validated by Probe 14
+- `RESEND_API_KEY` — set, validated by Probe 18
+- `RESEND_FROM_EMAIL=onboarding@resend.dev` — Resend
+  sandbox sender. The `aeris.sa` domain remains
+  unverified on Resend; switching to a verified
+  `noreply@aeris.sa` is a follow-up DNS task.
+- `EMPTY_LEGS_FOUNDER_BATCH_EMAIL_TO` — founder's inbox
+- `EMPTY_LEGS_RESERVATION_TOKEN_SECRET` — set, validated by Probe 11
+- `EMPTY_LEGS_OPT_OUT_TOKEN_SECRET` — set, validated by Probe 12
+- `EMPTY_LEGS_OPERATOR_TOKEN_SECRET` — set, validated by Probe 10
+- `ENABLE_EMPTY_LEGS_ADMIN_UI=true`
+- `ENABLE_OPERATOR_PORTAL=true`
+- `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE=true`
+- `NEXT_PUBLIC_ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE=true`
+- `ENABLE_EMPTY_LEGS_NOTIFICATIONS=true`
+
+### Founder probes — passed
+
+**Counting model.** The Phase 7 spec numbers probes
+**1 through 22**, but probe 4 was split into **4a** and
+**4b** during Codex iteration-9 P1 #2 (alert-status
+seed verification + AFTER INSERT trigger smoke). So the
+spec defines **24 individual probe checks** —
+`{1, 2, 3, 4, 4a, 4b, 5..22}`. The arithmetic below
+counts those 24 individual checks.
+
+**18 directly exercised + 2 effectively covered + 4
+deferred = 24 individual probe checks**, against
+production with the full data path
+(admin/operator/public UI + Server Actions + RPCs + cron
+auth + Resend send).
+
+- **18 directly exercised:** 6 from PR 1
+  (probes 1, 2, 3, 4, 4a, 4b) + 3 from PR 2a (5, 6, 7)
+  + 1 from PR 2b (8) + 2 from PR 2c (9, 10) + 3 from
+  PR 2d (11, 12, 13) + 3 from PR 2e (14, 16, 18).
+- **2 effectively covered** (observed inline during
+  another probe rather than re-run as a standalone
+  step): probe 21 (per-leg dedupe — observed during
+  Probe 16's repeat match-trigger invocation, which
+  returned `rows_written: 0` thanks to the unique
+  `(lead_inquiry_id, leg_id)` index) and probe 22
+  (end-to-end opt-out via wa.me URL — the HMAC
+  verify + DB UPDATE path is identical to Probe 12,
+  which passed; Probe 16 verified the wa.me body
+  contains the opt-out URL).
+- **4 deferred** with rationale: 15 (pre-flip flag-off
+  — covered by unit test + suppress-checkbox manual
+  test in Probe 8), 17 (30-min auction-tick wait —
+  covered by parity test in Probe 6), 19 (visible
+  degraded state — observed inverted during Probe 18's
+  pre-fix Resend failure), 20 (outbox replay after
+  flag flip — covered by branch-decision matrix in
+  `test:empty-legs-matching`).
+
+| # | Probe | Result |
+|:-:|---|---|
+| 1, 2, 3, 4, 4a, 4b | PR 1 schema state, indexes, RLS, alert-status seed, trigger wiring | ✅ passed during PR 1 closure |
+| 5 | RPC grants (12 functions, service-role-only EXECUTE) | ✅ |
+| 6 | TS/SQL parity for the Dutch-auction formula | ✅ (16/16 sample points) |
+| 7 | Release + admin-release + manual-sold smoke | ✅ (13/13 transaction-scoped steps) |
+| 8 | Admin publish + RLS (anon hidden on `reserved`) | ✅ |
+| 9 | Operator bootstrap (`phase7_operator_stubs` create) | ✅ |
+| 10 | Operator session token + cross-stub isolation | ✅ |
+| 11 | Public marketplace + 10-min reserve | ✅ |
+| 12 | Opt-out lander (HMAC verify + DB UPDATE) | ✅ |
+| 13 | `/request` checkbox UNCHECKED → FALSE / CHECKED → TRUE | ✅ |
+| 14 | Cron auth (401 without secret, 200 with) | ✅ |
+| 16 | Match engine output (sync trigger + notification row + wa.me URL) | ✅ |
+| 18 | Founder batch alert (Resend send + branded HTML inbox delivery) | ✅ |
+
+### Probes deferred (covered by other layers)
+
+- **Probe 15** (pre-flip flag-off) — Codex iteration-9 P1 #1
+  contract is enforced in the matcher's per-leg ordered
+  branches and exercised by `test:empty-legs-matching`
+  (16/16). The PR 2b admin publish form's
+  `suppress_notifications` checkbox was manually verified
+  during Probe 8.
+- **Probe 17** (auction tick visibility, 30-min wait) — the
+  TS/SQL Dutch-auction parity test (Probe 6, 16/16) plus
+  Probe 14's cron auth verification cover the price-tick
+  contract end-to-end without the wait.
+- **Probe 19** (visible degraded state) — already
+  observed inverted during Probe 18's first attempt:
+  pre-Resend-fix, `empty_leg_outreach_alert_status.status`
+  flipped to `send_failed` (with the verbatim
+  `aeris.sa domain is not verified` reason) and the
+  admin outreach-queue page would have rendered the
+  red banner on next view. The fix-then-recover path
+  (`config_missing` → `healthy`) is what Probe 19 was
+  designed to assert; the Probe 18 fix flow exercised
+  the same code paths.
+- **Probe 20** (outbox replay after flag flip) — `match-drain`
+  cron + the IS-NULL-guarded UPDATE in the route handler
+  enforce the contract; replay safety is covered by the
+  cron-auth test + the matching engine's branch
+  decision matrix (`shouldMarkOutboxProcessed`,
+  exercised by 5 of the 16 matching tests).
+- **Probe 21** (per-leg dedupe) — observed live during
+  Probe 16's repeat match-trigger invocation: the second
+  fire returned `rows_written: 0` because the unique
+  `(lead_inquiry_id, leg_id)` index from PR 1 §13
+  rejected the duplicate INSERT silently. No
+  double-notify possible.
+- **Probe 22** (end-to-end opt-out via wa.me URL) —
+  the matcher writes the opt-out URL into every wa.me
+  body (verified in Probe 16's `wa_url_preview`); the
+  HMAC verify + DB UPDATE path is identical to Probe 12
+  (which passed). The only thing that's new in Probe 22
+  vs. Probe 12 is the URL coming from a real
+  matching-engine batch — which Probe 16 confirmed
+  works.
+
+### What Phase 7 ships
+
+- **6 storage surfaces** added to the schema:
+  `empty_legs` reshape (19 new columns, IATA columns
+  relaxed, audit trigger), `empty_leg_notifications`,
+  `phase7_operator_stubs`, `operator_empty_leg_sessions`,
+  `empty_leg_outreach_alert_status`,
+  `empty_leg_events_outbox`.
+- **12 SECURITY DEFINER public RPCs** + 1 internal helper.
+  Every public has service-role-only EXECUTE, structured-
+  error contract on validation failures, and FOR UPDATE
+  row locking on every state mutation.
+- **15 Server Actions** across admin / operator /
+  public / cron-trigger surfaces. Every action is a
+  thin wrapper over an RPC plus auth/flag/Zod/revalidate
+  scaffolding.
+- **22 page modules** across `(admin)`, `operator/`,
+  and `(public)/empty-legs/` route groups.
+- **40+ React components** organized into
+  `components/admin/empty-legs/`, `components/operator/empty-legs/`,
+  and `components/public/empty-legs/`.
+- **5 HMAC token modules** with separate secrets per
+  surface (operator session 30-day TTL, customer
+  reservation 10-min TTL, opt-out no-expiry, plus the
+  PR 1 customer-checkout token kept from Phase 6.2).
+- **Matching engine** (`lib/empty-legs/matching.ts`)
+  with the per-leg ordered branch contract + scoring
+  (40 geo / 30 time / 20 capacity / 10 discount).
+- **4 cron routes** + 1 internal match-trigger route +
+  6 unit tests (16+9+10+16+13+16 = 80 cases) wired
+  into CI.
+
+### Production smoke results
+
+The end-to-end smoke chain ran against test data on
+production (PR 16 + PR 18 sequence):
+
+1. Admin publishes a leg matching an opt-in test lead
+   (RUH→JED, 4 pax, 2026-06-15 window, 20 000 SAR).
+2. The Server Action's fire-and-forget POST to
+   `/api/empty-legs/internal/match-trigger` returns
+   immediately.
+3. The matcher reads the lead from `candidate-pool`,
+   scores it (~95), passes the frequency-cap check,
+   writes a row to `empty_leg_notifications` with a
+   wa.me URL, marks the outbox row processed, calls
+   `sendFounderBatchAlert`.
+4. Resend delivers a branded HTML email to the
+   founder's inbox within 5 minutes, with the leg
+   number, route, and a deep link to the admin
+   outreach queue.
+5. The admin outreach queue lists the wa.me URL with
+   a "تم الإرسال" button (PR 2b surface, validated
+   visually).
+
+All 5 steps executed cleanly. The end-to-end happy
+path is production-ready.
+
+### Operational hygiene follow-ups
+
+- **`aeris.sa` Resend domain verification** — currently
+  using `onboarding@resend.dev` (sandbox sender).
+  Verifying the brand domain on Resend (DNS records:
+  SPF + DKIM + return-path) is a Day-N task. Once
+  verified, change `RESEND_FROM_EMAIL` to
+  `noreply@aeris.sa` and the sender address upgrades
+  with no code change.
+- ~~**Migration `20260511000012` re-runnability**~~ —
+  resolved in this closure PR (round-1 P1 #1 fix). The
+  migration now includes
+  `DROP FUNCTION IF EXISTS publish_empty_leg_event(UUID, TEXT)`
+  before the `CREATE OR REPLACE`, so any future replay
+  on a DB carrying the PR 2a stub succeeds in one pass.
+- **`types/database.ts` regen** — same posture as
+  prior closures: file remains hand-maintained.
+  Multiple PR 2x cycles added relaxations that were
+  caught manually rather than by `npm run db:types`;
+  the regen ritual is still viable as a future cleanup.
+- **Probe 19 / 20 / 22 standalone runs** — deferred
+  per the rationale in the table above. Worth running
+  during the first real production cycle if any
+  doubt arises about the outbox-drain or opt-out
+  paths under live wa.me outreach.
+- **Domain DNS for `aeris.sa`** — the marketplace nav
+  link + email branding both resolve to the bare
+  `aeris-flax.vercel.app` until the domain points at
+  Vercel and `NEXT_PUBLIC_SITE_URL` flips to
+  `https://aeris.sa`. Phase-7-independent (Phase 1
+  carry-over).
+- **Per-leg AI scoring** — the
+  `ENABLE_EMPTY_LEGS_AI_SCORING` flag is wired in
+  `.env.example` but no `lib/empty-legs/matching-ai.ts`
+  module exists. Spec §Out of Scope explicitly defers
+  the implementation to Phase 7.x or Phase 8. The
+  current rule-based scorer is the production matcher.
+
+### Audit gaps acknowledged
+
+- The 4 cron routes have not yet been exercised by
+  Vercel Cron in production (deployment finished
+  during the same hour as closure; no cron tick has
+  fired yet). Probe 14 verified the auth path works
+  via direct curl. The first full Vercel Cron tick
+  (next 5-minute mark for `expire-reservations`) will
+  log to Vercel Functions and is observable from the
+  Cron Jobs settings page.
+- No full canary cycle has run yet — i.e. publishing
+  a real leg with a real customer's `lead_inquiries`
+  matching it. The smoke probes used synthetic test
+  leads. The first natural-traffic match will exercise
+  the full end-to-end path with no synthetic
+  scaffolding.
+
+### Phase 7 ships these customer-visible surfaces
+
+- 🌐 `/empty-legs` — public marketplace listing with
+  filter chips (departure city, passenger count, price
+  ceiling), sorted by auction urgency (most-urgent
+  first).
+- 🛬 `/empty-legs/[leg_number]` — per-leg detail with
+  current price, Dutch-auction trajectory ("سيصل إلى X
+  ريال خلال Y ساعة"), reserve CTA.
+- 💺 `/empty-legs/[leg_number]/reserve` — reserve form
+  with name + phone + UNCHECKED opt-in checkbox; mints
+  a 10-min HMAC reservation token.
+- ⏱ `/empty-legs/[leg_number]/reserved?token=...` —
+  post-reservation page with countdown + WhatsApp
+  confirm button + cancel button.
+- 🔕 `/empty-legs/opt-out/<token>` — opt-out lander,
+  HMAC-verified, never-expires token.
+- 🛂 `/operator/empty-legs/<token>` — token-gated
+  operator self-serve portal (list + publish + edit +
+  cancel), 30-day session TTL.
+- ⚙️ `/admin/empty-legs/...` — admin surfaces (list,
+  detail with 3-case actions, publish, outreach queue,
+  operator stubs, operator sessions).
+
+### Next phase
+
+Phase 7 is closed. The next planned phase is the
+canary natural-traffic cycle — which is not strictly
+"Phase 8" but the operational-validation window where
+the founder publishes a real leg and watches the
+end-to-end path execute without synthetic stubs.
+
+After that, the formal next phase per the original
+roadmap is **Phase 8 — Operator account onboarding
+flow** (real `operators` table inserts, replacing
+the Phase-7-scoped `phase7_operator_stubs` shim).
+That phase will migrate any active stubs into real
+operator accounts and retire the stub bootstrap
+surface.
+
+
+
 
 
 

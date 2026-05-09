@@ -88,7 +88,19 @@ ALTER TABLE empty_leg_events_outbox
 -- Called by `publish_empty_leg`, `update_empty_leg_price`,
 -- `tick_empty_leg_dutch_auction` (PR 2a) — those callers
 -- have not changed; only the body is replaced here.
+--
+-- Phase 7 closure round-1 P1 #1 fix: PR 2a's stub declared
+-- `RETURNS VOID`; this PR 2e body declares `RETURNS JSON`.
+-- PostgreSQL rejects return-type changes through
+-- `CREATE OR REPLACE`, so we must `DROP FUNCTION IF EXISTS`
+-- first. The DROP is idempotent + safe to run on a fresh
+-- database (no-op if the function never existed). This
+-- makes the migration replayable on any DB state — staging
+-- restore, disaster recovery, or a Phase-6.2-era snapshot
+-- can replay the full Phase 7 sequence in one pass.
 -- ============================================================
+
+DROP FUNCTION IF EXISTS publish_empty_leg_event(UUID, TEXT);
 
 CREATE OR REPLACE FUNCTION publish_empty_leg_event(
   p_leg_id     UUID,
