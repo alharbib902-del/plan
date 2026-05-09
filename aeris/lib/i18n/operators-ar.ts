@@ -155,5 +155,14 @@ export const operatorsAr = {
     confirmPrompt:
       'سيتم نقل جميع الرحلات إلى المشغّل المختار وأرشفة سجلّ Phase 7. لا يمكن التراجع عن هذا الإجراء.',
     noLegs: 'لا توجد رحلات مرتبطة بهذا السجلّ.',
+    // Stub-list discovery surface (Codex round 3 PR #41 P2 fix):
+    // the Phase 7 stub list now exposes a "Convert" link per row
+    // so admin can reach the Phase 8 convert page from the
+    // approved-operator detail CTA AND from the stub list itself.
+    rowConvertLink: 'تحويل إلى مشغّل',
+    convertModeBanner: (operatorName: string) =>
+      `اختر سجلّ Phase 7 لتحويل رحلاته إلى المشغّل: ${operatorName}.`,
+    convertModeBannerNoName:
+      'اختر سجلّ Phase 7 لتحويل رحلاته إلى المشغّل المحدّد في الرابط.',
   },
 } as const;
