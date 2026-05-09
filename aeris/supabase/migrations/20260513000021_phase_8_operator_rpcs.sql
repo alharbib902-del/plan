@@ -1626,53 +1626,84 @@ GRANT EXECUTE ON FUNCTION consume_operator_welcome_token(VARCHAR, VARCHAR, BOOLE
 --   - All publics SET search_path = public, pg_temp
 --
 -- Founder probes (per spec §4 founder probes 5-8):
---   5. RPC grants — exact allowlist (Codex round-5 P2 fix on
---      PR 2a: split into helpers; round-6 P2 fix: switched
---      from a name pattern to an exact proname IN (...) list
---      because the prior wildcard *operator* matched older
---      functions outside the PR 2a surface — submit_phase4_
---      operator_offer, submit_phase5_operator_offer, and
---      operators_audit_trigger — inflating the row count
---      beyond the documented 19).
+--   5. RPC grants — exact allowlist + ACL semantic check
+--      (Codex round-5 P2 fix: split into helpers; round-6
+--      P2 fix: switched to exact proname IN (...); round-7
+--      P2 fix: tighten the ACL semantics — `proacl IS NULL`
+--      means DEFAULT privileges, and the function default is
+--      EXECUTE granted to PUBLIC. So a helper whose REVOKE
+--      silently failed would still report `acl IS NULL` and
+--      look "clean" while being callable by anyone. Use
+--      aclexplode(coalesce(proacl, acldefault('f', proowner)))
+--      to materialize the EFFECTIVE grants and filter out the
+--      owner's implicit EXECUTE).
 --
 --      The single audit query that asserts the EXACT PR 2a
 --      surface + grants in one pass:
 --
---        SELECT p.proname,
---               array_to_string(p.proacl, ',') AS acl
---          FROM pg_proc p
---          JOIN pg_namespace n ON n.oid = p.pronamespace
---          WHERE n.nspname = 'public'
---            AND p.proname IN (
---              -- 17 PR 2a publics
---              'operator_signup',
---              'operator_login_lookup',
---              'operator_login_create_session',
---              'operator_logout',
---              'operator_session_validate',
---              'admin_approve_operator',
---              'admin_reject_operator',
---              'admin_suspend_operator',
---              'admin_unsuspend_operator',
---              'admin_set_operator_documents',
---              'admin_reset_operator_password',
---              'mint_operator_password_reset_token',
---              'verify_operator_password_reset',
---              'mint_operator_otp',
---              'verify_operator_otp',
---              'convert_phase7_stub_to_operator',
---              'consume_operator_welcome_token',
---              -- 2 PR 2a helpers
---              '_normalize_operator_email',
---              '_is_sha256_hex'
+--        SELECT
+--          p.proname,
+--          CASE
+--            WHEN p.proname LIKE '\_%' ESCAPE '\' THEN 'helper'
+--            ELSE 'public'
+--          END AS kind,
+--          (
+--            SELECT STRING_AGG(
+--              CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+--                   ELSE r.rolname
+--              END || ':' || a.privilege_type,
+--              ', ' ORDER BY 1
 --            )
---          ORDER BY p.proname;
+--            FROM aclexplode(
+--              COALESCE(p.proacl, acldefault('f', p.proowner))
+--            ) AS a
+--            LEFT JOIN pg_roles r ON r.oid = a.grantee
+--            WHERE a.grantee <> p.proowner
+--          ) AS non_owner_grants
+--        FROM pg_proc p
+--        JOIN pg_namespace n ON n.oid = p.pronamespace
+--        WHERE n.nspname = 'public'
+--          AND p.proname IN (
+--            -- 17 PR 2a publics
+--            'operator_signup',
+--            'operator_login_lookup',
+--            'operator_login_create_session',
+--            'operator_logout',
+--            'operator_session_validate',
+--            'admin_approve_operator',
+--            'admin_reject_operator',
+--            'admin_suspend_operator',
+--            'admin_unsuspend_operator',
+--            'admin_set_operator_documents',
+--            'admin_reset_operator_password',
+--            'mint_operator_password_reset_token',
+--            'verify_operator_password_reset',
+--            'mint_operator_otp',
+--            'verify_operator_otp',
+--            'convert_phase7_stub_to_operator',
+--            'consume_operator_welcome_token',
+--            -- 2 PR 2a helpers
+--            '_normalize_operator_email',
+--            '_is_sha256_hex'
+--          )
+--        ORDER BY kind, p.proname;
 --
---      Expect EXACTLY 19 rows:
---        - 17 publics: acl contains service_role= grant
---        - 2 helpers: acl is empty (NULL or {})
---      A row count <19 means a function is missing; >19 is
---      impossible because the IN list is closed.
+--      Expect EXACTLY 19 rows with the following invariants:
+--        - 17 'public' rows:
+--            non_owner_grants = 'service_role:EXECUTE' EXACTLY
+--            (NO 'PUBLIC:EXECUTE', NO 'anon:EXECUTE',
+--             NO 'authenticated:EXECUTE')
+--        - 2 'helper' rows (_normalize_operator_email,
+--          _is_sha256_hex):
+--            non_owner_grants IS NULL EXACTLY
+--            (NO 'PUBLIC', NO 'anon', NO 'authenticated',
+--             NO 'service_role' — only the owner's implicit
+--             EXECUTE remains, which is filtered out)
+--      A row count <19 means a function is missing
+--      (regression). Any 'PUBLIC' / 'anon' / 'authenticated'
+--      string in non_owner_grants means a REVOKE silently
+--      failed AND the function is callable by anyone — fix
+--      the migration before opening Phase 8 to traffic.
 --   6. Approve smoke — INSERT pending operator + call
 --      admin_approve_operator + assert signup_status='approved'
 --   7. Login smoke — 5-step 2-step login flow with bcrypt
