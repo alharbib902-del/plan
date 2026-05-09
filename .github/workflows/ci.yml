@@ -83,6 +83,30 @@ jobs:
       - name: Empty Legs token roundtrip
         run: npm run test:empty-legs-token
 
+      # Phase 7 PR 2e: matching engine pure-scoring parity.
+      # Asserts the scoring formula stays deterministic at
+      # fixed sample points + the per-leg branch decision
+      # (suppress / disabled / candidates) marks the outbox
+      # row correctly.
+      - name: Empty Legs matching scoring
+        run: npm run test:empty-legs-matching
+
+      # Phase 7 PR 2e: frequency-cap pure-logic parity.
+      # Mirrors the contract shipped in
+      # lib/empty-legs/frequency-cap.ts against fixture
+      # rows (no DB). Catches drift between the spec
+      # contract and the actual cap behavior.
+      - name: Empty Legs frequency cap
+        run: npm run test:empty-legs-frequency-cap
+
+      # Phase 7 PR 2e: shared cron-auth helper. Backs the
+      # 3 cron routes + the internal match-trigger route;
+      # a regression here would let unauthorized callers
+      # drain the outbox / expire reservations / push
+      # ticks.
+      - name: Empty Legs cron auth
+        run: npm run test:empty-legs-cron-auth
+
       - name: Type-check
         run: npm run type-check
 

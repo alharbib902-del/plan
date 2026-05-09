@@ -5885,4 +5885,253 @@ founder-batch alert email. Per the canary plan, both
 notifications + public flags flip simultaneously after
 internal-only test legs validate the flag-off path.
 
+## Phase 7 — PR 2e (Matching engine + cron + notifications)
+
+Phase 7's **final application PR**. Ships the
+operational backbone of Empty Legs: the candidate-pool
++ scoring matcher, the 3 Vercel cron routes
+(dutch-auction-tick / expire-reservations /
+expire-windows), the synchronous match-trigger fire-and-
+forget from publish actions, the wa.me URL emission to
+the outreach queue, and the founder batch alert email.
+
+PR 2e is the only Phase-7 PR after PR 1 that ships a
+**migration**. The migration adds:
+  - `empty_leg_events_outbox` table (durable per-event
+    record so the sync trigger and cron drain converge
+    to the same processed/unprocessed state)
+  - real body for `publish_empty_leg_event` (was a no-op
+    stub in PR 2a; now INSERTs to the outbox)
+  - the 12th SECURITY DEFINER public
+    `expire_empty_leg_window` (called only by the
+    expire-windows cron)
+
+### Per-leg ordered branch contract (Codex iteration-10 P1 #1)
+
+The matcher iterates outbox `leg_ids` and applies these
+branches in order, **per leg**:
+
+  1. **Suppress-notifications** (always runs). If
+     `empty_legs.suppress_notifications = TRUE` →
+     `{ skipped: 'suppress_notifications' }` AND outbox
+     row is marked `processed_at = NOW()` (intentional
+     skip; replay would be wrong).
+
+  2. **Notifications-disabled flag** (only for
+     non-suppressed legs). If
+     `process.env.ENABLE_EMPTY_LEGS_NOTIFICATIONS !== 'true'`
+     → `{ skipped: 'notifications_disabled' }` AND outbox
+     row stays `processed_at = NULL` (replays after the
+     flag flips back).
+
+  3. **Candidate matching** (only for non-suppressed legs
+     with the flag enabled). Reads candidate-pool, scores
+     against the leg, filters via frequency-cap, takes
+     top 50, writes `empty_leg_notifications` rows +
+     triggers founder batch alert. On success → outbox
+     row marked processed.
+
+The order matters for canary cycles where suppressed
+test legs mix with real legs published mid-flag-flip.
+
+### Files added (17)
+
+| Path | Purpose |
+|---|---|
+| `supabase/migrations/20260511000012_phase_7_empty_legs_match_event.sql` | Outbox table + RPC body replacement + 12th public RPC. |
+| `lib/empty-legs/score-weights.ts` | Pure constants (GEO 40 / TIME 30 / CAPACITY 20 / DISCOUNT 10, sum = 100). |
+| `lib/empty-legs/candidate-pool.ts` | `listEligibleCandidates()` — opt-in TRUE + 90-day cutoff + 24h cap pre-filter. |
+| `lib/empty-legs/frequency-cap.ts` | 24h rate cap + per-leg dedupe via `empty_leg_notifications` reads. |
+| `lib/empty-legs/matching.ts` | Per-leg ordered branch contract + scoring + `shouldMarkOutboxProcessed`. |
+| `lib/empty-legs/notifications.ts` | wa.me URL composer + outreach-queue writer + founder-batch trigger. |
+| `lib/empty-legs/founder-batch-email.ts` | Resend send + visible-degraded-state singleton update (alert-status table). |
+| `lib/empty-legs/notification-templates/leg-published-whatsapp.ts` | Pure Arabic-RTL prefilled body for `published`. |
+| `lib/empty-legs/notification-templates/leg-price-dropped-whatsapp.ts` | Same shape, urgency framing for `price_dropped`. |
+| `lib/empty-legs/notification-templates/founder-batch-email.ts` | HTML composition for the founder batch alert (reuses lead-email's brand template). |
+| `lib/empty-legs/cron-auth.ts` | Shared `verifyCronAuth` + `unauthorizedJsonResponse` helpers. |
+| `lib/empty-legs/match-trigger-fire.ts` | Synchronous fire-and-forget POST helper used by publish Server Actions. |
+| `lib/empty-legs/__tests__/matching.test.ts` | 16 cases — scoring formula at fixed sample points + branch decision matrix. |
+| `lib/empty-legs/__tests__/frequency-cap.test.ts` | 9 cases — pure-logic re-implementation against fixture rows. |
+| `app/api/empty-legs/__tests__/cron-auth.test.ts` | 10 cases — header/secret variants for the shared auth helper. |
+| `app/api/cron/empty-legs/dutch-auction-tick/route.ts` | 30-min cron — claims `available` legs older than 30min and ticks the auction. |
+| `app/api/cron/empty-legs/expire-reservations/route.ts` | 5-min cron — flips expired reservations back to `available`. |
+| `app/api/cron/empty-legs/expire-windows/route.ts` | Hourly cron — flips legs past `auction_window_end_at` to `expired`. |
+| `app/api/empty-legs/internal/match-trigger/route.ts` | Internal POST — runs matcher + marks outbox per branch decision. |
+
+### Files edited (7)
+
+| Path | Change |
+|---|---|
+| `types/database.ts` | Added `EmptyLegEventType`, `EmptyLegEventsOutboxRow/Insert/Update`, `ExpireEmptyLegWindowArgs/Result`. Tightened `PublishEmptyLegEventResult` from `null` to a structured `{ ok, leg_id }` / `{ ok, error }` shape (the body is real now). Registered `empty_leg_events_outbox` table + `expire_empty_leg_window` function in the Database map. |
+| `lib/empty-legs/types.ts` | Re-exports the 4 new outbox/window types. |
+| `app/actions/empty-legs.ts` | `adminPublishEmptyLeg` now fires `match-trigger-fire` after a successful `publish_empty_leg` RPC. |
+| `app/actions/operator-empty-legs.ts` | `operatorPublishEmptyLeg` does the same. |
+| `package.json` | 3 new test scripts: `test:empty-legs-matching`, `test:empty-legs-frequency-cap`, `test:empty-legs-cron-auth`. |
+| `.github/workflows/ci.yml` | 3 new CI steps wired before type-check / build / lint. |
+| `vercel.json` | 3 cron entries (`*/30`, `*/5`, `0 *`). |
+| `.env.example` | `CRON_SECRET` description tightened to mention the synchronous fire-and-forget caller. |
+
+### The 4 new API routes
+
+| Path | Method | Schedule | Purpose |
+|---|---|---|---|
+| `/api/cron/empty-legs/dutch-auction-tick` | GET | `*/30 * * * *` | Tick `tick_empty_leg_dutch_auction(leg_id)` for every `available` leg older than 30min |
+| `/api/cron/empty-legs/expire-reservations` | GET | `*/5 * * * *` | Call `expire_empty_leg_reservation(leg_id)` for expired holds |
+| `/api/cron/empty-legs/expire-windows` | GET | `0 * * * *` | Call `expire_empty_leg_window(leg_id)` for legs past their auction window |
+| `/api/empty-legs/internal/match-trigger` | POST | n/a (sync + cron drain) | Run matcher + mark outbox per branch decision |
+
+All four require `Authorization: Bearer $CRON_SECRET`
+(verified by `verifyCronAuth`). Vercel Cron sets the
+header automatically when invoking scheduled routes.
+The synchronous match-trigger fire-and-forget from
+publish actions also passes the same secret.
+
+### Visible degraded state on missing config (Codex iteration-5 P2 #2)
+
+The founder-batch email module updates the
+`empty_leg_outreach_alert_status` singleton on every
+attempt:
+  - missing config → `status = 'config_missing'`
+  - send failure  → `status = 'send_failed'`
+  - success       → `status = 'healthy'`
+
+The admin `/admin/empty-legs/outreach-queue` page reads
+this singleton on every render and renders a red
+Arabic-RTL banner when status `<> 'healthy'` — that
+surface was already wired in PR 2b.
+
+### Quality gates run locally
+
+All passed:
+
+- `npm run type-check` — clean.
+- `npm run lint:strict` — clean.
+- `npm run build` — green; 4 new API routes + the
+  existing 14 routes compile.
+- `npm run test:empty-legs-matching` — 16/16 (new).
+- `npm run test:empty-legs-frequency-cap` — 9/9 (new).
+- `npm run test:empty-legs-cron-auth` — 10/10 (new).
+- `npm run test:empty-legs-token` — 13/13 (regression).
+- `npm run test:empty-legs-curve` — 16/16 (regression).
+- `npm run test:addons` — Phase 6.2 regression pass.
+- `npm run test:checkout-whatsapp` — 8/8 (regression).
+- `npm run test:checkout-site-url` — 16/16 (regression).
+
+Two deviations from the literal `import 'server-only'`
+discipline (carried from PR 2d): the Layer-1 matching
++ frequency-cap tests run under tsx outside Next.js
+where `'server-only'` is not resolvable. Replaced the
+imports with a `Server-side ONLY` comment; the surface
+contract is enforced at the call site (every consumer
+is a Server Action or API route under `app/`).
+
+### Founder probes (run by founder against production after PR 2e merges)
+
+PR 2e ships the most probes of any Phase-7 PR — 9
+probes, numbered 14 through 22 per spec §Founder Probes
+(after iteration-11's renumbering). The full list lives
+in `docs/CLAUDE-TASK.md` §Founder Probes; quick
+reference:
+
+- **14:** Cron auth — 401 without `$CRON_SECRET`, 200 with.
+- **15:** Pre-flip flag-off assertion — publish a
+  `suppress_notifications=TRUE` leg with both flags
+  off; verify zero `empty_leg_notifications` rows + outbox
+  `processed_at` non-NULL (suppression branch).
+- **16:** Match engine output (post-flip) — published
+  leg generates `empty_leg_notifications` rows within
+  1 minute via the synchronous trigger.
+- **17:** Auction tick visibility — wait 30 minutes after
+  publish; verify the marketplace shows a new lower
+  price + an outbox row with `event_type = 'price_dropped'`.
+- **18:** Founder batch alert (gate-failing) — must
+  receive a real Resend email; if not, PR 2e cannot be
+  marked smoke-passed.
+- **19:** Visible degraded state — break the Resend
+  config; verify the admin outreach queue page shows
+  the red banner.
+- **20:** Outbox replay — flip notifications off, publish
+  a non-suppressed leg, verify outbox stays
+  `processed_at = NULL`; flip back on, wait for the next
+  cron drain, verify the matcher runs and rows land.
+- **21:** Per-leg dedupe — re-publish via match-trigger;
+  verify the unique `(lead_inquiry_id, leg_id)` index
+  rejects duplicates without raising to the user.
+- **22:** End-to-end opt-out via wa.me URL — open a real
+  matching-engine-emitted opt-out URL; verify the
+  lander + DB UPDATE.
+
+### Branch + PR
+
+- Branch: `phase-7/pr-2e-matching` (worktree)
+- PR URL: pending (filled after `gh pr create`)
+- CI run URL: pending
+
+### Pre-merge env requirements (production)
+
+- `CRON_SECRET` (`openssl rand -hex 32`) — required for
+  every cron route + the synchronous match-trigger
+  fire-and-forget.
+- `RESEND_API_KEY` — already present from Phase 2;
+  required for the founder batch alert.
+- `EMPTY_LEGS_FOUNDER_BATCH_EMAIL_TO` — optional override;
+  defaults to `LEAD_NOTIFICATION_TO`.
+- `ENABLE_EMPTY_LEGS_NOTIFICATIONS=true` — only flip
+  AFTER the canary plan validates the flag-off + suppress
+  paths (Probe 15). Per spec §Rollout safety, this flag
+  flips simultaneously with
+  `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE`.
+
+Migration must apply BEFORE the code deploys. The
+synchronous match-trigger fire posts to the new internal
+route, which expects the outbox table to exist. Without
+the migration the publish flow would still succeed (the
+RPC's INSERT raises and the publish itself rolls back) —
+but Probe 15 cannot pass.
+
+### Scheduling deviation — Vercel Hobby blocks per-minute cron
+
+The original spec listed `vercel.json` cron entries for the
+4 routes (`*/30`, `*/5`, hourly, `*/30`). The first deploy
+of PR 2e to production failed because **Vercel Hobby plan
+limits cron expressions to once per day**; expressions that
+would run more frequently fail at deployment time. The 4
+business contracts (5-min reservation expiry, 30-min auction
+tick, etc.) cannot be downgraded to once-daily without
+breaking the spec — a held leg expiring after 24h instead
+of 10min is not a viable customer experience.
+
+Resolution: shipped PR 2e WITHOUT the `vercel.json` cron
+entries so the deploy succeeds. The 4 routes themselves are
+fully implemented and ready; pick ONE of the following
+before flipping `ENABLE_EMPTY_LEGS_NOTIFICATIONS = true`:
+
+1. **Vercel Pro ($20/mo)** — re-add the 4 cron entries
+   from PR #33's git history. Per-minute scheduling
+   unlocks immediately.
+2. **External scheduler** (cron-job.org / EasyCron /
+   GitHub Actions schedule) — call each route via GET
+   with `Authorization: Bearer <CRON_SECRET>` at the
+   schedule documented in the route's docstring.
+   `cron-job.org` is free with per-minute precision.
+3. **Manual invocation** for a smoke window — `curl` each
+   route by hand. Not viable for steady production use.
+
+All four routes are idempotent (IS NULL guards on outbox +
+reservation columns), so any scheduler choice is safe under
+overlapping invocations. Founder Probe 14 (cron auth)
+already verifies the routes reject missing/wrong secret;
+the scheduler choice does not affect the auth contract.
+
+`.env.example`'s `CRON_SECRET` block carries the same
+documentation for the next maintainer.
+
+### Phase 7 closure
+
+PR 2e is the **final application PR** of Phase 7. After
+PR 2e merges + the migration applies + the 9 founder
+probes pass, Phase 7 is ready for closure.
+
+
+
 

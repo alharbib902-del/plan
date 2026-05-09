@@ -1101,6 +1101,27 @@ export type EmptyLegOutreachAlertStatusUpdate = Partial<
   Omit<EmptyLegOutreachAlertStatusRow, 'id'>
 >;
 
+// --- empty_leg_events_outbox (PR 2e migration §1) ---
+
+export type EmptyLegEventType = 'published' | 'price_dropped';
+
+export type EmptyLegEventsOutboxRow = {
+  id: string;
+  leg_id: string;
+  event_type: EmptyLegEventType;
+  emitted_at: string;
+  processed_at: string | null;
+};
+
+export type EmptyLegEventsOutboxInsert = {
+  leg_id: string;
+  event_type: EmptyLegEventType;
+};
+
+export type EmptyLegEventsOutboxUpdate = Partial<
+  Pick<EmptyLegEventsOutboxRow, 'processed_at'>
+>;
+
 // ============================================================================
 // Phase 7 PR 2a: SECURITY DEFINER RPC layer
 //
@@ -1357,7 +1378,26 @@ export type PublishEmptyLegEventArgs = {
 // `RETURNS VOID` in plpgsql; supabase-js types these as
 // `null`. PR 2e replaces the body with the outbox-write
 // logic but keeps the same signature + return type.
-export type PublishEmptyLegEventResult = null;
+//
+// Phase 7 PR 2e UPDATE: the body is now a real INSERT into
+// `empty_leg_events_outbox`. Args/result shapes unchanged for
+// backwards compatibility with PR 2a callers
+// (publish_empty_leg, update_empty_leg_price,
+// tick_empty_leg_dutch_auction). Result is now a structured
+// json object instead of `null`.
+export type PublishEmptyLegEventResult =
+  | { ok: true; leg_id: string }
+  | { ok: false; error: 'event_type_invalid' | 'leg_not_found' };
+
+// --- 12. expire_empty_leg_window (PR 2e migration §3) ---
+
+export type ExpireEmptyLegWindowArgs = {
+  p_leg_id: string;
+};
+
+export type ExpireEmptyLegWindowResult =
+  | { ok: true; leg_id: string; no_op?: boolean }
+  | { ok: false; error: 'leg_not_found' };
 
 export type Database = {
   __InternalSupabase: {
@@ -1520,6 +1560,15 @@ export type Database = {
         Update: EmptyLegOutreachAlertStatusUpdate;
         Relationships: [];
       };
+      // Phase 7 PR 2e: durable per-event outbox so the
+      // synchronous match-trigger and the cron drain
+      // converge to the same processed/unprocessed state.
+      empty_leg_events_outbox: {
+        Row: EmptyLegEventsOutboxRow;
+        Insert: EmptyLegEventsOutboxInsert;
+        Update: EmptyLegEventsOutboxUpdate;
+        Relationships: [];
+      };
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -1634,6 +1683,12 @@ export type Database = {
       publish_empty_leg_event: {
         Args: PublishEmptyLegEventArgs;
         Returns: PublishEmptyLegEventResult;
+      };
+      // Phase 7 PR 2e: 12th SECURITY DEFINER public, called
+      // exclusively by /api/cron/empty-legs/expire-windows.
+      expire_empty_leg_window: {
+        Args: ExpireEmptyLegWindowArgs;
+        Returns: ExpireEmptyLegWindowResult;
       };
     };
     CompositeTypes: { [_ in never]: never };

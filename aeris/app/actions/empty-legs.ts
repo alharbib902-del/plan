@@ -5,6 +5,7 @@ import { createHash } from 'crypto';
 
 import { requireAdminSession } from '@/lib/admin/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { fireAndForgetMatchTrigger } from '@/lib/empty-legs/match-trigger-fire';
 import {
   adminPublishEmptyLegSchema,
   adminUpdatePriceSchema,
@@ -166,6 +167,11 @@ export async function adminPublishEmptyLeg(input: {
   const result = data as PublishEmptyLegResult;
   revalidateAdminPaths();
   if (result.ok) {
+    // Codex iteration-2 P2 #1 + iteration-3 P1 #1 fix:
+    // synchronous match-trigger fire-and-forget. The
+    // matcher delivers wa.me URLs within seconds without
+    // blocking the publish form's response.
+    fireAndForgetMatchTrigger(result.leg_id);
     return {
       ok: true,
       leg_id: result.leg_id,
