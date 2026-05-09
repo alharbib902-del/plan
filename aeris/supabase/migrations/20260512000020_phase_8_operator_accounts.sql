@@ -203,13 +203,53 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_operators_auth_email_unique
 
 ALTER TYPE operator_status ADD VALUE IF NOT EXISTS 'rejected';
 
--- Rename the column. PostgreSQL automatically updates any
--- dependent index (idx_operators_status → idx_operators_signup_status
--- in the catalog) without an explicit re-create. The ENUM
--- type itself stays named `operator_status` — only the column
--- is renamed.
-ALTER TABLE operators
-  RENAME COLUMN status TO signup_status;
+-- Rename the column inside an idempotent guard so the migration
+-- is replayable on any DB state. After the first successful run
+-- the source column `status` no longer exists; an unconditional
+-- RENAME would raise on every subsequent re-apply (Codex round-1
+-- P1 fix on PR 1).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'operators'
+      AND table_schema = 'public'
+      AND column_name = 'status'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'operators'
+      AND table_schema = 'public'
+      AND column_name = 'signup_status'
+  ) THEN
+    ALTER TABLE operators RENAME COLUMN status TO signup_status;
+  END IF;
+END $$;
+
+-- The companion index `idx_operators_status` (created by the
+-- initial schema at 20260422000001_initial_schema.sql:170)
+-- continues to index the renamed column — PostgreSQL updates
+-- the index's stored definition + catalog dependencies, but
+-- does NOT rename the index object itself (Codex round-1 P2 fix
+-- on PR 1: prior comment incorrectly claimed an automatic
+-- rename). Rename the index explicitly for catalog clarity, also
+-- guarded so the migration stays replayable.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relname = 'idx_operators_status'
+      AND relkind = 'i'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relname = 'idx_operators_signup_status'
+      AND relkind = 'i'
+  ) THEN
+    ALTER INDEX idx_operators_status RENAME TO idx_operators_signup_status;
+  END IF;
+END $$;
+
+-- The ENUM type itself stays named `operator_status` — only the
+-- column + index are renamed.
 
 
 -- ============================================================

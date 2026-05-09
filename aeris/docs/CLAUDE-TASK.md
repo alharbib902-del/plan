@@ -377,13 +377,50 @@ renames the column atomically:
 -- any DB state (already-extended ENUM is a no-op).
 ALTER TYPE operator_status ADD VALUE IF NOT EXISTS 'rejected';
 
--- Rename the column. PostgreSQL automatically updates any
--- dependent index (idx_operators_status → idx_operators_signup_status
--- in the catalog) without an explicit re-create. The ENUM
--- type itself stays named operator_status — only the column
--- is renamed.
-ALTER TABLE operators
-  RENAME COLUMN status TO signup_status;
+-- Rename the column inside an idempotent guard so the
+-- migration is replayable on any DB state (Codex round-1
+-- P1 fix on PR 1: an unconditional RENAME would raise on
+-- every re-apply because the source column 'status' no
+-- longer exists after the first successful run).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'operators'
+      AND table_schema = 'public'
+      AND column_name = 'status'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'operators'
+      AND table_schema = 'public'
+      AND column_name = 'signup_status'
+  ) THEN
+    ALTER TABLE operators RENAME COLUMN status TO signup_status;
+  END IF;
+END $$;
+
+-- The companion index idx_operators_status (created by the
+-- initial schema at 20260422000001_initial_schema.sql:170)
+-- continues to index the renamed column — PostgreSQL updates
+-- the stored definition + catalog dependencies, but does NOT
+-- rename the index object itself (Codex round-1 P2 fix on
+-- PR 1: prior wording incorrectly claimed an automatic rename).
+-- Rename the index explicitly for catalog clarity, also
+-- guarded so the migration stays replayable.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relname = 'idx_operators_status'
+      AND relkind = 'i'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relname = 'idx_operators_signup_status'
+      AND relkind = 'i'
+  ) THEN
+    ALTER INDEX idx_operators_status RENAME TO idx_operators_signup_status;
+  END IF;
+END $$;
 ```
 
 No CHECK constraint is added — the ENUM type itself enforces
@@ -394,12 +431,20 @@ the 4-value invariant. After this block:
   - any INSERT/UPDATE with a value outside the ENUM raises
     `invalid input value for enum operator_status: ...`
     at the SQL boundary
+  - the catalog index name is `idx_operators_signup_status`
+    after the explicit ALTER INDEX RENAME
 
 PostgreSQL pre-12 required `ALTER TYPE ... ADD VALUE` to
 run outside a transaction. PostgreSQL 12+ (Supabase runs 15+)
 allows it inside a transaction block, so the migration can
 ship as a single atomic file. No special transaction wrapper
 required.
+
+Both DO blocks check `information_schema` / `pg_class` before
+mutating, so a re-apply on an already-migrated DB is a no-op
+on every statement (the spec's "every CREATE / ALTER is
+idempotent" promise from the §3 intro is now satisfied for
+RENAME as well).
 
 ### 3.5 New table `operator_sessions`
 
@@ -1966,3 +2011,10 @@ re-review of PR 1 sees an internally consistent spec + code pair.
 | P0 (would have failed at deploy) | "operators.status is the operator_status PostgreSQL ENUM, not TEXT + CHECK" | Verified against `20260422000001_initial_schema.sql:19,161`. The spec §3.4 DROP/ADD CONSTRAINT pattern would have been a no-op (no CHECK existed to drop) AND would have added a CHECK that PostgreSQL accepts but cannot enforce on an ENUM column, AND `'rejected'` would never have been admissible because the ENUM type itself only had 3 values. Round-6 patch: §3.4 rewritten to use `ALTER TYPE operator_status ADD VALUE IF NOT EXISTS 'rejected'` followed by `RENAME COLUMN status TO signup_status`. The ENUM is preserved (NOT converted to TEXT) — type-safety of a real ENUM beats spec-text uniformity, and the migration is simpler. §3.12 sanity check #4 + §3 founder Probe 1 + §10 acceptance #4 all updated to assert ENUM range rather than CHECK constraint. |
 | P1 (silent column duplication) | "approved_at and rejection_reason already exist in initial schema" | Verified at `20260422000001_initial_schema.sql:162,164`. The spec §3.3 listed both as part of "14 new columns" but `ADD COLUMN IF NOT EXISTS` would have silently no-op'd them while leaving the column count rhetoric in §3.3 / §10 / §3 founder probes saying "14". Round-6 patch: §3.3 trimmed from 14 to 12 columns + the two pre-existing columns documented as "REUSED, no add". PR 2a's admin-approve / admin-reject RPCs (specced in §4.2) write to the existing `approved_at` and `rejection_reason` rather than creating new fresh columns — preserves any Phase 1-era data and avoids duplicate-column ambiguity. §3 founder Probe 1 + §10 acceptance #3 + Files-in-PR-1 entry all updated to "12 new + 2 reused". |
 | P2 (cosmetic spec drift) | "commercial_registration / gaca_license are VARCHAR, not TEXT" | Verified at `20260422000001_initial_schema.sql:146,148`. Both columns were described in §2 as `TEXT NOT NULL`; production has `VARCHAR(50)` and `VARCHAR(100)` respectively. The §3.2 `DROP NOT NULL` works identically on either type, so this is purely a documentation accuracy fix, not a code change. Round-6 patch: §2 schema-reality block now lists the actual VARCHAR types + the other ~10 columns the rounds 0-5 §2 block omitted (`vat_number`, `bank_iban`, `documents_urls`, `commission_rate`, `rating`, `total_trips`, `response_time_avg`, `base_airport`, `operating_airports`, `company_name_ar`, `approved_by`). This makes the §2 block match `\d+ operators` in production. |
+
+## Codex round 1 on PR 1 — findings (resolved in round 2)
+
+| # | Finding | Resolution |
+|:-:|---|---|
+| P1 #1 | "Column rename is not replayable" | The migration header in §3 promises every statement is replayable, but `ALTER TABLE operators RENAME COLUMN status TO signup_status` was unconditional. After the first successful run a re-apply (staging restore, disaster recovery, snapshot replay) would raise `column "status" does not exist`. Round 2 wraps the RENAME in a `DO $$ ... $$` block that checks `information_schema.columns` for both `status` (must exist) AND `signup_status` (must NOT exist) before renaming. The block is a no-op on every subsequent re-apply. Same idempotency posture as the rest of the migration's `IF NOT EXISTS` / `IF EXISTS` guards. §3.4 spec block + the migration file both updated in lockstep. |
+| P2 #1 | "Index rename comment is inaccurate" | The §3.4 prose (and a comment in the migration file) claimed PostgreSQL "automatically renames `idx_operators_status` to `idx_operators_signup_status`" when the column is renamed. This is wrong: PostgreSQL updates the index's stored definition + catalog dependencies so it keeps indexing the renamed column, but the index object itself retains its old name. Round 2 corrects the wording AND adds an explicit `ALTER INDEX ... RENAME TO ...` inside a guarded `DO` block (same idempotency pattern as the column rename) so the catalog name matches the column name post-migration. §3.4 spec block + the migration file both updated. |
