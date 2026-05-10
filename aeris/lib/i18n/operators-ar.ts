@@ -26,6 +26,17 @@ export const operatorsAr = {
   adminListTitle: 'سجلّ المشغّلين',
   adminListEmpty: 'لا يوجد مشغّلون مسجّلون بعد.',
   adminListEmptyForFilter: 'لا يوجد مشغّلون في هذه الفئة.',
+  // Phase 8 PR 2c Codex round 4 P2 fix: notification-alert
+  // banner surfaced on the operators list page when the
+  // singleton operator_notification_alert_status row is
+  // not 'healthy'.
+  alertBanner: {
+    config_missing:
+      'إعدادات إرسال البريد ناقصة (RESEND_API_KEY / RESEND_FROM_EMAIL). لن يتلقى المشغّلون رسائل الترحيب أو إعادة تعيين كلمة المرور حتى يتم ضبطها.',
+    send_failed:
+      'فشل إرسال آخر بريد إلى مشغّل. تحقّق من سجلّات Resend وأعد المحاولة.',
+    lastFailureLabel: 'آخر فشل:',
+  },
   adminDetailTitle: 'تفاصيل المشغّل',
   adminDocumentsTitle: 'وثائق المشغّل',
   adminConvertTitle: 'تحويل سجلّ مشغّل Phase 7',

@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { AlertTriangle } from 'lucide-react';
 
 import { OperatorListFilters } from '@/components/admin/operators/list-filters';
 import { OperatorRow } from '@/components/admin/operators/operator-row';
 import {
   countOperatorsByStatus,
+  getOperatorNotificationAlertStatus,
   listOperators,
   OPERATOR_SIGNUP_STATUSES,
   type OperatorListFilter,
@@ -39,15 +41,31 @@ export default async function AdminOperatorsPage({ searchParams }: PageProps) {
   }
 
   const filter = parseFilter(searchParams?.filter);
-  const [operators, counts] = await Promise.all([
+  const [operators, counts, alertStatus] = await Promise.all([
     listOperators({ filter, limit: 200 }),
     countOperatorsByStatus(),
+    getOperatorNotificationAlertStatus(),
   ]);
 
   const isFiltered = filter !== 'all';
   const emptyMessage = isFiltered
     ? operatorsAr.adminListEmptyForFilter
     : operatorsAr.adminListEmpty;
+
+  // Codex round 4 PR #42 P2 fix: surface the notification
+  // alert singleton (recordEmailAlertStatus writes to it from
+  // operatorRequestPasswordReset; PR 2b admin actions can
+  // adopt the same writer in a follow-up). Only renders when
+  // status <> 'healthy'.
+  const degradedStatus: 'config_missing' | 'send_failed' | null =
+    alertStatus && alertStatus.status !== 'healthy'
+      ? (alertStatus.status as 'config_missing' | 'send_failed')
+      : null;
+  const alertCopy = degradedStatus
+    ? operatorsAr.alertBanner[degradedStatus]
+    : null;
+  const alertTone =
+    degradedStatus === 'config_missing' ? 'amber' : 'rose';
 
   return (
     <section>
@@ -56,6 +74,34 @@ export default async function AdminOperatorsPage({ searchParams }: PageProps) {
           {operatorsAr.adminListTitle}
         </h1>
       </div>
+
+      {degradedStatus && alertCopy && alertStatus ? (
+        <div
+          className={`mb-6 flex items-start gap-3 rounded-xl border px-4 py-3 ${
+            alertTone === 'amber'
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+              : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+          }`}
+        >
+          <AlertTriangle
+            className={`mt-0.5 h-5 w-5 flex-shrink-0 ${
+              alertTone === 'amber' ? 'text-amber-300' : 'text-rose-300'
+            }`}
+            aria-hidden
+          />
+          <div className="font-ar text-sm">
+            <p>{alertCopy}</p>
+            {alertStatus.last_failure_reason ? (
+              <p className="mt-1 text-xs opacity-80">
+                {operatorsAr.alertBanner.lastFailureLabel}{' '}
+                <span dir="ltr" className="font-mono">
+                  {alertStatus.last_failure_reason}
+                </span>
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mb-6">
         <OperatorListFilters active={filter} counts={counts} />
