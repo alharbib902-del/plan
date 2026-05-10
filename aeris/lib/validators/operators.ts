@@ -241,7 +241,9 @@ export const operatorSignupSchema = z.object({
   company_name: companyNameSchema,
   contact_email: emailSchema,
   contact_phone: phoneSchema,
-  notes: z.string().trim().max(2000).optional().or(z.literal('')),
+  // notes accepts string | '' | null | undefined — the signup
+  // form sends null when the textarea is blank.
+  notes: z.string().trim().max(2000).nullish().or(z.literal('')),
 });
 
 // 2. operatorLogin
