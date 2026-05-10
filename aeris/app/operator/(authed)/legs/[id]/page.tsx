@@ -50,7 +50,7 @@ export default async function OperatorLegDetailPage({ params }: PageProps) {
   return (
     <section className="space-y-6">
       <nav className="font-ar flex items-center gap-2 text-sm text-ink-muted">
-        <Link href="/operator/empty-legs" className="hover:text-gold-light">
+        <Link href="/operator/legs" className="hover:text-gold-light">
           {operatorsAr.portal.nav.legs}
         </Link>
         <ChevronRight className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden />

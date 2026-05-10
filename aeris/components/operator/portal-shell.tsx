@@ -26,7 +26,7 @@ export function OperatorPortalShell({
             <nav className="hidden items-center gap-1 sm:flex">
               {[
                 { href: '/operator/dashboard', label: operatorsAr.portal.nav.dashboard },
-                { href: '/operator/empty-legs', label: operatorsAr.portal.nav.legs },
+                { href: '/operator/legs', label: operatorsAr.portal.nav.legs },
                 { href: '/operator/bookings', label: operatorsAr.portal.nav.bookings },
                 { href: '/operator/profile', label: operatorsAr.portal.nav.profile },
                 { href: '/operator/earnings', label: operatorsAr.portal.nav.earnings },

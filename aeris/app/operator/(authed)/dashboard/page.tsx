@@ -38,7 +38,7 @@ export default async function OperatorDashboardPage() {
           </p>
         </div>
         <Link
-          href="/operator/empty-legs/new"
+          href="/operator/legs/new"
           className="font-ar inline-flex items-center justify-center rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm font-medium text-gold-light transition-colors hover:bg-gold/25"
         >
           {operatorsAr.portal.dashboard.addLeg}

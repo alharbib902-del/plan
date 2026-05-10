@@ -44,7 +44,7 @@ export default async function OperatorEmptyLegsPage() {
           {operatorsAr.portal.nav.legs}
         </h1>
         <Link
-          href="/operator/empty-legs/new"
+          href="/operator/legs/new"
           className="font-ar inline-flex items-center justify-center rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm font-medium text-gold-light transition-colors hover:bg-gold/25"
         >
           {operatorsAr.portal.dashboard.addLeg}
@@ -91,7 +91,7 @@ export default async function OperatorEmptyLegsPage() {
                   </td>
                   <td className="px-4 py-3 text-end">
                     <Link
-                      href={`/operator/empty-legs/${leg.id}`}
+                      href={`/operator/legs/${leg.id}`}
                       className="font-ar text-xs text-gold-light hover:underline"
                     >
                       عرض

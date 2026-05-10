@@ -39,7 +39,7 @@ export default async function OperatorPublishLegPage() {
           نشر الرحلات الفارغة مباشرةً من بوابة المشغّل قيد التطوير. حالياً، تواصل مع فريق الإدارة لنشر رحلة جديدة بالنيابة عنك.
         </p>
         <Link
-          href="/operator/empty-legs"
+          href="/operator/legs"
           className="font-ar mt-3 inline-block text-xs text-amber-200 hover:underline"
         >
           ← الرجوع إلى قائمة الرحلات
