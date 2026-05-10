@@ -22,7 +22,10 @@ import {
   verifyPasswordResetToken,
   PasswordResetTokenEnvError,
 } from '@/lib/operators/password-reset-token';
-import { sendOperatorPasswordResetLinkEmail } from '@/lib/notifications/operator-email';
+import {
+  sendOperatorPasswordResetLinkEmail,
+  type EmailDeliveryResult,
+} from '@/lib/notifications/operator-email';
 import {
   operatorSignupSchema,
   operatorLoginSchema,
@@ -133,6 +136,59 @@ function clientUserAgent(): string | null {
  */
 function escapeIlikePattern(s: string): string {
   return s.replace(/[\\_%]/g, '\\$&');
+}
+
+/**
+ * Codex round 3 PR #42 P2 fix: consume the operator-email
+ * delivery result and reflect it in the singleton
+ * operator_notification_alert_status row (PR 1 §3.10), so
+ * admin sees a degraded-state banner on /admin/operators
+ * when env is missing or Resend is failing.
+ *
+ * Public actions still return the same opaque
+ * { ok: true } to the browser (no enumeration / no
+ * delivery-state leak), but the failure is now visible to
+ * admin AND to structured logs. PR 2b admin actions can
+ * adopt the same helper in a follow-up.
+ *
+ * Singleton row id=1 is seeded by PR 1; we always UPDATE,
+ * never INSERT.
+ */
+async function recordEmailAlertStatus(
+  client: ReturnType<typeof createAdminClient>,
+  result: EmailDeliveryResult,
+  contextLabel: string
+): Promise<void> {
+  try {
+    if (result.ok) {
+      // Restore healthy on a successful send. This is what
+      // clears a previous failure once the env var lands or
+      // Resend recovers.
+      await client
+        .from('operator_notification_alert_status')
+        .update({ status: 'healthy', updated_at: new Date().toISOString() })
+        .eq('id', 1);
+    } else {
+      const status = result.reason === 'env_missing' ? 'config_missing' : 'send_failed';
+      const reasonLabel = `${contextLabel}: ${result.reason}`;
+      await client
+        .from('operator_notification_alert_status')
+        .update({
+          status,
+          last_failure_at: new Date().toISOString(),
+          last_failure_reason: reasonLabel,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', 1);
+      console.error(
+        `[operator-notification-alert] ${contextLabel} failed: ${result.reason}`
+      );
+    }
+  } catch (err) {
+    // Alert-status update failure is non-fatal — log + swallow
+    // so the parent action returns its own result unchanged.
+    console.error('[operator-notification-alert] update failed', err);
+  }
 }
 
 // ============================================================
@@ -388,12 +444,21 @@ export async function operatorRequestPasswordReset(input: {
       // new_password field — produced a misleading email that
       // labelled the URL as a temporary password and sent users
       // to /login instead of /reset-password).
-      await sendOperatorPasswordResetLinkEmail({
+      const sendResult = await sendOperatorPasswordResetLinkEmail({
         to: opRow.contact_email,
         company_name: opRow.company_name,
         reset_url: resetUrl,
         expires_in_minutes: 30,
       });
+      // Codex round 3 PR #42 P2 fix: reflect delivery status
+      // in operator_notification_alert_status so admin sees
+      // a degraded banner if env is missing / Resend fails.
+      // The browser still gets the opaque ok:true below.
+      await recordEmailAlertStatus(
+        client,
+        sendResult,
+        'operatorRequestPasswordReset'
+      );
     }
   }
 
