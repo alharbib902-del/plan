@@ -203,3 +203,104 @@ export type AdminResetOperatorPasswordInput = z.infer<typeof adminResetOperatorP
 export type AdminMintOperatorOtpInput = z.infer<typeof adminMintOperatorOtpSchema>;
 export type AdminUploadOperatorDocumentInput = z.infer<typeof adminUploadOperatorDocumentSchema>;
 export type AdminConvertPhase7StubInput = z.infer<typeof adminConvertPhase7StubSchema>;
+
+// ============================================================
+// Phase 8 PR 2c — public + authed operator portal Server Actions
+// ============================================================
+
+const emailSchema = z
+  .string()
+  .trim()
+  .min(1, { message: 'البريد مطلوب' })
+  .max(255, { message: 'البريد طويل جداً' })
+  .regex(/^[^@\s]+@[^@\s]+\.[^@\s]+$/, { message: 'صيغة البريد غير صحيحة' });
+
+const passwordPlaintextSchema = z
+  .string()
+  .min(10, { message: 'كلمة المرور يجب أن تكون 10 أحرف على الأقل' })
+  .max(128, { message: 'كلمة المرور طويلة جداً' })
+  .regex(/[A-Za-z]/, { message: 'يجب أن تحتوي حرفاً واحداً على الأقل' })
+  .regex(/[0-9]/, { message: 'يجب أن تحتوي رقماً واحداً على الأقل' });
+
+const phoneSchema = z
+  .string()
+  .trim()
+  .min(6, { message: 'رقم الجوّال قصير' })
+  .max(20, { message: 'رقم الجوّال طويل' });
+
+const companyNameSchema = z
+  .string()
+  .trim()
+  .min(2, { message: 'اسم الشركة قصير' })
+  .max(200, { message: 'اسم الشركة طويل' });
+
+// 1. operatorSignup
+export const operatorSignupSchema = z.object({
+  email: emailSchema,
+  password: passwordPlaintextSchema,
+  company_name: companyNameSchema,
+  contact_email: emailSchema,
+  contact_phone: phoneSchema,
+  notes: z.string().trim().max(2000).optional().or(z.literal('')),
+});
+
+// 2. operatorLogin
+export const operatorLoginSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1, { message: 'كلمة المرور مطلوبة' }).max(128),
+  remember_me: z.boolean().optional().default(false),
+});
+
+// 3. operatorLogout — no input
+// 4. operatorRequestPasswordReset
+export const operatorRequestPasswordResetSchema = z.object({
+  email: emailSchema,
+});
+
+// 5. operatorVerifyPasswordReset
+export const operatorVerifyPasswordResetSchema = z.object({
+  raw_token: z.string().min(1).max(2048),
+  new_password: passwordPlaintextSchema,
+  confirm_password: z.string(),
+}).refine((d) => d.new_password === d.confirm_password, {
+  path: ['confirm_password'],
+  message: 'كلمتا المرور غير متطابقتين',
+});
+
+// 6. operatorVerifyOtp
+export const operatorVerifyOtpSchema = z.object({
+  email: emailSchema,
+  code: z.string().regex(/^\d{6}$/, { message: 'الرمز يجب أن يكون 6 أرقام' }),
+});
+
+// 7. operatorChangePassword (authed)
+export const operatorChangePasswordSchema = z.object({
+  current_password: z.string().max(128).optional().or(z.literal('')),
+  new_password: passwordPlaintextSchema,
+  confirm_password: z.string(),
+}).refine((d) => d.new_password === d.confirm_password, {
+  path: ['confirm_password'],
+  message: 'كلمتا المرور غير متطابقتين',
+});
+
+// 8. operatorUpdateProfile (authed)
+export const operatorUpdateProfileSchema = z.object({
+  company_name: companyNameSchema,
+  contact_email: emailSchema,
+  contact_phone: phoneSchema,
+});
+
+// 9. operatorWelcomeConsume (authed-handoff; called from /operator/welcome/[token])
+export const operatorWelcomeConsumeSchema = z.object({
+  raw_token: z.string().min(1).max(2048),
+  remember_me: z.boolean().optional().default(false),
+});
+
+export type OperatorSignupInput = z.infer<typeof operatorSignupSchema>;
+export type OperatorLoginInput = z.infer<typeof operatorLoginSchema>;
+export type OperatorRequestPasswordResetInput = z.infer<typeof operatorRequestPasswordResetSchema>;
+export type OperatorVerifyPasswordResetInput = z.infer<typeof operatorVerifyPasswordResetSchema>;
+export type OperatorVerifyOtpInput = z.infer<typeof operatorVerifyOtpSchema>;
+export type OperatorChangePasswordInput = z.infer<typeof operatorChangePasswordSchema>;
+export type OperatorUpdateProfileInput = z.infer<typeof operatorUpdateProfileSchema>;
+export type OperatorWelcomeConsumeInput = z.infer<typeof operatorWelcomeConsumeSchema>;

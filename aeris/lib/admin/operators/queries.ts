@@ -6,6 +6,7 @@ import type {
   OperatorRow,
   OperatorSignupStatus,
   OperatorDocumentRow,
+  OperatorNotificationAlertStatusRow,
   Phase7OperatorStubRow,
 } from '@/types/database';
 
@@ -256,6 +257,34 @@ export async function listLegsForStub(
 // operator" dropdown. Suspended operators are also eligible
 // (the RPC accepts approved | suspended).
 // ============================================================
+
+// ============================================================
+// getOperatorNotificationAlertStatus
+//
+// Codex round 4 PR #42 P2 fix: surface the singleton row that
+// recordEmailAlertStatus() updates (PR 2c chunk 2) on the
+// /admin/operators page so admin sees a degraded banner when
+// Resend env is missing or sends are failing.
+//
+// Mirrors the Phase 7 §16 empty_leg_outreach_alert_status
+// pattern. Returns null on any error so a transient DB hiccup
+// doesn't break the list page.
+// ============================================================
+
+export async function getOperatorNotificationAlertStatus(): Promise<OperatorNotificationAlertStatusRow | null> {
+  noStore();
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from('operator_notification_alert_status')
+    .select('*')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) {
+    console.error('[operators] getOperatorNotificationAlertStatus failed', error);
+    return null;
+  }
+  return (data ?? null) as OperatorNotificationAlertStatusRow | null;
+}
 
 export async function listApprovedOperators(): Promise<OperatorRow[]> {
   noStore();

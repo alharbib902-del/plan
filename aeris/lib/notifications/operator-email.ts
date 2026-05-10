@@ -199,7 +199,68 @@ export async function sendOperatorRejectionEmail(
 }
 
 // ============================================================
-// 3. sendOperatorPasswordResetEmail
+// 3a. sendOperatorPasswordResetLinkEmail
+//
+// Codex round 1 PR #42 P1 #2 fix: dedicated template for the
+// operator-initiated reset flow (operatorRequestPasswordReset).
+// Body says "click to reset your password"; CTA points to the
+// reset-password URL with the embedded token. Distinct from
+// the admin-initiated path (3b below) which delivers a temp
+// password instead of a link.
+// ============================================================
+
+export interface SendOperatorPasswordResetLinkEmailInput {
+  to: string;
+  company_name: string;
+  reset_url: string;
+  expires_in_minutes: number;
+}
+
+export async function sendOperatorPasswordResetLinkEmail(
+  input: SendOperatorPasswordResetLinkEmailInput
+): Promise<EmailDeliveryResult> {
+  const env = envCredentials();
+  if (!env) {
+    console.warn('[operator-email] reset-link: missing env — skipping send');
+    return { ok: false, reason: 'env_missing' };
+  }
+
+  const body = `
+    <p style="margin:0 0 12px">مرحباً <strong>${escapeHtml(input.company_name)}</strong>،</p>
+    <p style="margin:0 0 12px">تلقّينا طلباً لإعادة تعيين كلمة المرور لحسابكم في Aeris.</p>
+    <p style="margin:0 0 12px">اضغط الزر أدناه لاختيار كلمة مرور جديدة. الرابط صالح لمدّة <strong>${input.expires_in_minutes} دقيقة</strong> ولا يمكن استخدامه إلا مرّة واحدة.</p>
+    <p style="margin:0 0 12px;color:#A8B2C1;font-size:13px">إذا لم تطلب هذا، يمكنك تجاهل هذه الرسالة بأمان — لن يتغيّر شيء.</p>
+  `;
+
+  try {
+    const resend = new Resend(env.apiKey);
+    await resend.emails.send({
+      from: env.from,
+      to: input.to,
+      subject: `Aeris — إعادة تعيين كلمة المرور`,
+      html: shellHtml({
+        preheader: 'رابط إعادة تعيين كلمة المرور لحسابك في Aeris.',
+        heading: 'إعادة تعيين كلمة المرور',
+        body,
+        ctaUrl: input.reset_url,
+        ctaLabel: 'إعادة تعيين كلمة المرور',
+      }),
+    });
+    return { ok: true };
+  } catch (err) {
+    console.error('[operator-email] reset-link resend send failed', err);
+    return { ok: false, reason: 'send_failed' };
+  }
+}
+
+// ============================================================
+// 3b. sendOperatorPasswordResetEmail (admin-initiated)
+//
+// Used by adminResetOperatorPassword to deliver a one-shot
+// temporary password the operator must change on next login.
+// Distinct from sendOperatorPasswordResetLinkEmail (3a) which
+// delivers a click-to-reset link for the operator-initiated
+// forgot-password flow.
 // ============================================================
 
 export interface SendOperatorPasswordResetEmailInput {
