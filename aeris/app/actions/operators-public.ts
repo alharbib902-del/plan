@@ -402,8 +402,24 @@ export async function operatorRequestPasswordReset(input: {
   } catch (err) {
     if (err instanceof PasswordResetTokenEnvError) {
       console.error('[operators-public.operatorRequestPasswordReset] env missing', err);
-      // Return ok:true to preserve the no-leak posture (same
-      // shape as the RPC's no_op:true on missing email).
+      // Codex round 5 PR #42 P2 fix: surface the
+      // missing-secret state to admin via the alert
+      // singleton so the /admin/operators banner fires
+      // even on this early branch. Same opaque ok:true
+      // returned to the browser (no enumeration leak).
+      try {
+        const alertClient = createAdminClient();
+        await recordEmailAlertStatus(
+          alertClient,
+          { ok: false, reason: 'env_missing' },
+          'operatorRequestPasswordReset: reset_token_secret_missing'
+        );
+      } catch (alertErr) {
+        console.error(
+          '[operators-public.operatorRequestPasswordReset] alert update failed',
+          alertErr
+        );
+      }
       return { ok: true };
     }
     console.error('[operators-public.operatorRequestPasswordReset] mint failed', err);
