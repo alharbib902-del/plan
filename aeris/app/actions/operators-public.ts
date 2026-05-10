@@ -110,6 +110,31 @@ function clientUserAgent(): string | null {
   return headers().get('user-agent');
 }
 
+/**
+ * Codex round 2 PR #42 P1 #1 + P1 #2 fix: PostgREST's
+ * `ilike` operator forwards `_` and `%` to SQL ILIKE
+ * unchanged — both are SQL wildcards that match arbitrary
+ * characters. Email local parts can contain `_`, so a raw
+ * `.ilike('auth_email', 'j_smith@aeris.test')` would match
+ * `jXsmith@aeris.test` (and any other character in that
+ * position), letting password-reset / OTP-login look up the
+ * wrong operator AND email a reset link to that wrong
+ * operator's contact.
+ *
+ * Escape `_`, `%`, and `\` (the escape character itself)
+ * with backslash so the pattern matches the literal
+ * supplied string. PostgreSQL ILIKE uses `\` as the default
+ * escape character; the Supabase JS client passes the
+ * pattern through to PostgREST -> SQL unchanged.
+ *
+ * Combined with case-insensitive matching from ILIKE, this
+ * matches the RPC-side `LOWER(auth_email) =
+ * _normalize_operator_email(p_email)` invariant.
+ */
+function escapeIlikePattern(s: string): string {
+  return s.replace(/[\\_%]/g, '\\$&');
+}
+
 // ============================================================
 // 1. operatorSignup
 // ============================================================
@@ -349,10 +374,11 @@ export async function operatorRequestPasswordReset(input: {
   // minted a token. The no_op:true shape means "email not
   // registered" — we silently ok to prevent enumeration.
   if (result.ok && 'token_id' in result) {
+    const safeEmail = escapeIlikePattern(parsed.data.email.trim());
     const { data: opRow } = await client
       .from('operators')
       .select('contact_email, company_name')
-      .ilike('auth_email', parsed.data.email.trim())
+      .ilike('auth_email', safeEmail)
       .maybeSingle();
     if (opRow) {
       const resetUrl = `${siteUrl()}/operator/reset-password/${minted.raw_token}`;
@@ -455,11 +481,13 @@ export async function operatorVerifyOtp(input: {
 
   const client = createAdminClient();
 
-  // Look up operator id by auth_email (case-insensitive).
+  // Look up operator id by auth_email (case-insensitive,
+  // ILIKE-wildcard-safe — Codex round 2 PR #42 P1 #2 fix).
+  const safeEmail = escapeIlikePattern(parsed.data.email.trim());
   const { data: opRow, error: opErr } = await client
     .from('operators')
     .select('id')
-    .ilike('auth_email', parsed.data.email.trim())
+    .ilike('auth_email', safeEmail)
     .maybeSingle();
   if (opErr) {
     console.error('[operators-public.operatorVerifyOtp] op lookup error', opErr);
