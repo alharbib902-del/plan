@@ -22,7 +22,7 @@ import {
   verifyPasswordResetToken,
   PasswordResetTokenEnvError,
 } from '@/lib/operators/password-reset-token';
-import { sendOperatorPasswordResetEmail } from '@/lib/notifications/operator-email';
+import { sendOperatorPasswordResetLinkEmail } from '@/lib/notifications/operator-email';
 import {
   operatorSignupSchema,
   operatorLoginSchema,
@@ -356,15 +356,17 @@ export async function operatorRequestPasswordReset(input: {
       .maybeSingle();
     if (opRow) {
       const resetUrl = `${siteUrl()}/operator/reset-password/${minted.raw_token}`;
-      // Using the Phase 7 password-reset email helper from PR 2b
-      // (sends temp-password style email). For a true
-      // reset-link email we'll add a dedicated helper in PR 2d;
-      // for now reuse the same template with the URL in the body.
-      await sendOperatorPasswordResetEmail({
+      // Codex round 1 PR #42 P1 #2 fix: dedicated reset-link
+      // template (was previously re-purposing the temp-password
+      // template with the reset URL crammed into the
+      // new_password field — produced a misleading email that
+      // labelled the URL as a temporary password and sent users
+      // to /login instead of /reset-password).
+      await sendOperatorPasswordResetLinkEmail({
         to: opRow.contact_email,
         company_name: opRow.company_name,
-        new_password: resetUrl, // re-purposed field; PR 2d will refine
-        login_url: `${siteUrl()}/operator/login`,
+        reset_url: resetUrl,
+        expires_in_minutes: 30,
       });
     }
   }
@@ -695,6 +697,17 @@ export async function operatorUpdateProfile(input: {
   contact_phone: string;
 }): Promise<OperatorUpdateProfileResult> {
   const session = await requireOperatorSession();
+
+  // Codex round 1 PR #42 P1 #1 fix: block authed mutations
+  // (other than logout + change-password) while
+  // password_must_change=true. The authed layout already
+  // redirects must-change sessions to /operator/profile/password,
+  // but Server Actions can be invoked from any client surface
+  // (browser DevTools, malicious script) — re-check at the
+  // Server Action boundary as defense in depth.
+  if (session.password_must_change) {
+    return { ok: false, error: 'must_change_password_first' };
+  }
 
   const parsed = operatorUpdateProfileSchema.safeParse(input);
   if (!parsed.success) {

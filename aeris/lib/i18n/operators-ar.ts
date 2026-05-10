@@ -297,6 +297,8 @@ export const operatorsAr = {
       account_suspended: 'الحساب موقوف حالياً. تواصل مع الإدارة لإعادة التفعيل.',
       account_not_approved: 'الحساب غير مفعّل. تواصل مع الإدارة.',
       session_expired: 'انتهت الجلسة. سجّل الدخول مرة أخرى.',
+      must_change_password_first:
+        'يجب اختيار كلمة مرور دائمة قبل إجراء أي تعديل آخر.',
       passwords_mismatch: 'كلمتا المرور غير متطابقتين.',
       current_password_wrong: 'كلمة المرور الحالية غير صحيحة.',
       token_not_found: 'الرابط غير صحيح أو منتهي الصلاحية.',
