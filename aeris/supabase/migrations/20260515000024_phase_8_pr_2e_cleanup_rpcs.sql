@@ -91,6 +91,7 @@ $$;
 
 REVOKE ALL ON FUNCTION cleanup_expired_operator_sessions() FROM PUBLIC;
 REVOKE ALL ON FUNCTION cleanup_expired_operator_sessions() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleanup_expired_operator_sessions() TO service_role;
 
 
 -- ============================================================
@@ -123,6 +124,7 @@ $$;
 
 REVOKE ALL ON FUNCTION cleanup_expired_password_reset_tokens() FROM PUBLIC;
 REVOKE ALL ON FUNCTION cleanup_expired_password_reset_tokens() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleanup_expired_password_reset_tokens() TO service_role;
 
 
 -- ============================================================
@@ -156,6 +158,7 @@ $$;
 
 REVOKE ALL ON FUNCTION cleanup_expired_otp_codes() FROM PUBLIC;
 REVOKE ALL ON FUNCTION cleanup_expired_otp_codes() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleanup_expired_otp_codes() TO service_role;
 
 
 -- ============================================================
@@ -189,6 +192,7 @@ $$;
 
 REVOKE ALL ON FUNCTION cleanup_old_signup_attempts() FROM PUBLIC;
 REVOKE ALL ON FUNCTION cleanup_old_signup_attempts() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleanup_old_signup_attempts() TO service_role;
 
 
 -- ============================================================
@@ -290,3 +294,4 @@ $$;
 
 REVOKE ALL ON FUNCTION record_operator_cron_tick(TEXT, INT, BOOLEAN, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION record_operator_cron_tick(TEXT, INT, BOOLEAN, TEXT) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION record_operator_cron_tick(TEXT, INT, BOOLEAN, TEXT) TO service_role;
