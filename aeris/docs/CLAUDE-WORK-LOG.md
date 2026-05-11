@@ -6817,8 +6817,16 @@ initial #48 merge. Probe 20 (manual cron-route trigger
 + scheduled Vercel Cron tick + DB tick-history
 verification) passed at `2026-05-11T11:17:41+00`. All
 4 cleanup cron jobs return `{ ok: true, deleted_count }`
-on both manual and scheduled invocation; all 4 write
-`success=true` rows to `operator_cron_tick_history`.
+on **manual invocation**, and all 4 wrote `success=true`
+rows to `operator_cron_tick_history`. Vercel Cron
+registration was proven by the **autonomous scheduled
+tick of `cleanup_expired_otp_codes` at `11:00:40+00`**
+(before any manual curl). The other three jobs run on
+a 6-hour cadence and are pending observable evidence
+on their next scheduled invocation; the route handlers,
+auth, GRANTs, and history-write path are all identical
+to the OTP cron, so the scheduled-tick contract is
+sound.
 
 ### PR sequence (5 PRs, 1 production migration + 1 hotfix migration)
 
@@ -6840,10 +6848,13 @@ on both manual and scheduled invocation; all 4 write
 | #51 | 1 | accepted directly |
 | #52 | 1 | accepted directly |
 
-Total Codex review surface: 4 substantive findings on PR
-#48 (caught BEFORE merge) + 4 hotfixes after merge for
-issues that escaped review. Net: 8 distinct correctness
-findings landed clean by the time PR #52 closed.
+Total Codex review surface: 3 substantive findings on PR
+#48 (caught BEFORE merge — service_role GRANT, FOR UPDATE
+overstatement, helper-name inventory drift) + 4 hotfixes
+after merge for issues that escaped review (Functions-map
+collapse, channel-health UX, `this`-binding loss, column-
+name drift). Net: 7 distinct correctness findings landed
+clean by the time PR #52 closed.
 
 ### Lessons learned (3 systemic gaps)
 
