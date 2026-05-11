@@ -2549,28 +2549,18 @@ export type Database = {
         Args: ConsumeOperatorWelcomeTokenArgs;
         Returns: ConsumeOperatorWelcomeTokenResult;
       };
-      // Phase 8 PR 2e — operator-side cleanup cron RPCs.
-      // Each returns { ok: true, deleted_count }.
-      cleanup_expired_operator_sessions: {
-        Args: Record<string, never>;
-        Returns: OperatorCleanupRpcResult;
-      };
-      cleanup_expired_password_reset_tokens: {
-        Args: Record<string, never>;
-        Returns: OperatorCleanupRpcResult;
-      };
-      cleanup_expired_otp_codes: {
-        Args: Record<string, never>;
-        Returns: OperatorCleanupRpcResult;
-      };
-      cleanup_old_signup_attempts: {
-        Args: Record<string, never>;
-        Returns: OperatorCleanupRpcResult;
-      };
-      record_operator_cron_tick: {
-        Args: RecordOperatorCronTickArgs;
-        Returns: RecordOperatorCronTickResult;
-      };
+      // Phase 8 PR 2e — cleanup-cron RPCs are intentionally
+      // NOT registered here. The Supabase generated type
+      // shape for parameterless Args (Record<string, never>
+      // OR `{ [_ in never]: never }`) collapses inference for
+      // every other RPC's Args to `undefined`, breaking
+      // type-check across booking-addons / checkout-prep /
+      // empty-legs / operators surfaces. Until the project
+      // regenerates database.ts via `npm run db:types` against
+      // the live schema, the cron-cleanup helper casts its
+      // .rpc() args via `as unknown as undefined` to match the
+      // project-wide pattern used by every Phase 7/8 .rpc()
+      // call site that lacks an Args entry here.
     };
     CompositeTypes: { [_ in never]: never };
     Enums: {

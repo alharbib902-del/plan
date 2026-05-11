@@ -58,7 +58,16 @@ export async function runOperatorCleanupCron(
   }
 
   const client = createAdminClient();
-  const { data, error } = await client.rpc(jobName);
+  // Cast jobName to bypass the Functions-map narrowing —
+  // cleanup RPCs are deliberately NOT registered in
+  // database.ts because the parameterless Args shape
+  // poisons inference for every other RPC. The RPC name
+  // existence is enforced by the migration's CREATE
+  // FUNCTION + the runtime .rpc() error path.
+  const rpc = client.rpc as unknown as (
+    name: string
+  ) => Promise<{ data: unknown; error: { code?: string } | null }>;
+  const { data, error } = await rpc(jobName);
 
   if (error) {
     console.error(`[cron.operator.${jobName}] rpc error`, error);
@@ -93,20 +102,21 @@ async function recordTick(
   errorLabel: string | null
 ): Promise<void> {
   try {
-    // Cast pattern mirrors every Phase 7/8 .rpc() call in the
-    // codebase: the hand-maintained database.ts narrows
-    // Functions.<name>.Args inference to `undefined` for some
-    // RPCs even when an explicit Args interface is registered,
-    // so a structural cast keeps the call site readable while
-    // preserving the runtime contract (which is enforced by
-    // the migration's CREATE FUNCTION signature, not by TS).
+    // Cast both the rpc name and the args bag — record_operator_
+    // cron_tick is intentionally NOT in the Functions map (same
+    // reason as the cleanup RPCs above). The runtime contract is
+    // enforced by the migration's CREATE FUNCTION signature.
     const args = {
       p_job_name: jobName,
       p_deleted_count: deletedCount,
       p_success: success,
       p_error_label: errorLabel,
-    } as unknown as undefined;
-    const { error } = await client.rpc('record_operator_cron_tick', args);
+    };
+    const rpc = client.rpc as unknown as (
+      name: string,
+      args: unknown
+    ) => Promise<{ error: { code?: string } | null }>;
+    const { error } = await rpc('record_operator_cron_tick', args);
     if (error) {
       console.error(`[cron.operator.${jobName}] history write error`, error);
     }
