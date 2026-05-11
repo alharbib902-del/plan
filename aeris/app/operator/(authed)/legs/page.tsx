@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { requireOperatorSession } from '@/lib/operators/auth';
 import { listOperatorLegs } from '@/lib/operators/portal-queries';
+import { routeLabel } from '@/components/admin/empty-legs/formatters';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 
 export const dynamic = 'force-dynamic';
@@ -77,8 +78,15 @@ export default async function OperatorEmptyLegsPage() {
                     {leg.leg_number}
                   </td>
                   <td className="font-ar px-4 py-3 text-sm text-ink-primary">
-                    {leg.departure_airport_freeform_snapshot ?? '—'} →{' '}
-                    {leg.arrival_airport_freeform_snapshot ?? '—'}
+                    {routeLabel(
+                      leg.departure_airport,
+                      leg.departure_airport_freeform_snapshot
+                    )}{' '}
+                    →{' '}
+                    {routeLabel(
+                      leg.arrival_airport,
+                      leg.arrival_airport_freeform_snapshot
+                    )}
                   </td>
                   <td className="font-ar px-4 py-3 text-xs text-ink-muted">
                     {formatDate(leg.departure_window_start)}
