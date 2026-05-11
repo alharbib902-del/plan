@@ -6496,7 +6496,7 @@ key was time-boxed (3 days) and shipping it under the
 Phase 8 closure window captured the operational value
 before the trial expired.
 
-### PR sequence (11 PRs)
+### PR sequence (10 PRs)
 
 | PR | Scope | Squash sha | Date |
 |---|---|---|---|
@@ -6535,7 +6535,7 @@ round may surface multiple findings):
 #### Migrations applied to production
 
 - `20260512000020_phase_8_operator_accounts.sql` — operators
-  table extension (12 new columns), 5 new tables
+  table extension (12 new columns), 6 new tables
   (`operator_sessions`, `operator_password_reset_tokens`,
   `operator_otp_codes`, `operator_documents`,
   `operator_signup_attempts`,
@@ -6581,14 +6581,14 @@ All Phase 8 env vars set on Vercel Production:
 ### Founder probes — passed
 
 The Phase 8 spec defines **19 probes** (numbered 1-19).
-Counting model below: **17 directly exercised + 2
+Counting model below: **19 directly exercised + 0
 deferred = 19 individual probes**, against production
 with the full data path (admin/operator/public UI +
 Server Actions + RPCs + Resend + wasender WhatsApp).
 
 | # | Probe | Result |
 |:-:|---|---|
-| 1, 2 | PR 1 schema state — operators columns, 5 new tables | ✅ |
+| 1, 2 | PR 1 schema state — operators columns, 6 new tables | ✅ |
 | 3 | PR 2a RPC grants (17 publics, service-role-only EXECUTE) | ✅ |
 | 4 | PR 2a publics structured-error contract (no raises on validation failure) | ✅ |
 | 5 | Stub-conversion: `empty_legs.operator_stub_id` rows re-homed to operator_id, stub archived | ✅ |
@@ -6618,13 +6618,13 @@ at 23/23 cases).
 
 ### What Phase 8 ships
 
-- **6 storage surfaces** added to the schema:
+- **7 storage surfaces** added to the schema: the
   `operators` extension (12 new columns + audit trigger),
-  `operator_sessions`, `operator_password_reset_tokens`,
-  `operator_otp_codes`, `operator_documents`,
-  `operator_signup_attempts`, plus the singleton
-  `operator_notification_alert_status` (extended with 3
-  more columns for the Phase 8.1 WhatsApp channel).
+  plus 6 new tables — `operator_sessions`,
+  `operator_password_reset_tokens`, `operator_otp_codes`,
+  `operator_documents`, `operator_signup_attempts`, and the
+  singleton `operator_notification_alert_status` (extended
+  with 3 more columns for the Phase 8.1 WhatsApp channel).
 - **17 SECURITY DEFINER public RPCs** + 1 internal helper +
   1 shared `_normalize_operator_email` function. Every
   public has service-role-only EXECUTE, structured-error
