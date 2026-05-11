@@ -6912,7 +6912,12 @@ class of issue worth a future engineering investment:
 - `20260515000025_phase_8_pr_2e_hotfix_column_names.sql` —
   `CREATE OR REPLACE FUNCTION` on the two cleanup RPCs
   that referenced `consumed_at`; corrected to `used_at`.
-  GRANTs preserved by `CREATE OR REPLACE`.
+  Each replaced function is followed by an explicit
+  `REVOKE ALL FROM PUBLIC + REVOKE FROM anon, authenticated +
+  GRANT EXECUTE TO service_role` block (Codex round 2 PR #53
+  P2 fix) so the hotfix is self-contained on a fresh DB and
+  does not rely on `CREATE OR REPLACE FUNCTION` ACL
+  preservation as its security contract.
 
 #### Vercel Cron entries
 
