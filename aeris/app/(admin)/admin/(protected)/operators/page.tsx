@@ -54,18 +54,28 @@ export default async function AdminOperatorsPage({ searchParams }: PageProps) {
 
   // Codex round 4 PR #42 P2 fix: surface the notification
   // alert singleton (recordEmailAlertStatus writes to it from
-  // operatorRequestPasswordReset; PR 2b admin actions can
-  // adopt the same writer in a follow-up). Only renders when
-  // status <> 'healthy'.
-  const degradedStatus: 'config_missing' | 'send_failed' | null =
+  // operatorRequestPasswordReset and the admin Server Actions
+  // in operators.ts). Only renders when status <> 'healthy'.
+  //
+  // Phase 8.1: a second banner surfaces WhatsApp (wasender)
+  // health independently so the founder can tell which channel
+  // degraded. The two banners can both fire at once
+  // (email + WhatsApp both broken) and stack vertically.
+  const degradedEmail: 'config_missing' | 'send_failed' | null =
     alertStatus && alertStatus.status !== 'healthy'
       ? (alertStatus.status as 'config_missing' | 'send_failed')
       : null;
-  const alertCopy = degradedStatus
-    ? operatorsAr.alertBanner[degradedStatus]
-    : null;
-  const alertTone =
-    degradedStatus === 'config_missing' ? 'amber' : 'rose';
+  const degradedWhatsapp:
+    | 'config_missing'
+    | 'send_failed'
+    | 'rate_limited'
+    | null =
+    alertStatus && alertStatus.whatsapp_status !== 'healthy'
+      ? (alertStatus.whatsapp_status as
+          | 'config_missing'
+          | 'send_failed'
+          | 'rate_limited')
+      : null;
 
   return (
     <section>
@@ -75,32 +85,24 @@ export default async function AdminOperatorsPage({ searchParams }: PageProps) {
         </h1>
       </div>
 
-      {degradedStatus && alertCopy && alertStatus ? (
-        <div
-          className={`mb-6 flex items-start gap-3 rounded-xl border px-4 py-3 ${
-            alertTone === 'amber'
-              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-              : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
-          }`}
-        >
-          <AlertTriangle
-            className={`mt-0.5 h-5 w-5 flex-shrink-0 ${
-              alertTone === 'amber' ? 'text-amber-300' : 'text-rose-300'
-            }`}
-            aria-hidden
-          />
-          <div className="font-ar text-sm">
-            <p>{alertCopy}</p>
-            {alertStatus.last_failure_reason ? (
-              <p className="mt-1 text-xs opacity-80">
-                {operatorsAr.alertBanner.lastFailureLabel}{' '}
-                <span dir="ltr" className="font-mono">
-                  {alertStatus.last_failure_reason}
-                </span>
-              </p>
-            ) : null}
-          </div>
-        </div>
+      {degradedEmail && alertStatus ? (
+        <NotificationChannelBanner
+          channel="email"
+          severity={degradedEmail}
+          copy={operatorsAr.alertBanner[degradedEmail]}
+          lastFailureLabel={operatorsAr.alertBanner.lastFailureLabel}
+          lastFailureReason={alertStatus.last_failure_reason}
+        />
+      ) : null}
+
+      {degradedWhatsapp && alertStatus ? (
+        <NotificationChannelBanner
+          channel="whatsapp"
+          severity={degradedWhatsapp}
+          copy={operatorsAr.alertBanner.whatsapp[degradedWhatsapp]}
+          lastFailureLabel={operatorsAr.alertBanner.lastFailureLabel}
+          lastFailureReason={alertStatus.whatsapp_last_failure_reason}
+        />
       ) : null}
 
       <div className="mb-6">
@@ -119,5 +121,54 @@ export default async function AdminOperatorsPage({ searchParams }: PageProps) {
         </div>
       )}
     </section>
+  );
+}
+
+interface NotificationChannelBannerProps {
+  channel: 'email' | 'whatsapp';
+  severity: 'config_missing' | 'send_failed' | 'rate_limited';
+  copy: string;
+  lastFailureLabel: string;
+  lastFailureReason: string | null;
+}
+
+function NotificationChannelBanner({
+  channel,
+  severity,
+  copy,
+  lastFailureLabel,
+  lastFailureReason,
+}: NotificationChannelBannerProps) {
+  // 'config_missing' is operator-action-needed (amber); the
+  // other failures are infra-incident severity (rose).
+  const tone: 'amber' | 'rose' =
+    severity === 'config_missing' ? 'amber' : 'rose';
+  return (
+    <div
+      data-channel={channel}
+      className={`mb-3 flex items-start gap-3 rounded-xl border px-4 py-3 ${
+        tone === 'amber'
+          ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+          : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+      }`}
+    >
+      <AlertTriangle
+        className={`mt-0.5 h-5 w-5 flex-shrink-0 ${
+          tone === 'amber' ? 'text-amber-300' : 'text-rose-300'
+        }`}
+        aria-hidden
+      />
+      <div className="font-ar text-sm">
+        <p>{copy}</p>
+        {lastFailureReason ? (
+          <p className="mt-1 text-xs opacity-80">
+            {lastFailureLabel}{' '}
+            <span dir="ltr" className="font-mono">
+              {lastFailureReason}
+            </span>
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }

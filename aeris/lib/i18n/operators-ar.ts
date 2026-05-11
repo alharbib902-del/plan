@@ -36,6 +36,17 @@ export const operatorsAr = {
     send_failed:
       'فشل إرسال آخر بريد إلى مشغّل. تحقّق من سجلّات Resend وأعد المحاولة.',
     lastFailureLabel: 'آخر فشل:',
+    // Phase 8.1 — wasender WhatsApp channel banners. Stack
+    // independently below the email banner; both can fire at
+    // the same time (e.g. trial expired + Resend outage).
+    whatsapp: {
+      config_missing:
+        'إعدادات WhatsApp ناقصة (WASENDER_API_KEY). لن تصل رسائل الترحيب أو إعادة تعيين كلمة المرور عبر WhatsApp حتى يتم ضبطها.',
+      send_failed:
+        'فشل إرسال آخر رسالة WhatsApp عبر wasenderapi.com. تحقّق من حالة الجلسة + الترخيص وأعد المحاولة.',
+      rate_limited:
+        'تم تجاوز حدّ wasender المؤقّت (رسالة واحدة/دقيقة في الـ trial). إعادة المحاولة تلقائية بعد دقيقة من آخر إرسال.',
+    },
   },
   adminDetailTitle: 'تفاصيل المشغّل',
   adminDocumentsTitle: 'وثائق المشغّل',

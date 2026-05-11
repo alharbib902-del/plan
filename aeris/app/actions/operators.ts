@@ -15,6 +15,12 @@ import {
   sendOperatorRejectionEmail,
   sendOperatorPasswordResetEmail,
 } from '@/lib/notifications/operator-email';
+import { recordEmailAlertStatus } from '@/lib/notifications/email-alert-status';
+import {
+  sendOperatorWelcomeWhatsApp,
+  sendOperatorOtpWhatsApp,
+} from '@/lib/notifications/operator-whatsapp';
+import { recordWhatsAppAlertStatus } from '@/lib/notifications/whatsapp-alert-status';
 import {
   adminApproveOperatorSchema,
   adminRejectOperatorSchema,
@@ -88,6 +94,12 @@ function revalidateOperator(operatorId: string): void {
 // Codex round 2 (PR #41) P2 #2 fix: result shape now exposes
 // welcome-email delivery status. The welcome_url is always
 // returned so admin can relay it manually if delivery failed.
+//
+// Phase 8.1: parallel WhatsApp send via wasender. Result now
+// also exposes whatsapp_delivered + whatsapp_failure_reason so
+// admin sees both channels in the response. Failure of one
+// channel does not block the other; the welcome_url remains
+// the manual fallback when both fail.
 export type AdminApproveOperatorResult =
   | {
       ok: true;
@@ -97,6 +109,13 @@ export type AdminApproveOperatorResult =
       email_delivered: boolean;
       email_failure_reason?:
         | 'env_missing'
+        | 'send_failed'
+        | 'operator_lookup_failed';
+      whatsapp_delivered: boolean;
+      whatsapp_failure_reason?:
+        | 'config_missing'
+        | 'invalid_phone'
+        | 'rate_limited'
         | 'send_failed'
         | 'operator_lookup_failed';
     }
@@ -151,10 +170,16 @@ export async function adminApproveOperator(input: {
   // URL manually (Codex round 2 PR #41 P2 #2). The approval
   // RPC has already committed; the operator now NEEDS the
   // magic-link URL to set their first session.
+  //
+  // Phase 8.1: send WhatsApp in parallel via wasender. The
+  // welcome magic link is safe to deliver over WhatsApp (single-
+  // use, 7-day expiry, bound to the operator row server-side).
+  // Both channels are best-effort and reflected independently
+  // in the singleton operator_notification_alert_status row.
   const welcomeUrl = `${siteUrl()}/operator/welcome/${minted.raw_token}`;
   const { data: opRow, error: opErr } = await client
     .from('operators')
-    .select('contact_email, company_name')
+    .select('contact_email, contact_phone, company_name')
     .eq('id', parsed.data.operator_id)
     .maybeSingle();
 
@@ -164,22 +189,54 @@ export async function adminApproveOperator(input: {
     | 'send_failed'
     | 'operator_lookup_failed'
     | undefined;
+  let whatsappDelivered = false;
+  let whatsappFailureReason:
+    | 'config_missing'
+    | 'invalid_phone'
+    | 'rate_limited'
+    | 'send_failed'
+    | 'operator_lookup_failed'
+    | undefined;
 
   if (opErr || !opRow) {
     console.error('[operators.adminApproveOperator] op fetch error', opErr);
     emailFailureReason = 'operator_lookup_failed';
+    whatsappFailureReason = 'operator_lookup_failed';
   } else {
-    const sendResult = await sendOperatorWelcomeEmail({
-      to: opRow.contact_email,
-      company_name: opRow.company_name,
-      welcome_url: welcomeUrl,
-      expires_at: minted.expires_at,
-    });
-    if (sendResult.ok) {
+    const [emailResult, whatsappResult] = await Promise.all([
+      sendOperatorWelcomeEmail({
+        to: opRow.contact_email,
+        company_name: opRow.company_name,
+        welcome_url: welcomeUrl,
+        expires_at: minted.expires_at,
+      }),
+      sendOperatorWelcomeWhatsApp({
+        to_phone: opRow.contact_phone,
+        company_name: opRow.company_name,
+        welcome_url: welcomeUrl,
+        expires_at: minted.expires_at,
+      }),
+    ]);
+    if (emailResult.ok) {
       emailDelivered = true;
     } else {
-      emailFailureReason = sendResult.reason;
+      emailFailureReason = emailResult.reason;
     }
+    if (whatsappResult.ok) {
+      whatsappDelivered = true;
+    } else {
+      whatsappFailureReason = whatsappResult.reason;
+    }
+    // Reflect both delivery outcomes in the singleton alert row
+    // so /admin/operators surfaces a degraded banner per channel.
+    await Promise.all([
+      recordEmailAlertStatus(client, emailResult, 'adminApproveOperator'),
+      recordWhatsAppAlertStatus(
+        client,
+        whatsappResult,
+        'adminApproveOperator'
+      ),
+    ]);
   }
 
   revalidateOperator(parsed.data.operator_id);
@@ -190,6 +247,10 @@ export async function adminApproveOperator(input: {
     expires_at: minted.expires_at.toISOString(),
     email_delivered: emailDelivered,
     email_failure_reason: emailDelivered ? undefined : emailFailureReason,
+    whatsapp_delivered: whatsappDelivered,
+    whatsapp_failure_reason: whatsappDelivered
+      ? undefined
+      : whatsappFailureReason,
   };
 }
 
@@ -481,6 +542,22 @@ export async function adminResetOperatorPassword(input: {
     } else {
       emailFailureReason = sendResult.reason;
     }
+    // Phase 8.1: this admin path was previously not reflected
+    // in the singleton alert row (Phase 8 PR 2c chunk 2 only
+    // wired the public reset path). Record here so the
+    // /admin/operators banner fires for admin-side failures
+    // too. WhatsApp is intentionally NOT used on this flow:
+    // the body carries a plaintext temporary password, which is
+    // safer to ship over Resend (encrypted at-rest, account-
+    // bound) than over WhatsApp (screenshot-shareable, group-
+    // forwardable). Magic-link reset (operatorRequestPassword
+    // Reset) ships over both channels because it carries no
+    // secret.
+    await recordEmailAlertStatus(
+      client,
+      sendResult,
+      'adminResetOperatorPassword'
+    );
   }
 
   revalidateOperator(parsed.data.operator_id);
@@ -503,6 +580,13 @@ export async function adminResetOperatorPassword(input: {
 // holds the hash.
 // ============================================================
 
+// Codex round 1 PR #46 P1 fix: result shape extended with
+// WhatsApp delivery status. The plaintext_code + whatsapp_phone
+// pair is preserved as a manual fallback so the admin can still
+// build a wa.me link when wasender is degraded (config_missing /
+// rate_limited / send_failed / invalid_phone). On a healthy
+// send, admin sees `whatsapp_delivered: true` and skips manual
+// relay entirely.
 export type AdminMintOperatorOtpResult =
   | {
       ok: true;
@@ -510,6 +594,13 @@ export type AdminMintOperatorOtpResult =
       plaintext_code: string;
       whatsapp_phone?: string;
       expires_at: string;
+      whatsapp_delivered: boolean;
+      whatsapp_failure_reason?:
+        | 'config_missing'
+        | 'invalid_phone'
+        | 'rate_limited'
+        | 'send_failed'
+        | 'operator_lookup_failed';
     }
   | AdminOperatorActionFailure;
 
@@ -555,12 +646,53 @@ export async function adminMintOperatorOtp(input: {
     return { ok: false, error: result.error ?? 'unknown' };
   }
 
-  // Look up phone for the wa.me link
-  const { data: opRow } = await client
+  // Look up phone + company_name. Codex round 1 PR #46 P1 fix:
+  // we now ATTEMPT a wasender send here instead of just handing
+  // the wa.me phone back to admin. plaintext_code is still
+  // returned so admin can relay manually if delivery degrades
+  // (config_missing / rate_limited / send_failed / invalid_phone)
+  // — the OTP RPC has already minted the hash and the operator
+  // needs the code one way or another.
+  const { data: opRow, error: opErr } = await client
     .from('operators')
-    .select('contact_phone')
+    .select('contact_phone, company_name')
     .eq('id', parsed.data.operator_id)
     .maybeSingle();
+
+  let whatsappDelivered = false;
+  let whatsappFailureReason:
+    | 'config_missing'
+    | 'invalid_phone'
+    | 'rate_limited'
+    | 'send_failed'
+    | 'operator_lookup_failed'
+    | undefined;
+
+  if (opErr || !opRow) {
+    console.error(
+      '[operators.adminMintOperatorOtp] op fetch error after mint',
+      opErr
+    );
+    whatsappFailureReason = 'operator_lookup_failed';
+  } else {
+    const sendResult = await sendOperatorOtpWhatsApp({
+      to_phone: opRow.contact_phone,
+      company_name: opRow.company_name,
+      code: plaintext,
+      purpose: parsed.data.purpose,
+      expires_in_minutes: OTP_TTL_MINUTES,
+    });
+    if (sendResult.ok) {
+      whatsappDelivered = true;
+    } else {
+      whatsappFailureReason = sendResult.reason;
+    }
+    await recordWhatsAppAlertStatus(
+      client,
+      sendResult,
+      'adminMintOperatorOtp'
+    );
+  }
 
   revalidateOperator(parsed.data.operator_id);
   return {
@@ -569,6 +701,10 @@ export async function adminMintOperatorOtp(input: {
     plaintext_code: plaintext,
     whatsapp_phone: opRow?.contact_phone ?? undefined,
     expires_at: expiresAt.toISOString(),
+    whatsapp_delivered: whatsappDelivered,
+    whatsapp_failure_reason: whatsappDelivered
+      ? undefined
+      : whatsappFailureReason,
   };
 }
 

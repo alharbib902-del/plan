@@ -1182,6 +1182,17 @@ export type OperatorNotificationAlertStatusValue =
   | 'config_missing'
   | 'send_failed';
 
+// Phase 8.1 — wider enum for the WhatsApp channel: includes
+// 'rate_limited' because the wasender trial enforces a
+// 1 msg/min cap that email does not have. The provider's
+// in-memory guard short-circuits with this status without
+// calling the API.
+export type OperatorNotificationWhatsAppStatusValue =
+  | 'healthy'
+  | 'config_missing'
+  | 'send_failed'
+  | 'rate_limited';
+
 // --- operators (existing table; Phase 8 extends) ---
 
 // Full row shape after Phase 8 PR 1 migration. Combines the
@@ -1406,6 +1417,11 @@ export type OperatorNotificationAlertStatusRow = {
   status: OperatorNotificationAlertStatusValue;
   last_failure_at: string | null;
   last_failure_reason: string | null;
+  // Phase 8.1 — added by
+  // 20260514000023_phase_8_1_whatsapp_alert_status.sql
+  whatsapp_status: OperatorNotificationWhatsAppStatusValue;
+  whatsapp_last_failure_at: string | null;
+  whatsapp_last_failure_reason: string | null;
   updated_at: string;
 };
 
