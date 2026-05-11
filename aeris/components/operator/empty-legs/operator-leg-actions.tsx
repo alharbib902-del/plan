@@ -7,24 +7,35 @@ import {
   operatorCancel,
   operatorUpdatePrice,
 } from '@/app/actions/operator-empty-legs';
+import {
+  operatorCancelLegSession,
+  operatorUpdatePriceSession,
+} from '@/app/actions/operators-empty-legs-authed';
 import { translateEmptyLegError } from '@/components/admin/empty-legs/error-translator';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
-interface Props {
-  token: string;
+/**
+ * Phase 8 PR 2c.1: dual-mode leg actions.
+ *   - mode='token'   — Phase 7 token-bound actions
+ *                      (operatorUpdatePrice / operatorCancel)
+ *   - mode='session' — Phase 8 session-bound actions
+ *                      (operatorUpdatePriceSession / operatorCancelLegSession)
+ *
+ * Field shapes are identical; only the action call differs.
+ */
+type AuthBinding =
+  | { mode: 'token'; token: string }
+  | { mode: 'session' };
+
+type Props = AuthBinding & {
   legId: string;
   currentPrice: number | null;
   floorPrice: number | null;
   originalPrice: number | null;
-}
+};
 
-export function OperatorLegActions({
-  token,
-  legId,
-  currentPrice,
-  floorPrice,
-  originalPrice,
-}: Props) {
+export function OperatorLegActions(props: Props) {
+  const { legId, currentPrice, floorPrice, originalPrice } = props;
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [priceError, setPriceError] = useState<string | null>(null);
@@ -45,10 +56,16 @@ export function OperatorLegActions({
     }
 
     startTransition(async () => {
-      const result = await operatorUpdatePrice(token, {
-        leg_id: legId,
-        new_price: value,
-      });
+      const result =
+        props.mode === 'token'
+          ? await operatorUpdatePrice(props.token, {
+              leg_id: legId,
+              new_price: value,
+            })
+          : await operatorUpdatePriceSession({
+              leg_id: legId,
+              new_price: value,
+            });
       if (result.ok) {
         setPriceSuccess(result.current_price);
         router.refresh();
@@ -70,7 +87,10 @@ export function OperatorLegActions({
         : null;
 
     startTransition(async () => {
-      const result = await operatorCancel(token, { leg_id: legId, reason });
+      const result =
+        props.mode === 'token'
+          ? await operatorCancel(props.token, { leg_id: legId, reason })
+          : await operatorCancelLegSession({ leg_id: legId, reason });
       if (result.ok) {
         router.refresh();
         return;

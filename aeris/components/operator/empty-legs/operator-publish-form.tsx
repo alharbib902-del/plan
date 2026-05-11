@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { operatorPublishEmptyLeg } from '@/app/actions/operator-empty-legs';
+import { operatorPublishLegSession } from '@/app/actions/operators-empty-legs-authed';
 import { datetimeLocalToRiyadhIso } from '@/components/admin/empty-legs/formatters';
 import { translateEmptyLegError } from '@/components/admin/empty-legs/error-translator';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
@@ -29,7 +30,23 @@ function readNumber(form: FormData, key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export function OperatorPublishForm({ token }: { token: string }) {
+/**
+ * Phase 8 PR 2c.1: form now supports two modes.
+ *   - `mode: 'token'` — Phase 7 token-bound flow. Calls
+ *     operatorPublishEmptyLeg(token, payload) and routes to
+ *     /operator/empty-legs/<token>/<leg_id>.
+ *   - `mode: 'session'` — Phase 8 session-bound flow. Calls
+ *     operatorPublishLegSession(payload) (cookie auth) and
+ *     routes to /operator/legs/<leg_id>.
+ *
+ * Field shapes + validation are identical across both modes;
+ * only the action call + redirect target differ.
+ */
+export type OperatorPublishFormProps =
+  | { mode: 'token'; token: string }
+  | { mode: 'session' };
+
+export function OperatorPublishForm(props: OperatorPublishFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [state, setState] = useState<FormState>(INITIAL);
@@ -64,53 +81,53 @@ export function OperatorPublishForm({ token }: { token: string }) {
     }
 
     const auctionCurveRaw = readString(form, 'auction_curve');
-    const auctionCurve =
+    const auctionCurve: 'linear' | 'accelerating' | null =
       auctionCurveRaw === 'linear' || auctionCurveRaw === 'accelerating'
         ? auctionCurveRaw
         : null;
 
+    const payload = {
+      operator_name: readString(form, 'operator_name'),
+      operator_phone: readString(form, 'operator_phone'),
+      operator_email: readString(form, 'operator_email'),
+      aircraft_text: readString(form, 'aircraft_text'),
+      departure_airport_iata: readString(form, 'departure_airport_iata'),
+      departure_airport_freeform: readString(form, 'departure_airport_freeform'),
+      arrival_airport_iata: readString(form, 'arrival_airport_iata'),
+      arrival_airport_freeform: readString(form, 'arrival_airport_freeform'),
+      departure_window_start: datetimeLocalToRiyadhIso(start),
+      departure_window_end: datetimeLocalToRiyadhIso(end),
+      flexibility_hours: readNumber(form, 'flexibility_hours'),
+      original_price: original,
+      max_passengers: maxPax,
+      auction_initial_discount_pct: readNumber(
+        form,
+        'auction_initial_discount_pct'
+      ),
+      auction_floor_discount_pct: readNumber(
+        form,
+        'auction_floor_discount_pct'
+      ),
+      auction_curve: auctionCurve,
+      auction_window_lead_hours: readNumber(form, 'auction_window_lead_hours'),
+      // Operators do NOT get the suppress_notifications
+      // toggle. Only admin can publish suppressed legs
+      // (the canary plan ticks the admin checkbox).
+      suppress_notifications: false,
+    };
+
     startTransition(async () => {
-      const result = await operatorPublishEmptyLeg(token, {
-        operator_name: readString(form, 'operator_name'),
-        operator_phone: readString(form, 'operator_phone'),
-        operator_email: readString(form, 'operator_email'),
-        aircraft_text: readString(form, 'aircraft_text'),
-        departure_airport_iata: readString(form, 'departure_airport_iata'),
-        departure_airport_freeform: readString(
-          form,
-          'departure_airport_freeform'
-        ),
-        arrival_airport_iata: readString(form, 'arrival_airport_iata'),
-        arrival_airport_freeform: readString(
-          form,
-          'arrival_airport_freeform'
-        ),
-        departure_window_start: datetimeLocalToRiyadhIso(start),
-        departure_window_end: datetimeLocalToRiyadhIso(end),
-        flexibility_hours: readNumber(form, 'flexibility_hours'),
-        original_price: original,
-        max_passengers: maxPax,
-        auction_initial_discount_pct: readNumber(
-          form,
-          'auction_initial_discount_pct'
-        ),
-        auction_floor_discount_pct: readNumber(
-          form,
-          'auction_floor_discount_pct'
-        ),
-        auction_curve: auctionCurve,
-        auction_window_lead_hours: readNumber(
-          form,
-          'auction_window_lead_hours'
-        ),
-        // Operators do NOT get the suppress_notifications
-        // toggle. Only admin can publish suppressed legs
-        // (the canary plan ticks the admin checkbox).
-        suppress_notifications: false,
-      });
+      const result =
+        props.mode === 'token'
+          ? await operatorPublishEmptyLeg(props.token, payload)
+          : await operatorPublishLegSession(payload);
 
       if (result.ok) {
-        router.push(`/operator/empty-legs/${token}/${result.leg_id}`);
+        const target =
+          props.mode === 'token'
+            ? `/operator/empty-legs/${props.token}/${result.leg_id}`
+            : `/operator/legs/${result.leg_id}`;
+        router.push(target);
         router.refresh();
         return;
       }

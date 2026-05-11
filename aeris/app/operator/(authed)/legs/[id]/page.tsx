@@ -5,6 +5,7 @@ import { ChevronRight } from 'lucide-react';
 
 import { requireOperatorSession } from '@/lib/operators/auth';
 import { getOperatorLegById } from '@/lib/operators/portal-queries';
+import { OperatorLegActions } from '@/components/operator/empty-legs/operator-leg-actions';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 
 export const dynamic = 'force-dynamic';
@@ -74,11 +75,20 @@ export default async function OperatorLegDetailPage({ params }: PageProps) {
         <Field label="عدد الركاب الأقصى" value={String(leg.max_passengers)} />
       </section>
 
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
-        <p className="font-ar text-sm text-amber-100">
-          تعديل وإلغاء الرحلات من بوابة المشغّل قيد التطوير. تواصل مع فريق الإدارة عند الحاجة.
-        </p>
-      </div>
+      {leg.status === 'available' ? (
+        <OperatorLegActions
+          mode="session"
+          legId={leg.id}
+          currentPrice={Number(leg.current_price)}
+          floorPrice={
+            leg.original_price && leg.auction_floor_discount_pct
+              ? Number(leg.original_price) *
+                (1 - Number(leg.auction_floor_discount_pct) / 100)
+              : null
+          }
+          originalPrice={Number(leg.original_price)}
+        />
+      ) : null}
     </section>
   );
 }
