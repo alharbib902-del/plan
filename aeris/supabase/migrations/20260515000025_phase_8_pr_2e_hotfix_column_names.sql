@@ -22,9 +22,20 @@
 -- (revoked_at + attempted_at respectively) and are unchanged.
 --
 -- This migration uses CREATE OR REPLACE FUNCTION on the two
--- broken RPCs to swap `consumed_at` for `used_at`. GRANTs
--- + REVOKEs are preserved by CREATE OR REPLACE (they apply
--- to the function name, not the body).
+-- broken RPCs to swap `consumed_at` for `used_at`.
+--
+-- ACL discipline (Codex round 1 PR #53 P2 fix): although
+-- CREATE OR REPLACE FUNCTION preserves the GRANT/REVOKE
+-- state from the prior definition, we restate the
+-- service_role GRANT + the PUBLIC/anon/authenticated
+-- REVOKE explicitly here so a future replay of this
+-- hotfix on a partially-applied DB (disaster recovery,
+-- fresh staging, manual ACL tampering) does not silently
+-- ship a function with the wrong permissions. The PR #48
+-- service_role-missing-GRANT incident is precisely the
+-- failure mode this defends against — production-critical
+-- cron RPCs deserve idempotent ACL re-affirmation in every
+-- file that touches them.
 -- ============================================================
 
 
@@ -50,6 +61,11 @@ BEGIN
 END;
 $$;
 
+-- Idempotent ACL re-affirmation (Codex round 1 PR #53 P2 fix).
+REVOKE ALL ON FUNCTION cleanup_expired_otp_codes() FROM PUBLIC;
+REVOKE ALL ON FUNCTION cleanup_expired_otp_codes() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleanup_expired_otp_codes() TO service_role;
+
 
 -- ============================================================
 -- §2 — cleanup_expired_password_reset_tokens (was: consumed_at
@@ -73,3 +89,8 @@ BEGIN
   RETURN json_build_object('ok', true, 'deleted_count', v_deleted);
 END;
 $$;
+
+-- Idempotent ACL re-affirmation (Codex round 1 PR #53 P2 fix).
+REVOKE ALL ON FUNCTION cleanup_expired_password_reset_tokens() FROM PUBLIC;
+REVOKE ALL ON FUNCTION cleanup_expired_password_reset_tokens() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleanup_expired_password_reset_tokens() TO service_role;
