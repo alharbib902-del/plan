@@ -191,6 +191,17 @@ function ChannelHealth({
 
   const Icon = isHealthy ? CheckCircle2 : AlertTriangle;
 
+  // Phase 8 PR 2e UX hotfix: only render the historical
+  // last_failure_* metadata when the channel is currently
+  // degraded. The DB columns persist forever (we only
+  // overwrite them on a NEW failure, never on success), so
+  // showing them under a green "سليم" badge made the panel
+  // read as if there was an active failure when in fact the
+  // channel had recovered. The audit history is still
+  // available via SQL for triage; the canary surfaces
+  // CURRENT state.
+  const showFailureContext = !isHealthy;
+
   return (
     <div
       className={`rounded-lg border px-3 py-3 ${
@@ -217,7 +228,7 @@ function ChannelHealth({
           {operatorsAr.canary.statusLabels[status] ?? status}
         </span>
       </div>
-      {lastFailureReason ? (
+      {showFailureContext && lastFailureReason ? (
         <p className="font-ar mt-2 text-xs text-ink-muted">
           {operatorsAr.canary.lastFailureLabel}{' '}
           <span dir="ltr" className="font-mono">
@@ -225,7 +236,7 @@ function ChannelHealth({
           </span>
         </p>
       ) : null}
-      {lastFailureAt ? (
+      {showFailureContext && lastFailureAt ? (
         <p className="font-ar mt-1 text-xs text-ink-muted">
           {operatorsAr.canary.atLabel}{' '}
           <span dir="ltr" className="font-mono">
