@@ -116,39 +116,51 @@ export function normaliseSaudiPhoneE164(input: string): string | null {
 }
 
 // ============================================================
-// In-memory per-recipient rate-limit guard
+// In-memory account-wide rate-limit guard
 //
-// The wasender trial caps at 1 message per minute per account.
-// The guard short-circuits the network call when the same
-// recipient has been messaged within the window, returning
-// `rate_limited` with the same shape a 429 response would
-// produce. The guard's keying is by recipient (not global)
-// so a welcome email + a separate password reset to two
-// different operators in the same minute do not collide.
-// Founder workflow rarely exceeds this; if it does, the
-// admin banner explains why a message did not send.
+// Codex round 1 PR #46 P2 fix: the wasender trial caps at 1
+// message per minute PER ACCOUNT (not per recipient). The
+// previous per-recipient keying let two back-to-back sends to
+// different phones (e.g. welcome to operator A + reset to
+// operator B in the same minute) pass the local guard and hit
+// the wasender server-side 429 — which still consumes a slot
+// from the trial budget. Keying the guard globally short-
+// circuits the second send before the network call so the
+// trial slot is preserved and the alert banner explains why.
+//
+// Vercel serverless instances are ephemeral and the guard is
+// per-instance, so two cold instances can each fire one
+// message in the same minute. That's still strictly safer
+// than per-recipient keying, and the wasender server-side
+// limit cleans up the rest. For production we'd promote
+// this to a Postgres advisory lock keyed on a global
+// 'wasender_send' resource.
+//
+// The 60s window matches the trial cap exactly; subscription
+// upgrades remove the cap on wasender's side and this guard
+// becomes a no-op (the per-account limit is gone, sends fire
+// freely until the next downstream throttle).
 // ============================================================
 
-const lastSendByRecipient = new Map<string, number>();
+let lastSendAt: number | null = null;
 
-export function isRateLimited(phone: string, now: number = Date.now()): boolean {
-  const last = lastSendByRecipient.get(phone);
-  if (last === undefined) return false;
-  return now - last < RATE_LIMIT_WINDOW_MS;
+export function isRateLimited(now: number = Date.now()): boolean {
+  if (lastSendAt === null) return false;
+  return now - lastSendAt < RATE_LIMIT_WINDOW_MS;
 }
 
-function recordSend(phone: string, now: number = Date.now()): void {
-  lastSendByRecipient.set(phone, now);
+function recordSend(now: number = Date.now()): void {
+  lastSendAt = now;
 }
 
 /**
- * Test-only: clear the in-memory rate-limit map. Production
- * callers MUST NOT use this — the guard exists to protect the
- * trial budget. Exported under a deliberately verbose name so
- * accidental imports stand out in code review.
+ * Test-only: clear the in-memory rate-limit timestamp.
+ * Production callers MUST NOT use this — the guard exists to
+ * protect the trial budget. Exported under a deliberately
+ * verbose name so accidental imports stand out in code review.
  */
 export function __test_resetWhatsAppRateLimitGuard(): void {
-  lastSendByRecipient.clear();
+  lastSendAt = null;
 }
 
 // ============================================================
@@ -185,11 +197,11 @@ export async function sendWhatsAppMessage(
     };
   }
 
-  if (isRateLimited(phone)) {
+  if (isRateLimited()) {
     return {
       ok: false,
       reason: 'rate_limited',
-      detail: 'local guard: 1 message per minute per recipient',
+      detail: 'local guard: 1 message per minute (account-wide trial cap)',
     };
   }
 
@@ -223,7 +235,7 @@ export async function sendWhatsAppMessage(
   // Record the send attempt regardless of outcome — the trial
   // cap counts attempts, not successes, so a 5xx still consumes
   // the per-minute slot from wasender's perspective.
-  recordSend(phone);
+  recordSend();
 
   let body: unknown;
   try {

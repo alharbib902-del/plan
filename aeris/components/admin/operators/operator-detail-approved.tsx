@@ -107,12 +107,31 @@ export function OperatorDetailApproved({ operator }: { operator: OperatorRow }) 
         purpose,
       });
       if (result.ok) {
+        // Codex round 1 PR #46 P1 fix: WhatsApp send is now
+        // automated via wasender. When delivery succeeds the
+        // admin sees a "sent" confirmation; the plaintext_code
+        // + wa.me link are still surfaced as a manual fallback
+        // for the degraded-delivery case (config_missing /
+        // rate_limited / send_failed / invalid_phone).
         const message = `رمز Aeris المؤقّت: ${result.plaintext_code}\nصالح لمدة 10 دقائق.`;
         const wa = result.whatsapp_phone ? waUrl(result.whatsapp_phone, message) : null;
+        const detailsParts: string[] = [`الرمز: ${result.plaintext_code}`];
+        if (result.whatsapp_delivered) {
+          detailsParts.push('أُرسل عبر WhatsApp تلقائياً ✓');
+        } else {
+          if (result.whatsapp_failure_reason) {
+            detailsParts.push(
+              `WhatsApp غير مُسلَّم (${result.whatsapp_failure_reason}) — انسخ الرمز أو افتح الرابط يدوياً`
+            );
+          }
+          if (wa) {
+            detailsParts.push(`افتح WhatsApp: ${wa}`);
+          }
+        }
         setToast({
           kind: 'success',
           message: operatorsAr.toasts.otpMinted,
-          details: wa ? `الرمز: ${result.plaintext_code} · افتح WhatsApp: ${wa}` : `الرمز: ${result.plaintext_code}`,
+          details: detailsParts.join(' · '),
         });
       } else {
         setToast({ kind: 'error', message: errorMessage(result.error) });

@@ -25,7 +25,8 @@
  *  17.  sendWhatsAppMessage — non-JSON body tolerated
  *  18.  sendWhatsAppMessage — success:false body returns send_failed
  *  19.  Rate-limit guard — second call within 60s short-circuits
- *  20.  Rate-limit guard — different recipient is independent
+ *  20.  Rate-limit guard — different recipient also blocks
+ *        (account-wide, Codex round 1 PR #46 P2 fix)
  *  21.  Rate-limit guard — guard records on failed network too
  */
 
@@ -337,7 +338,12 @@ async function main(): Promise<void> {
     assert.equal(fetchCalls.length, 1);
   });
 
-  await test('guard: different recipient is independent', async () => {
+  await test('guard: different recipient also blocks (account-wide)', async () => {
+    // Codex round 1 PR #46 P2 fix: the wasender trial cap is
+    // PER ACCOUNT, not per recipient. A welcome to operator A
+    // followed by a reset to operator B in the same minute MUST
+    // be locally throttled so the trial slot is preserved
+    // instead of consumed by a server-side 429.
     __test_resetWhatsAppRateLimitGuard();
     resetFetchState();
     setNextResponse(() =>
@@ -355,11 +361,14 @@ async function main(): Promise<void> {
       text: 'b',
     });
     assert.equal(a.ok, true);
-    assert.equal(b.ok, true);
-    assert.equal(fetchCalls.length, 2);
-    assert.equal(isRateLimited('+966500000014'), true);
-    assert.equal(isRateLimited('+966500000015'), true);
-    assert.equal(isRateLimited('+966500000016'), false);
+    assert.equal(b.ok, false);
+    if (!b.ok) assert.equal(b.reason, 'rate_limited');
+    // Crucially: only the first send made a network call. The
+    // second short-circuited on the local guard.
+    assert.equal(fetchCalls.length, 1);
+    // Global guard state: any recipient lookup now reports
+    // rate-limited until the window elapses.
+    assert.equal(isRateLimited(), true);
   });
 
   await test('guard: records on failed network too', async () => {

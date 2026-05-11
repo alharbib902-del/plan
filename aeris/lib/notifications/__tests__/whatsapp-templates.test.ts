@@ -25,6 +25,7 @@ import {
   buildOperatorWelcomeWhatsAppBody,
   buildOperatorPasswordResetWhatsAppBody,
 } from '@/lib/notifications/whatsapp-templates/operator-welcome-wa';
+import { buildOperatorOtpWhatsAppBody } from '@/lib/notifications/whatsapp-templates/operator-otp-wa';
 
 let passed = 0;
 let failed = 0;
@@ -135,6 +136,87 @@ test('reset: under 1000 char WhatsApp soft limit', () => {
 
 test('reset: no HTML / markdown rendered literally', () => {
   const body = buildOperatorPasswordResetWhatsAppBody(SAMPLE_RESET);
+  assert.equal(/<[a-z]+>/i.test(body), false);
+  assert.equal(/\*\*[^*]+\*\*/.test(body), false);
+});
+
+// ============================================================
+// OTP (Codex round 1 PR #46 P1)
+// ============================================================
+
+const SAMPLE_OTP_LOGIN = {
+  company_name: 'Probe 14 Aviation Co',
+  code: '482196',
+  purpose: 'login' as const,
+  expires_in_minutes: 10,
+};
+
+const SAMPLE_OTP_RECOVERY = {
+  company_name: 'Probe 14 Aviation Co',
+  code: '004721',
+  purpose: 'recovery' as const,
+  expires_in_minutes: 10,
+};
+
+test('otp: contains company name + 6-digit code', () => {
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_LOGIN);
+  assert.match(body, /Probe 14 Aviation Co/);
+  assert.match(body, /482196/);
+});
+
+test('otp: code on its own line for one-tap copy', () => {
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_LOGIN);
+  // Bracketed by blank lines so the code is the only token on
+  // its line and WhatsApp Android/iOS long-press selects it
+  // cleanly.
+  assert.match(body, /\n\n482196\n\n/);
+});
+
+test('otp: leading-zero code preserved', () => {
+  // The OTP generator pads to 6 digits; the template MUST not
+  // strip a leading zero (e.g. '004721' becoming '4721' would
+  // make verification fail).
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_RECOVERY);
+  assert.match(body, /\n\n004721\n\n/);
+});
+
+test('otp: login purpose label is Arabic "تسجيل الدخول"', () => {
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_LOGIN);
+  assert.match(body, /تسجيل الدخول/);
+  assert.equal(/استرداد/.test(body), false);
+});
+
+test('otp: recovery purpose label is Arabic "استرداد الحساب"', () => {
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_RECOVERY);
+  assert.match(body, /استرداد الحساب/);
+  assert.equal(/تسجيل الدخول/.test(body), false);
+});
+
+test('otp: contains anti-phishing notice', () => {
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_LOGIN);
+  // "Do not share this code" + "Aeris staff will not ask you
+  // for it" — the standard 2FA-template guard.
+  assert.match(body, /لا تشاركوا هذا الرمز/);
+  assert.match(body, /لن يطلبوه/);
+});
+
+test('otp: states expiry in minutes (Western digit)', () => {
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_LOGIN);
+  assert.match(body, /10 دقائق/);
+  // Project convention: no Arabic-Indic digits anywhere in body.
+  assert.equal(/[٠-٩]/.test(body), false);
+});
+
+test('otp: under 1000 char WhatsApp soft limit', () => {
+  const body = buildOperatorOtpWhatsAppBody({
+    ...SAMPLE_OTP_LOGIN,
+    company_name: 'A'.repeat(120),
+  });
+  assert.ok(body.length < 1000, `body length ${body.length} exceeds 1000`);
+});
+
+test('otp: no HTML / markdown rendered literally', () => {
+  const body = buildOperatorOtpWhatsAppBody(SAMPLE_OTP_LOGIN);
   assert.equal(/<[a-z]+>/i.test(body), false);
   assert.equal(/\*\*[^*]+\*\*/.test(body), false);
 });

@@ -16,7 +16,10 @@ import {
   sendOperatorPasswordResetEmail,
 } from '@/lib/notifications/operator-email';
 import { recordEmailAlertStatus } from '@/lib/notifications/email-alert-status';
-import { sendOperatorWelcomeWhatsApp } from '@/lib/notifications/operator-whatsapp';
+import {
+  sendOperatorWelcomeWhatsApp,
+  sendOperatorOtpWhatsApp,
+} from '@/lib/notifications/operator-whatsapp';
 import { recordWhatsAppAlertStatus } from '@/lib/notifications/whatsapp-alert-status';
 import {
   adminApproveOperatorSchema,
@@ -577,6 +580,13 @@ export async function adminResetOperatorPassword(input: {
 // holds the hash.
 // ============================================================
 
+// Codex round 1 PR #46 P1 fix: result shape extended with
+// WhatsApp delivery status. The plaintext_code + whatsapp_phone
+// pair is preserved as a manual fallback so the admin can still
+// build a wa.me link when wasender is degraded (config_missing /
+// rate_limited / send_failed / invalid_phone). On a healthy
+// send, admin sees `whatsapp_delivered: true` and skips manual
+// relay entirely.
 export type AdminMintOperatorOtpResult =
   | {
       ok: true;
@@ -584,6 +594,13 @@ export type AdminMintOperatorOtpResult =
       plaintext_code: string;
       whatsapp_phone?: string;
       expires_at: string;
+      whatsapp_delivered: boolean;
+      whatsapp_failure_reason?:
+        | 'config_missing'
+        | 'invalid_phone'
+        | 'rate_limited'
+        | 'send_failed'
+        | 'operator_lookup_failed';
     }
   | AdminOperatorActionFailure;
 
@@ -629,12 +646,53 @@ export async function adminMintOperatorOtp(input: {
     return { ok: false, error: result.error ?? 'unknown' };
   }
 
-  // Look up phone for the wa.me link
-  const { data: opRow } = await client
+  // Look up phone + company_name. Codex round 1 PR #46 P1 fix:
+  // we now ATTEMPT a wasender send here instead of just handing
+  // the wa.me phone back to admin. plaintext_code is still
+  // returned so admin can relay manually if delivery degrades
+  // (config_missing / rate_limited / send_failed / invalid_phone)
+  // — the OTP RPC has already minted the hash and the operator
+  // needs the code one way or another.
+  const { data: opRow, error: opErr } = await client
     .from('operators')
-    .select('contact_phone')
+    .select('contact_phone, company_name')
     .eq('id', parsed.data.operator_id)
     .maybeSingle();
+
+  let whatsappDelivered = false;
+  let whatsappFailureReason:
+    | 'config_missing'
+    | 'invalid_phone'
+    | 'rate_limited'
+    | 'send_failed'
+    | 'operator_lookup_failed'
+    | undefined;
+
+  if (opErr || !opRow) {
+    console.error(
+      '[operators.adminMintOperatorOtp] op fetch error after mint',
+      opErr
+    );
+    whatsappFailureReason = 'operator_lookup_failed';
+  } else {
+    const sendResult = await sendOperatorOtpWhatsApp({
+      to_phone: opRow.contact_phone,
+      company_name: opRow.company_name,
+      code: plaintext,
+      purpose: parsed.data.purpose,
+      expires_in_minutes: OTP_TTL_MINUTES,
+    });
+    if (sendResult.ok) {
+      whatsappDelivered = true;
+    } else {
+      whatsappFailureReason = sendResult.reason;
+    }
+    await recordWhatsAppAlertStatus(
+      client,
+      sendResult,
+      'adminMintOperatorOtp'
+    );
+  }
 
   revalidateOperator(parsed.data.operator_id);
   return {
@@ -643,6 +701,10 @@ export async function adminMintOperatorOtp(input: {
     plaintext_code: plaintext,
     whatsapp_phone: opRow?.contact_phone ?? undefined,
     expires_at: expiresAt.toISOString(),
+    whatsapp_delivered: whatsappDelivered,
+    whatsapp_failure_reason: whatsappDelivered
+      ? undefined
+      : whatsappFailureReason,
   };
 }
 
