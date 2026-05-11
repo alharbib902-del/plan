@@ -58,16 +58,48 @@ export async function runOperatorCleanupCron(
   }
 
   const client = createAdminClient();
-  // Cast jobName to bypass the Functions-map narrowing —
-  // cleanup RPCs are deliberately NOT registered in
-  // database.ts because the parameterless Args shape
-  // poisons inference for every other RPC. The RPC name
-  // existence is enforced by the migration's CREATE
-  // FUNCTION + the runtime .rpc() error path.
-  const rpc = client.rpc as unknown as (
-    name: string
-  ) => Promise<{ data: unknown; error: { code?: string } | null }>;
-  const { data, error } = await rpc(jobName);
+  // Cast the WHOLE client to a structural type that has the
+  // RPC method with the loose name parameter. Crucially, the
+  // .rpc(...) call is invoked AS A METHOD on the client (not
+  // as an extracted function reference) so the Supabase JS
+  // client's internal `this` binding is preserved. The
+  // previous approach of `const rpc = client.rpc; await rpc(...)`
+  // detached the method, leaving `this === undefined` inside
+  // the Supabase implementation, which threw at runtime and
+  // surfaced as the cron route's HTTP 500.
+  //
+  // Cleanup RPCs are deliberately NOT registered in
+  // database.ts (parameterless Args shape poisons inference
+  // across every other RPC); the runtime contract is
+  // enforced by the migration's CREATE FUNCTION + the
+  // service_role GRANT.
+  const looseClient = client as unknown as {
+    rpc: (
+      name: string,
+      args?: Record<string, unknown>
+    ) => Promise<{ data: unknown; error: { code?: string; message?: string } | null }>;
+  };
+
+  let data: unknown;
+  let error: { code?: string; message?: string } | null = null;
+  try {
+    const result = await looseClient.rpc(jobName);
+    data = result.data;
+    error = result.error;
+  } catch (err) {
+    console.error(`[cron.operator.${jobName}] rpc threw`, err);
+    await recordTick(
+      client,
+      jobName,
+      0,
+      false,
+      `rpc_threw: ${err instanceof Error ? err.message : 'unknown'}`
+    );
+    return NextResponse.json(
+      { ok: false, error: 'rpc_threw' },
+      { status: 200 }
+    );
+  }
 
   if (error) {
     console.error(`[cron.operator.${jobName}] rpc error`, error);
@@ -76,7 +108,7 @@ export async function runOperatorCleanupCron(
       jobName,
       0,
       false,
-      `rpc_error: ${error.code ?? 'unknown'}`
+      `rpc_error: ${error.code ?? error.message ?? 'unknown'}`
     );
     return NextResponse.json(
       { ok: false, error: 'rpc_failed' },
@@ -84,8 +116,8 @@ export async function runOperatorCleanupCron(
     );
   }
 
-  const result = data as { ok: boolean; deleted_count?: number } | null;
-  const deletedCount = result?.deleted_count ?? 0;
+  const rpcResult = data as { ok: boolean; deleted_count?: number } | null;
+  const deletedCount = rpcResult?.deleted_count ?? 0;
   await recordTick(client, jobName, deletedCount, true, null);
 
   return NextResponse.json(
@@ -102,21 +134,24 @@ async function recordTick(
   errorLabel: string | null
 ): Promise<void> {
   try {
-    // Cast both the rpc name and the args bag — record_operator_
-    // cron_tick is intentionally NOT in the Functions map (same
-    // reason as the cleanup RPCs above). The runtime contract is
-    // enforced by the migration's CREATE FUNCTION signature.
+    // Same cast pattern as the cleanup RPC call above:
+    // cast the WHOLE client so the .rpc(...) invocation
+    // preserves `this`. Calling through an extracted
+    // reference (const rpc = client.rpc) breaks Supabase's
+    // internal binding and throws at runtime.
+    const looseClient = client as unknown as {
+      rpc: (
+        name: string,
+        args: Record<string, unknown>
+      ) => Promise<{ error: { code?: string } | null }>;
+    };
     const args = {
       p_job_name: jobName,
       p_deleted_count: deletedCount,
       p_success: success,
       p_error_label: errorLabel,
     };
-    const rpc = client.rpc as unknown as (
-      name: string,
-      args: unknown
-    ) => Promise<{ error: { code?: string } | null }>;
-    const { error } = await rpc('record_operator_cron_tick', args);
+    const { error } = await looseClient.rpc('record_operator_cron_tick', args);
     if (error) {
       console.error(`[cron.operator.${jobName}] history write error`, error);
     }
