@@ -1193,6 +1193,43 @@ export type OperatorNotificationWhatsAppStatusValue =
   | 'send_failed'
   | 'rate_limited';
 
+// Phase 8 PR 2e — operator_cron_tick_history is the
+// observability table the four cleanup-cron routes write to
+// after each run. The admin canary page queries the latest
+// row per job_name to surface stale / failing cron jobs.
+//
+// job_name is constrained to the four cleanup job names by a
+// CHECK in the migration; a future 5th job needs both a
+// schema migration to widen the CHECK and a string literal
+// added to this union.
+export type OperatorCronJobName =
+  | 'cleanup_expired_operator_sessions'
+  | 'cleanup_expired_password_reset_tokens'
+  | 'cleanup_expired_otp_codes'
+  | 'cleanup_old_signup_attempts';
+
+export type OperatorCronTickHistoryRow = {
+  id: number;
+  job_name: OperatorCronJobName;
+  ran_at: string;
+  deleted_count: number;
+  success: boolean;
+  error_label: string | null;
+};
+
+export type OperatorCronTickHistoryInsert = {
+  id?: number;
+  job_name: OperatorCronJobName;
+  ran_at?: string;
+  deleted_count?: number;
+  success?: boolean;
+  error_label?: string | null;
+};
+
+export type OperatorCronTickHistoryUpdate = Partial<
+  Omit<OperatorCronTickHistoryRow, 'id'>
+>;
+
 // --- operators (existing table; Phase 8 extends) ---
 
 // Full row shape after Phase 8 PR 1 migration. Combines the
@@ -1766,6 +1803,30 @@ export type ConsumeOperatorWelcomeTokenResult =
     }
   | { ok: false; error: ConsumeOperatorWelcomeTokenError };
 
+// --- Phase 8 PR 2e — cleanup-cron RPC contract types ---
+//
+// Every cleanup RPC returns the same shape, so a single
+// type-alias serves all four. Result is always `ok: true`
+// — there is no validation surface and the cleanup RPCs
+// do not have a structured failure path; a Postgres-level
+// failure surfaces as the .rpc() error to the route handler.
+export type OperatorCleanupRpcResult = {
+  ok: true;
+  deleted_count: number;
+};
+
+export interface RecordOperatorCronTickArgs {
+  p_job_name: OperatorCronJobName;
+  p_deleted_count: number;
+  p_success: boolean;
+  p_error_label: string | null;
+}
+
+export type RecordOperatorCronTickResult = {
+  ok: true;
+  history_id: number;
+};
+
 // ============================================================================
 // Phase 7 PR 2a: SECURITY DEFINER RPC layer
 //
@@ -2284,6 +2345,15 @@ export type Database = {
         Update: OperatorNotificationAlertStatusUpdate;
         Relationships: [];
       };
+      // Phase 8 PR 2e — observability table for the
+      // operator-side cleanup cron routes. Service-role
+      // only; RLS is enabled with no policies.
+      operator_cron_tick_history: {
+        Row: OperatorCronTickHistoryRow;
+        Insert: OperatorCronTickHistoryInsert;
+        Update: OperatorCronTickHistoryUpdate;
+        Relationships: [];
+      };
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -2478,6 +2548,28 @@ export type Database = {
       consume_operator_welcome_token: {
         Args: ConsumeOperatorWelcomeTokenArgs;
         Returns: ConsumeOperatorWelcomeTokenResult;
+      };
+      // Phase 8 PR 2e — operator-side cleanup cron RPCs.
+      // Each returns { ok: true, deleted_count }.
+      cleanup_expired_operator_sessions: {
+        Args: Record<string, never>;
+        Returns: OperatorCleanupRpcResult;
+      };
+      cleanup_expired_password_reset_tokens: {
+        Args: Record<string, never>;
+        Returns: OperatorCleanupRpcResult;
+      };
+      cleanup_expired_otp_codes: {
+        Args: Record<string, never>;
+        Returns: OperatorCleanupRpcResult;
+      };
+      cleanup_old_signup_attempts: {
+        Args: Record<string, never>;
+        Returns: OperatorCleanupRpcResult;
+      };
+      record_operator_cron_tick: {
+        Args: RecordOperatorCronTickArgs;
+        Returns: RecordOperatorCronTickResult;
       };
     };
     CompositeTypes: { [_ in never]: never };

@@ -17,6 +17,22 @@
     {
       "path": "/api/cron/empty-legs/match-drain",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/operator/sessions",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/operator/reset-tokens",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/operator/otp-codes",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/operator/signup-attempts",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
