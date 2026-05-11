@@ -6,6 +6,7 @@ import { ChevronRight } from 'lucide-react';
 import { requireOperatorSession } from '@/lib/operators/auth';
 import { getOperatorLegById } from '@/lib/operators/portal-queries';
 import { OperatorLegActions } from '@/components/operator/empty-legs/operator-leg-actions';
+import { routeLabel } from '@/components/admin/empty-legs/formatters';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 
 export const dynamic = 'force-dynamic';
@@ -60,8 +61,15 @@ export default async function OperatorLegDetailPage({ params }: PageProps) {
 
       <header>
         <h1 className="font-ar text-2xl text-ink-primary sm:text-3xl">
-          {leg.departure_airport_freeform_snapshot ?? '—'} →{' '}
-          {leg.arrival_airport_freeform_snapshot ?? '—'}
+          {routeLabel(
+            leg.departure_airport,
+            leg.departure_airport_freeform_snapshot
+          )}{' '}
+          →{' '}
+          {routeLabel(
+            leg.arrival_airport,
+            leg.arrival_airport_freeform_snapshot
+          )}
         </h1>
         <p className="mt-1 font-mono text-xs text-gold-light">{leg.leg_number}</p>
       </header>
