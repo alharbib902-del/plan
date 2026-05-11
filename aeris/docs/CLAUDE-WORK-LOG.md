@@ -6502,7 +6502,7 @@ before the trial expired.
 |---|---|---|---|
 | #36 | Phase 8 spec — Operator account onboarding (draft for Codex) | `70ac45c` | 2026-05-10 |
 | #37 | PR 1 — Schema migration + implementation reality patches (12 new columns on `operators`, 6 new tables, audit trigger, alert-status singleton seed) | `8622aac` | 2026-05-10 |
-| #38 | PR 2a — Operator RPC layer (17 SECURITY DEFINER publics + 1 helper) | `03e1cfe` | 2026-05-10 |
+| #38 | PR 2a — Operator RPC layer (17 SECURITY DEFINER publics + 2 helpers) | `03e1cfe` | 2026-05-10 |
 | #40 | PR 2a hotfix — revoke EXECUTE from anon + authenticated (security) | `138ef06` | 2026-05-10 |
 | #41 | PR 2b — Admin operators surface (4 pages + 10 components + 9 Server Actions) | `22c9feb` | 2026-05-10 |
 | #42 | PR 2c — Operator portal (auth + 17 pages + 13 components + 9 Server Actions + middleware) | `aaa7122` | 2026-05-11 |
@@ -6522,7 +6522,7 @@ round may surface multiple findings):
 | #36 | 1 | Spec accepted directly |
 | #37 | 1 | Schema-reality patches caught up-front (operator_status ENUM 'rejected' value, `approved_at` already in initial schema) |
 | #38 | 2 | NULL-safe token compare on session validate, FK pre-validation on operator-stub conversion, defensive uniqueness on auth_email LOWER index |
-| #40 | direct hotfix | EXECUTE permissions tightening (anon + authenticated revoked from all 17 publics) |
+| #40 | direct hotfix | EXECUTE permissions tightening (anon + authenticated revoked from all 17 publics; anon + authenticated + service_role revoked from both helpers `_normalize_operator_email` + `_is_sha256_hex`) |
 | #41 | 4 | Replace-safe document upload (snapshot old storage_path → upsert metadata → delete old object), Resend EmailDeliveryResult shape, force-reset email returns plaintext fallback when delivery fails, ACL semantic verification via aclexplode |
 | #42 | 5 | Must-change-password lockdown layered (middleware + authed layout + Server Action), reset-link template separate from temp-password template, ILIKE wildcard injection guard (escapeIlikePattern), sessionStorage HMAC re-mint on suspend, `recordEmailAlertStatus` extracted to shared module |
 | #43 | direct hotfix | Zod `.optional().or(z.literal(''))` → `.nullish().or(z.literal(''))` for the notes field |
@@ -6543,8 +6543,11 @@ round may surface multiple findings):
   operators (signup_status + password_hash transitions),
   `operator_status` ENUM extended with `'rejected'`.
 - `20260513000021_phase_8_operator_rpcs.sql` — 17
-  SECURITY DEFINER public RPCs + 1 internal helper +
-  `_normalize_operator_email` shared helper.
+  SECURITY DEFINER public RPCs + 2 internal helpers
+  (`_normalize_operator_email` for case-insensitive
+  auth_email lookup, `_is_sha256_hex` for token-hash
+  shape validation across the session / welcome / reset /
+  OTP RPCs).
 - `20260513000022_phase_8_pr_2a_hotfix_revoke_anon_authenticated.sql` —
   REVOKE EXECUTE from anon + authenticated on every PR 2a
   public; service-role-only access.
@@ -6625,11 +6628,13 @@ at 23/23 cases).
   `operator_documents`, `operator_signup_attempts`, and the
   singleton `operator_notification_alert_status` (extended
   with 3 more columns for the Phase 8.1 WhatsApp channel).
-- **17 SECURITY DEFINER public RPCs** + 1 internal helper +
-  1 shared `_normalize_operator_email` function. Every
+- **17 SECURITY DEFINER public RPCs** + 2 internal helpers
+  (`_normalize_operator_email` and `_is_sha256_hex`). Every
   public has service-role-only EXECUTE, structured-error
   contract on validation failures, and FOR UPDATE row
-  locking on every state mutation.
+  locking on every state mutation. Both helpers are REVOKE
+  ALL from anon + authenticated + service_role (callable
+  only from inside the publics via the function-owner role).
 - **24 Server Actions** across admin / operator-public /
   operator-authed / cron surfaces. Every action is a thin
   wrapper over an RPC or a Resend/wasender provider plus
