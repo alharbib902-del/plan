@@ -12,9 +12,11 @@
 -- linger forever).
 --
 -- This migration ships:
---   §1   _select_op_cron_owner   — internal SECURITY DEFINER
---                                  guard helper (mirrors
---                                  Phase 7 §0 Helper pattern)
+--   §1   _operator_cron_marker   — internal placeholder helper
+--                                  (REVOKE-only; reserved for
+--                                  future cron-only assertion
+--                                  hooks, mirrors Phase 7 §0
+--                                  Helper pattern)
 --   §2   cleanup_expired_operator_sessions     — DELETE
 --   §3   cleanup_expired_password_reset_tokens — DELETE
 --   §4   cleanup_expired_otp_codes             — DELETE
