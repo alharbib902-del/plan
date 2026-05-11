@@ -50,7 +50,7 @@ export default async function OperatorEmptyLegNewPage({ params }: PageProps) {
         <h1 className="font-ar mt-2 mb-6 text-2xl text-ink sm:text-3xl">
           {emptyLegsAr.operatorPortalNewLeg}
         </h1>
-        <OperatorPublishForm token={params.token} />
+        <OperatorPublishForm mode="token" token={params.token} />
       </div>
     </main>
   );

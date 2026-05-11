@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { requireOperatorSession } from '@/lib/operators/auth';
+import { OperatorPublishForm } from '@/components/operator/empty-legs/operator-publish-form';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 
 export const dynamic = 'force-dynamic';
@@ -13,38 +14,32 @@ export const metadata: Metadata = {
 };
 
 /**
- * Phase 8 PR 2c — placeholder for the session-based publish
- * form. Spec §6 calls for re-using Phase 7's
- * `OperatorPublishForm` with the session's operator_id
- * substituted for operator_stub_id. The integration is
- * deferred to a follow-up PR (PR 2c.1) so this PR ships
- * the auth + portal shell + read pages first; the publish
- * form re-use is a non-trivial Phase 7 component refactor.
+ * Phase 8 PR 2c.1 — session-bound publish page.
  *
- * Until then, the founder uses /admin/empty-legs/new to
- * publish on behalf of an operator (Phase 7 admin form).
+ * Re-uses Phase 7's OperatorPublishForm with mode="session"
+ * (added in PR 2c.1). The form calls operatorPublishLegSession
+ * which pulls operator_id from the session cookie via
+ * requireOperatorSession() and forces operator_stub_id=NULL,
+ * then routes to /operator/legs/<leg_id> on success.
  */
 export default async function OperatorPublishLegPage() {
   await requireOperatorSession();
 
   return (
-    <section className="mx-auto max-w-2xl space-y-6">
+    <section className="mx-auto max-w-3xl space-y-6">
       <header>
         <h1 className="font-ar text-2xl text-ink-primary">
           {operatorsAr.portal.dashboard.addLeg}
         </h1>
-      </header>
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-6">
-        <p className="font-ar text-sm text-amber-100">
-          نشر الرحلات الفارغة مباشرةً من بوابة المشغّل قيد التطوير. حالياً، تواصل مع فريق الإدارة لنشر رحلة جديدة بالنيابة عنك.
-        </p>
         <Link
           href="/operator/legs"
-          className="font-ar mt-3 inline-block text-xs text-amber-200 hover:underline"
+          className="font-ar mt-2 inline-block text-xs text-ink-muted hover:text-gold-light"
         >
           ← الرجوع إلى قائمة الرحلات
         </Link>
-      </div>
+      </header>
+
+      <OperatorPublishForm mode="session" />
     </section>
   );
 }

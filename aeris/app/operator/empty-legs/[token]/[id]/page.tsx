@@ -136,6 +136,7 @@ export default async function OperatorEmptyLegDetailPage({ params }: PageProps) 
         {leg.status === 'available' ? (
           <section className="mt-6">
             <OperatorLegActions
+              mode="token"
               token={params.token}
               legId={leg.id}
               currentPrice={leg.current_price}
