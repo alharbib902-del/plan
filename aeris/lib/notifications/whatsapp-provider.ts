@@ -116,33 +116,47 @@ export function normaliseSaudiPhoneE164(input: string): string | null {
 }
 
 // ============================================================
-// In-memory account-wide rate-limit guard
+// In-memory account-wide rate-limit guard (trial-mode only)
 //
 // Codex round 1 PR #46 P2 fix: the wasender trial caps at 1
-// message per minute PER ACCOUNT (not per recipient). The
-// previous per-recipient keying let two back-to-back sends to
-// different phones (e.g. welcome to operator A + reset to
-// operator B in the same minute) pass the local guard and hit
-// the wasender server-side 429 — which still consumes a slot
-// from the trial budget. Keying the guard globally short-
-// circuits the second send before the network call so the
-// trial slot is preserved and the alert banner explains why.
+// message per minute PER ACCOUNT (not per recipient). Account-
+// wide keying short-circuits the second send before the
+// network call so the trial slot is preserved and the alert
+// banner explains why.
+//
+// Codex round 2 PR #46 P2 fix #1 (race condition): the slot is
+// reserved IMMEDIATELY before fetch (no await between the
+// isRateLimited() check and recordSend()). Two Server Actions
+// in the same warm Vercel instance executing concurrently
+// would otherwise both pass the check and both POST to
+// wasender, defeating the guard. Reserving up-front means the
+// second sync pass through this function sees the slot taken.
+//
+// Codex round 2 PR #46 P2 fix #2 (subscription off switch):
+// WASENDER_TRIAL_RATE_LIMIT_ENABLED gates the throttle. Default
+// 'true' protects the trial budget; flip to 'false' in Vercel
+// env after the wasender subscription upgrade removes the
+// 1 msg/min/account cap on the provider side. The provider
+// itself stays on (only the throttle is bypassed).
 //
 // Vercel serverless instances are ephemeral and the guard is
 // per-instance, so two cold instances can each fire one
 // message in the same minute. That's still strictly safer
-// than per-recipient keying, and the wasender server-side
-// limit cleans up the rest. For production we'd promote
-// this to a Postgres advisory lock keyed on a global
-// 'wasender_send' resource.
-//
-// The 60s window matches the trial cap exactly; subscription
-// upgrades remove the cap on wasender's side and this guard
-// becomes a no-op (the per-account limit is gone, sends fire
-// freely until the next downstream throttle).
+// than no guard, and the wasender server-side limit cleans up
+// the rest. For production we'd promote this to a Postgres
+// advisory lock keyed on a global 'wasender_send' resource.
 // ============================================================
 
 let lastSendAt: number | null = null;
+
+export function isTrialRateLimitEnabled(): boolean {
+  // Default ON. Operators flip WASENDER_TRIAL_RATE_LIMIT_ENABLED
+  // to "false" in Vercel env after the wasender subscription
+  // upgrade. Any other value (incl. unset / '1' / 'true') keeps
+  // the trial throttle active so we fail safe — never burn
+  // through trial credit because of a typo'd env value.
+  return process.env.WASENDER_TRIAL_RATE_LIMIT_ENABLED !== 'false';
+}
 
 export function isRateLimited(now: number = Date.now()): boolean {
   if (lastSendAt === null) return false;
@@ -197,12 +211,30 @@ export async function sendWhatsAppMessage(
     };
   }
 
-  if (isRateLimited()) {
-    return {
-      ok: false,
-      reason: 'rate_limited',
-      detail: 'local guard: 1 message per minute (account-wide trial cap)',
-    };
+  // Codex round 2 PR #46 P2 fix #1: check + reserve the slot
+  // BEFORE the network call so concurrent Server Actions in the
+  // same warm Vercel instance cannot both pass the check before
+  // either records the send. JavaScript's single-threaded
+  // execution guarantees these two lines run atomically with
+  // respect to other invocations until the next `await`, which
+  // is the fetch() below — so the second concurrent caller
+  // sees the reservation when it gets its sync turn.
+  //
+  // Codex round 2 PR #46 P2 fix #2: trial throttle is gated by
+  // WASENDER_TRIAL_RATE_LIMIT_ENABLED. After subscription, the
+  // founder flips the env var and this entire block is bypassed.
+  if (isTrialRateLimitEnabled()) {
+    if (isRateLimited()) {
+      return {
+        ok: false,
+        reason: 'rate_limited',
+        detail: 'local guard: 1 message per minute (account-wide trial cap)',
+      };
+    }
+    // Reserve the slot now — failed attempts also consume the
+    // trial window from wasender's perspective, so we count
+    // the attempt up-front.
+    recordSend();
   }
 
   const url = `${env.baseUrl.replace(/\/$/, '')}${SEND_MESSAGE_PATH}`;
@@ -231,11 +263,6 @@ export async function sendWhatsAppMessage(
           : 'network error',
     };
   }
-
-  // Record the send attempt regardless of outcome — the trial
-  // cap counts attempts, not successes, so a 5xx still consumes
-  // the per-minute slot from wasender's perspective.
-  recordSend();
 
   let body: unknown;
   try {

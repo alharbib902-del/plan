@@ -28,6 +28,11 @@
  *  20.  Rate-limit guard — different recipient also blocks
  *        (account-wide, Codex round 1 PR #46 P2 fix)
  *  21.  Rate-limit guard — guard records on failed network too
+ *  22.  Rate-limit guard — concurrent sends: slot reserved
+ *        before fetch (Codex round 2 PR #46 P2 fix #1)
+ *  23.  Rate-limit guard — disabled when
+ *        WASENDER_TRIAL_RATE_LIMIT_ENABLED='false'
+ *        (Codex round 2 PR #46 P2 fix #2)
  */
 
 import { strict as assert } from 'node:assert';
@@ -121,6 +126,9 @@ async function main(): Promise<void> {
   installFetchMock();
   process.env.WASENDER_API_KEY = 'test-key';
   process.env.WASENDER_API_BASE_URL = 'https://test.wasender.local';
+  // Explicit default: trial throttle ON for cases 1-22; case 23
+  // flips it off for the disabled-mode assertion.
+  process.env.WASENDER_TRIAL_RATE_LIMIT_ENABLED = 'true';
 
   // ----- normaliseSaudiPhoneE164 -----
 
@@ -394,6 +402,67 @@ async function main(): Promise<void> {
     assert.equal(second.ok, false);
     if (!second.ok) assert.equal(second.reason, 'rate_limited');
     assert.equal(fetchCalls.length, 1);
+  });
+
+  await test('guard: concurrent sends — slot reserved before fetch', async () => {
+    // Codex round 2 PR #46 P2 fix #1: previously the slot was
+    // recorded AFTER fetch returned, so two Server Actions in
+    // the same warm Vercel instance executing concurrently
+    // could both pass isRateLimited() before either reached
+    // recordSend(). Now the slot is reserved synchronously
+    // between the check and the await, so the second concurrent
+    // caller's sync turn sees the reservation.
+    __test_resetWhatsAppRateLimitGuard();
+    resetFetchState();
+    setNextResponse(() =>
+      jsonResponse(200, {
+        success: true,
+        data: { msgId: 1, jid: '', status: 'in_progress' },
+      })
+    );
+
+    // Promise.all kicks both off without an await in between,
+    // so both enter sendWhatsAppMessage before either yields.
+    const [a, b] = await Promise.all([
+      sendWhatsAppMessage({ to: '+966500000014', text: 'a' }),
+      sendWhatsAppMessage({ to: '+966500000015', text: 'b' }),
+    ]);
+    assert.equal(a.ok, true);
+    assert.equal(b.ok, false);
+    if (!b.ok) assert.equal(b.reason, 'rate_limited');
+    // Crucially: only one fetch call. The second short-circuited
+    // BEFORE the network call (no wasted trial slot).
+    assert.equal(fetchCalls.length, 1);
+  });
+
+  await test('guard: disabled when WASENDER_TRIAL_RATE_LIMIT_ENABLED=false', async () => {
+    // Codex round 2 PR #46 P2 fix #2: after subscription the
+    // founder flips the env var off; the throttle becomes a
+    // no-op so paid welcome/reset/OTP sends are not artificially
+    // delayed.
+    process.env.WASENDER_TRIAL_RATE_LIMIT_ENABLED = 'false';
+    __test_resetWhatsAppRateLimitGuard();
+    resetFetchState();
+    setNextResponse(() =>
+      jsonResponse(200, {
+        success: true,
+        data: { msgId: 1, jid: '', status: 'in_progress' },
+      })
+    );
+    const a = await sendWhatsAppMessage({
+      to: '+966500000014',
+      text: 'a',
+    });
+    const b = await sendWhatsAppMessage({
+      to: '+966500000015',
+      text: 'b',
+    });
+    assert.equal(a.ok, true);
+    assert.equal(b.ok, true);
+    // Both calls reached the network — throttle is bypassed.
+    assert.equal(fetchCalls.length, 2);
+    // Restore default for any subsequent tests.
+    process.env.WASENDER_TRIAL_RATE_LIMIT_ENABLED = 'true';
   });
 
   // ============================================================
