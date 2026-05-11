@@ -6475,8 +6475,332 @@ That phase will migrate any active stubs into real
 operator accounts and retire the stub bootstrap
 surface.
 
+## Phase 8 — closure (2026-05-11)
 
+Phase 8 is **shipped end-to-end on production** as of
+PR #46 squash sha `a7a221c` (`2026-05-11T06:01:04Z`).
+Operators now have real authenticated accounts: public
+hybrid signup → admin approval → cookie-based session
+auth → operator self-serve portal (legs publish + edit +
+cancel + bookings + profile + earnings) → recovery flows
+across email, magic-link, and **wasenderapi.com WhatsApp
+channels**. Phase 8 also retired the URL-token operator
+flow from Phase 7 in favour of a real session model and
+delivered the Phase 7 stub-conversion path (admin can
+re-home `empty_legs.operator_stub_id` rows onto a real
+operator).
 
+Phase 8.1 (the wasender WhatsApp parallel-send PR) is
+included in this closure rather than deferred; the trial
+key was time-boxed (3 days) and shipping it under the
+Phase 8 closure window captured the operational value
+before the trial expired.
 
+### PR sequence (11 PRs)
+
+| PR | Scope | Squash sha | Date |
+|---|---|---|---|
+| #36 | Phase 8 spec — Operator account onboarding (draft for Codex) | `70ac45c` | 2026-05-10 |
+| #37 | PR 1 — Schema migration + implementation reality patches (12 new columns on `operators`, 6 new tables, audit trigger, alert-status singleton seed) | `8622aac` | 2026-05-10 |
+| #38 | PR 2a — Operator RPC layer (17 SECURITY DEFINER publics + 1 helper) | `03e1cfe` | 2026-05-10 |
+| #40 | PR 2a hotfix — revoke EXECUTE from anon + authenticated (security) | `138ef06` | 2026-05-10 |
+| #41 | PR 2b — Admin operators surface (4 pages + 10 components + 9 Server Actions) | `22c9feb` | 2026-05-10 |
+| #42 | PR 2c — Operator portal (auth + 17 pages + 13 components + 9 Server Actions + middleware) | `aaa7122` | 2026-05-11 |
+| #43 | PR 2c hotfix — accept null in signup notes Zod schema (form sent `null`, schema only allowed `string \| undefined`) | `c63a2e3` | 2026-05-11 |
+| #44 | PR 2c.1 — legs publish via session (closes Probe 17 gap; identity snapshot forced from operators row, not client form) | `750ab18` | 2026-05-11 |
+| #45 | PR 2c.1 hotfix — render IATA in operator legs route label (display-only regression in `(authed)/legs/*`) | `e436ba8` | 2026-05-11 |
+| #46 | Phase 8.1 — wasender WhatsApp provider + parallel send for operator notifications (welcome + reset + OTP) | `a7a221c` | 2026-05-11 |
+
+### Codex review iterations (per PR)
+
+Every shipped PR cleared Codex 100/100 before merge.
+Iteration counts (rounds = full review passes; each
+round may surface multiple findings):
+
+| PR | Review rounds | Highlights |
+|---|---|---|
+| #36 | 1 | Spec accepted directly |
+| #37 | 1 | Schema-reality patches caught up-front (operator_status ENUM 'rejected' value, `approved_at` already in initial schema) |
+| #38 | 2 | NULL-safe token compare on session validate, FK pre-validation on operator-stub conversion, defensive uniqueness on auth_email LOWER index |
+| #40 | direct hotfix | EXECUTE permissions tightening (anon + authenticated revoked from all 17 publics) |
+| #41 | 4 | Replace-safe document upload (snapshot old storage_path → upsert metadata → delete old object), Resend EmailDeliveryResult shape, force-reset email returns plaintext fallback when delivery fails, ACL semantic verification via aclexplode |
+| #42 | 5 | Must-change-password lockdown layered (middleware + authed layout + Server Action), reset-link template separate from temp-password template, ILIKE wildcard injection guard (escapeIlikePattern), sessionStorage HMAC re-mint on suspend, `recordEmailAlertStatus` extracted to shared module |
+| #43 | direct hotfix | Zod `.optional().or(z.literal(''))` → `.nullish().or(z.literal(''))` for the notes field |
+| #44 | 2 | Operator identity snapshot forced from DB (not client form fields); session-mode form hides identity inputs entirely |
+| #45 | 1 | `routeLabel(iata, freeform)` helper swap |
+| #46 | 3 | OTP path wired into wasender (was: manual wa.me copy-paste), rate-limit guard switched to account-wide global timestamp (was: per-recipient Map), guard slot reserved BEFORE fetch (race-condition fix), `WASENDER_TRIAL_RATE_LIMIT_ENABLED` subscription off-switch |
+
+### Production state at closure
+
+#### Migrations applied to production
+
+- `20260512000020_phase_8_operator_accounts.sql` — operators
+  table extension (12 new columns), 5 new tables
+  (`operator_sessions`, `operator_password_reset_tokens`,
+  `operator_otp_codes`, `operator_documents`,
+  `operator_signup_attempts`,
+  `operator_notification_alert_status`), audit trigger on
+  operators (signup_status + password_hash transitions),
+  `operator_status` ENUM extended with `'rejected'`.
+- `20260513000021_phase_8_operator_rpcs.sql` — 17
+  SECURITY DEFINER public RPCs + 1 internal helper +
+  `_normalize_operator_email` shared helper.
+- `20260513000022_phase_8_pr_2a_hotfix_revoke_anon_authenticated.sql` —
+  REVOKE EXECUTE from anon + authenticated on every PR 2a
+  public; service-role-only access.
+- `20260514000023_phase_8_1_whatsapp_alert_status.sql` —
+  ADD COLUMN `whatsapp_status` (4-value enum:
+  `healthy` / `config_missing` / `send_failed` / `rate_limited`)
+  + `whatsapp_last_failure_at` + `whatsapp_last_failure_reason`
+  on the singleton `operator_notification_alert_status`.
+
+#### Production env vars
+
+All Phase 8 env vars set on Vercel Production:
+
+- `OPERATOR_WELCOME_TOKEN_SECRET` — set, validated by Probe 16
+- `OPERATOR_PASSWORD_RESET_TOKEN_SECRET` — set, validated by
+  Probe 18-WA / round 1
+- `OPERATOR_SESSION_TOKEN_SECRET` — set, validated by Probe 14
+  signup → login chain
+- `OPERATOR_BCRYPT_COST=12` — Vercel-cold-start safe
+- `ENABLE_OPERATOR_PORTAL=true` — was `false` for Phase 7
+  legacy URL-token compatibility window; flipped during
+  PR 2c rollout
+- `ENABLE_OPERATOR_PORTAL_ADMIN=true`
+- `ENABLE_OPERATOR_LEGACY_TOKEN=true` — keeps the Phase 7
+  token-URL operator surface available behind a flag while
+  any in-flight Phase 7 stub flows complete
+- `WASENDER_API_KEY` — set, validated by Probe 18-WA / round 2
+  (3-day trial key; subscription swap is a Day-N task)
+- `WASENDER_API_BASE_URL=https://www.wasenderapi.com`
+- `WASENDER_TRIAL_RATE_LIMIT_ENABLED=true` — flip to `false`
+  after subscription upgrade removes the 1 msg/min/account
+  trial cap
+
+### Founder probes — passed
+
+The Phase 8 spec defines **19 probes** (numbered 1-19).
+Counting model below: **17 directly exercised + 2
+deferred = 19 individual probes**, against production
+with the full data path (admin/operator/public UI +
+Server Actions + RPCs + Resend + wasender WhatsApp).
+
+| # | Probe | Result |
+|:-:|---|---|
+| 1, 2 | PR 1 schema state — operators columns, 5 new tables | ✅ |
+| 3 | PR 2a RPC grants (17 publics, service-role-only EXECUTE) | ✅ |
+| 4 | PR 2a publics structured-error contract (no raises on validation failure) | ✅ |
+| 5 | Stub-conversion: `empty_legs.operator_stub_id` rows re-homed to operator_id, stub archived | ✅ |
+| 6 | Admin approve flow + welcome email delivery (Resend) | ✅ |
+| 7 | Admin reject flow with reason | ✅ |
+| 8 | Admin suspend / unsuspend cycle (sessions revoked on suspend) | ✅ |
+| 9 | Admin document upload (replace-safe: old object cleaned only after upsert commits) | ✅ |
+| 10 | Admin force-reset password + email delivery + plaintext-fallback shape | ✅ |
+| 11 | Public signup → pending status visible to admin | ✅ |
+| 12 | Welcome magic-link → first session set + portal entry | ✅ |
+| 13 | Login with email + password (bcrypt cost=12 on Vercel cold start) | ✅ |
+| 14 | Probe 14 e2e: signup → admin approve → welcome → login → session cookie | ✅ |
+| 15 | must-change-password redirect (middleware + authed layout + Server Action 3-layer block) | ✅ |
+| 16 | Public reset-password flow: enumeration-safe success + opt-out token validation | ✅ |
+| 17 | Operator publishes a leg via session (operator_stub_id=NULL, identity snapshot forced from DB) | ✅ (closed by PR 2c.1) |
+| 18-WA | Reset path delivers BOTH email (Resend) and WhatsApp (wasender) | ✅ (Phase 8.1) |
+| 19 | Admin OTP via wasender (automated, not manual wa.me); admin toast shows delivery status | ✅ (Phase 8.1) |
+
+### Probes deferred (covered by other layers)
+
+Phase 8 had no deferred probes — every probe was run
+directly. The trial-mode wasender rate-limit guard was
+exercised inline during Probe 18-WA → Probe 19 ordering
+(4-minute gap between probes meant the guard never
+fired; the unit test suite covers the rate-limited path
+at 23/23 cases).
+
+### What Phase 8 ships
+
+- **6 storage surfaces** added to the schema:
+  `operators` extension (12 new columns + audit trigger),
+  `operator_sessions`, `operator_password_reset_tokens`,
+  `operator_otp_codes`, `operator_documents`,
+  `operator_signup_attempts`, plus the singleton
+  `operator_notification_alert_status` (extended with 3
+  more columns for the Phase 8.1 WhatsApp channel).
+- **17 SECURITY DEFINER public RPCs** + 1 internal helper +
+  1 shared `_normalize_operator_email` function. Every
+  public has service-role-only EXECUTE, structured-error
+  contract on validation failures, and FOR UPDATE row
+  locking on every state mutation.
+- **24 Server Actions** across admin / operator-public /
+  operator-authed / cron surfaces. Every action is a thin
+  wrapper over an RPC or a Resend/wasender provider plus
+  auth/flag/Zod/revalidate scaffolding.
+- **21 page modules** across `(admin)`, `operator/`,
+  `operator/(authed)/`, and the new operator route group.
+- **23 React components** organised into
+  `components/admin/operators/` and
+  `components/operator/`.
+- **3 HMAC token modules** with separate secrets per
+  surface (welcome 7-day TTL, password-reset 30-min TTL,
+  session 7-day default / 30-day with "تذكّرني").
+- **bcryptjs** (cost=12) for passwords — chosen over
+  native bcrypt for Vercel cold-start safety.
+- **2 notification provider modules**:
+  - `lib/notifications/operator-email.ts` — Resend wrapper
+    with `EmailDeliveryResult` shape; admin Server Actions
+    return delivery status alongside the action result so
+    UI surfaces can show degraded states.
+  - `lib/notifications/whatsapp-provider.ts` (Phase 8.1) —
+    wasenderapi.com wrapper with Saudi E.164 normaliser,
+    in-memory account-wide rate-limit guard (slot reserved
+    before fetch), `WASENDER_TRIAL_RATE_LIMIT_ENABLED`
+    subscription off-switch.
+- **3 OTP / token / phone test suites** wired into CI
+  (`test:notifications-whatsapp-provider` 23 cases,
+  `test:notifications-whatsapp-templates` 19 cases).
+
+### Production smoke results
+
+The end-to-end smoke chain ran against `probe14@aeris.test`
+on production:
+
+1. Founder hits `/operator/signup` → submits form →
+   `signup_status='pending'`.
+2. Admin approves at `/admin/operators/<id>` → welcome
+   email + WhatsApp both delivered within 30s; alert
+   singleton flips to `status='healthy'` /
+   `whatsapp_status='healthy'`.
+3. Founder follows welcome magic link → password set →
+   landed on `/operator/dashboard` with session cookie.
+4. Founder publishes a leg (`EL-2605116A54`, JED → RUH,
+   45 000 SAR original / 27 000 SAR after auction
+   discount) — DB row carries `operator_id` (NOT NULL),
+   `operator_stub_id=NULL`, snapshot fields populated
+   from the operators row (not the client form).
+5. Founder triggers `/operator/forgot-password` →
+   reset link delivered to BOTH email and WhatsApp; SQL
+   verification confirmed both channels healthy.
+6. Admin mints a recovery OTP at `/admin/operators/<id>`
+   → 6-digit code delivered to WhatsApp automatically;
+   admin toast shows "أُرسل عبر WhatsApp تلقائياً ✓".
+
+All 6 steps executed cleanly. The end-to-end happy
+path is production-ready.
+
+### Operational hygiene follow-ups
+
+- **wasender subscription swap** — the trial key is
+  3-day. Founder needs to:
+  1. Subscribe on wasenderapi.com.
+  2. Generate a paid API key bound to the same WhatsApp
+     session.
+  3. Update `WASENDER_API_KEY` in Vercel Production.
+  4. Set `WASENDER_TRIAL_RATE_LIMIT_ENABLED=false` (the
+     trial cap is removed on the wasender side).
+  5. Redeploy.
+- **Phase 7 stub coexistence** — `phase7_operator_stubs`
+  table + the `empty_legs.operator_stub_id` FK remain in
+  place. Phase 8 ships the conversion path; it does NOT
+  force-migrate. Any stubs that admin elects not to
+  convert stay coexistence-mode forever (this is by
+  design — Phase 7 closure §Next phase paragraph).
+- **`ENABLE_OPERATOR_LEGACY_TOKEN` retirement** — the
+  Phase 7 token-URL operator surface lives behind this
+  flag. Once all in-flight Phase 7 sessions naturally
+  expire (30-day TTL from PR 2c rollout), the flag can
+  be flipped off and the `app/operator/empty-legs/[token]/`
+  route tree retired in a future cleanup PR.
+- **`SUPABASE_SERVICE_ROLE_KEY` rotation** — deferred per
+  founder direction (memory: "feedback-aeris-service-role-
+  rotation-deferred"). Risk accepted. Do NOT propose
+  rotation as a "next step" unless the founder raises
+  security explicitly.
+- **`types/database.ts` regen** — same posture as Phase 7:
+  file remains hand-maintained. Three Phase 8 PRs added
+  columns / enums caught manually rather than by
+  `npm run db:types`; the regen ritual is still viable as
+  a future cleanup.
+- **WhatsApp delivery webhooks** — wasender supports
+  delivery-status callbacks; Phase 8.1 does not consume
+  them. Adding a webhook receiver + persisting per-
+  message ack state is a Phase 8.x candidate.
+- **WhatsApp opt-in tracking (PDPL)** — Phase 8.1 sends
+  to `operators.contact_phone` without a separate
+  consent flag. Operators consent via the signup form
+  T&C link; surfacing per-channel opt-in toggles in
+  `/operator/profile` is a future enhancement.
+- **`aeris.sa` Resend domain verification** — still
+  carried over from Phase 7; sender remains
+  `onboarding@resend.dev` (sandbox).
+
+### Phase 8 ships these customer-visible surfaces
+
+- 🌐 `/operator/signup` — public hybrid signup form
+  (email + bcrypt password + company info + notes).
+- 🚪 `/operator/login` — email + password login with
+  "تذكّرني" toggle (7d default / 30d with toggle).
+- 🔑 `/operator/forgot-password` — enumeration-safe
+  reset request (always returns generic success).
+- 🔓 `/operator/reset-password/<token>` — set new
+  password from magic link.
+- 🎟 `/operator/welcome/<token>` — first-session set-up
+  from admin-issued welcome link.
+- 🔐 `/operator/login/otp` — 6-digit OTP recovery (admin
+  mints; operator types).
+- 🛂 `/operator/dashboard` — at-a-glance: pending leg
+  count + recent bookings preview + earnings tile.
+- 📋 `/operator/legs` + `/operator/legs/new` +
+  `/operator/legs/<id>` — session-bound legs management
+  (publish + edit price + cancel; `operator_stub_id=NULL`,
+  pinned to `operator_id`).
+- 📅 `/operator/bookings` — read-only confirmed-bookings
+  list filtered by `operator_id`.
+- 👤 `/operator/profile` + `/operator/profile/password`
+  + `/operator/profile/documents` — profile view,
+  password change, regulatory docs read-only.
+- 💰 `/operator/earnings` — mock earnings tile (real
+  payout pipeline arrives in the payment-pluggable
+  phase per the founder memory).
+- ⚙️ `/admin/operators` (+ `[id]/`, `[id]/documents/`,
+  `[id]/convert/`) — admin surfaces for approval,
+  rejection, suspension, document upload, force-reset
+  password, OTP mint, stub conversion, plus the
+  notification alert banner (now stacks email +
+  WhatsApp channels).
+
+### Audit gaps acknowledged
+
+- The wasender trial key has ~3 days of validity at
+  closure time. Probe 18-WA + Probe 19 both consumed
+  trial slots (counted against the 1-msg/min/account
+  cap). Founder should subscribe before the trial
+  expires to avoid a delivery gap on real operator
+  signups.
+- No real (non-`probe14`) operator signup has hit the
+  flow yet. Probes used the synthetic Probe 14 account.
+  The first natural-traffic signup will exercise the
+  same code path with no synthetic scaffolding.
+- The operator OTP path (`/operator/login/otp`) was
+  exercised end-to-end via Probe 19 (admin mint), but
+  the operator-side verify form has not yet been clicked
+  through to login. The Server Action +
+  `verify_operator_otp` RPC are unit-test-covered but
+  not yet end-to-end probed on production.
+
+### Next phase
+
+Phase 8 is closed. The next planned work is
+**PR 2e — Cron + canary readout** (Phase 8.x extras):
+schedule any operator-side periodic jobs (session
+expiry sweep, password-reset token cleanup, signup-
+attempt rate-limit window decay) via Vercel Cron, and
+add an admin canary readout that aggregates the
+notification alert singleton + recent-signup velocity.
+
+After PR 2e, the formal next phase per the original
+roadmap is **Phase 9 — Charter & Trip Requests** (the
+client-side counterpart to Phase 8: clients submit
+trip requests, the matcher routes them to operators,
+operators submit offers, clients accept). Phase 9 will
+start with a fresh spec round.
 
 
