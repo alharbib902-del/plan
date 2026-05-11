@@ -145,32 +145,43 @@ export function OperatorPublishForm(props: OperatorPublishFormProps) {
       </p>
 
       <Section>
-        <Field label={emptyLegsAr.fieldOperatorName} name="operator_name">
-          <input
-            id="operator_name"
-            name="operator_name"
-            type="text"
-            className={inputCls}
-          />
-        </Field>
-        <Field label={emptyLegsAr.fieldOperatorPhone} name="operator_phone">
-          <input
-            id="operator_phone"
-            name="operator_phone"
-            type="tel"
-            dir="ltr"
-            className={inputCls}
-          />
-        </Field>
-        <Field label={emptyLegsAr.fieldOperatorEmail} name="operator_email">
-          <input
-            id="operator_email"
-            name="operator_email"
-            type="email"
-            dir="ltr"
-            className={inputCls}
-          />
-        </Field>
+        {/* Codex round 1 PR #44 P2 fix: in session mode the
+            identity snapshot (name/phone/email) comes from the
+            authenticated operators row server-side, so the
+            form does NOT expose these fields as editable. The
+            Server Action ignores any client-supplied values
+            anyway; hiding them here prevents user confusion
+            and removes a spoofing surface entirely. */}
+        {props.mode === 'token' ? (
+          <>
+            <Field label={emptyLegsAr.fieldOperatorName} name="operator_name">
+              <input
+                id="operator_name"
+                name="operator_name"
+                type="text"
+                className={inputCls}
+              />
+            </Field>
+            <Field label={emptyLegsAr.fieldOperatorPhone} name="operator_phone">
+              <input
+                id="operator_phone"
+                name="operator_phone"
+                type="tel"
+                dir="ltr"
+                className={inputCls}
+              />
+            </Field>
+            <Field label={emptyLegsAr.fieldOperatorEmail} name="operator_email">
+              <input
+                id="operator_email"
+                name="operator_email"
+                type="email"
+                dir="ltr"
+                className={inputCls}
+              />
+            </Field>
+          </>
+        ) : null}
         <Field label={emptyLegsAr.fieldAircraftText} name="aircraft_text">
           <input
             id="aircraft_text"

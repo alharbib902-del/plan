@@ -154,15 +154,41 @@ export async function operatorPublishLegSession(input: {
   const v = parsed.data;
 
   const client = createAdminClient();
+
+  // Codex round 1 PR #44 P2 fix: operator identity snapshot
+  // (name/phone/email) MUST come from the authenticated
+  // operators row, not from the client form. Without this,
+  // an authenticated operator could leave fields blank or
+  // spoof another company/contact in the leg snapshot — the
+  // snapshot is later shown to admin + copied into bookings.
+  // The client values arriving in `v.operator_name` etc are
+  // discarded here; we keep the form fields disabled in
+  // session mode (PR 2c.1 follow-up) so the operator never
+  // sees them as editable.
+  const { data: opRow, error: opErr } = await client
+    .from('operators')
+    .select('company_name, contact_phone, contact_email')
+    .eq('id', session.operator_id)
+    .maybeSingle();
+  if (opErr || !opRow) {
+    console.error(
+      '[operators-empty-legs-authed.publish] operator profile lookup failed',
+      opErr
+    );
+    return { ok: false, error: 'operator_lookup_failed' };
+  }
+
   const { data, error } = await client.rpc('publish_empty_leg', {
     // Operator-scoping: session.operator_id is the source of
     // truth. The operator cannot publish a leg under a
     // different account even if they craft the input.
     p_operator_id: session.operator_id,
     p_operator_stub_id: null,
-    p_operator_name: v.operator_name ?? null,
-    p_operator_phone: v.operator_phone ?? null,
-    p_operator_email: v.operator_email ?? null,
+    // Identity snapshot from the operators row — never
+    // client-supplied (Codex round 1 PR #44 P2 fix).
+    p_operator_name: opRow.company_name,
+    p_operator_phone: opRow.contact_phone,
+    p_operator_email: opRow.contact_email,
     p_aircraft_id: null,
     p_aircraft_text: v.aircraft_text ?? null,
     p_parent_booking_id: null,
