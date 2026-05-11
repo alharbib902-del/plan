@@ -22,11 +22,19 @@
 --   §6   operator_cron_tick_history            — observability
 --   §7   record_operator_cron_tick             — INSERT helper
 --
--- All cleanup RPCs return JSON shape
---   { ok: true, deleted_count: int }
--- with FOR UPDATE row locking on the DELETE-WHERE so a
--- concurrent insert of a fresh token (e.g. during a peak
--- signup minute) does not race the cleanup.
+-- All cleanup RPCs follow the same shape: a plain
+--   DELETE FROM <table> WHERE <expired-or-consumed-predicate>
+-- followed by GET DIAGNOSTICS ROW_COUNT, returning
+--   { ok: true, deleted_count: int }.
+-- No explicit FOR UPDATE / SELECT-then-DELETE claim pattern
+-- is needed: PostgreSQL's DELETE acquires a row-level lock
+-- on each matching row before removing it, and the predicate
+-- itself filters on monotonically-true conditions
+-- (expired_at <= NOW(), consumed_at IS NOT NULL,
+-- attempted_at < NOW() - INTERVAL ...). A concurrent INSERT
+-- of a fresh row cannot match because its timestamps are in
+-- the future relative to the cleanup window, so cron cannot
+-- delete a row that signup just wrote.
 --
 -- Every public RPC is REVOKE ALL FROM anon, authenticated
 -- (service_role only) — same posture as Phase 8 PR 2a +
