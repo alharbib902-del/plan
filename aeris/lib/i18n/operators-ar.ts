@@ -53,6 +53,67 @@ export const operatorsAr = {
   adminConvertTitle: 'تحويل سجلّ مشغّل Phase 7',
 
   // ------------------------------------------------------------
+  // Phase 8 PR 2e — admin canary readout
+  // ------------------------------------------------------------
+  canary: {
+    title: 'لوحة الصحّة التشغيلية للمشغّلين',
+    subtitle:
+      'مؤشّرات سريعة لحالة Phase 8: حركة التسجيل، صحّة الإشعارات، عدّاد محاولات التسجيل، وحالة مهام التنظيف الدورية.',
+    backLink: 'العودة لقائمة المشغّلين',
+    navLabel: 'لوحة الصحّة',
+
+    // Velocity card
+    velocityTitle: 'حركة التسجيل + توزيع الحالات',
+    signupsLast24h: 'تسجيلات آخر 24 ساعة',
+    signupsLast7d: 'تسجيلات آخر 7 أيام',
+
+    // Notification health
+    notificationsTitle: 'صحّة قنوات الإشعار',
+    notificationsUnknown:
+      'تعذّر قراءة سجلّ حالة الإشعارات. تحقّق من اتصال قاعدة البيانات.',
+    emailChannel: 'البريد (Resend)',
+    whatsappChannel: 'واتساب (wasender)',
+    statusLabels: {
+      healthy: 'سليم',
+      config_missing: 'إعدادات ناقصة',
+      send_failed: 'فشل الإرسال',
+      rate_limited: 'مُقيَّد بالحدّ',
+    } as Record<string, string>,
+    lastFailureLabel: 'آخر فشل:',
+    atLabel: 'في:',
+
+    // Attempt mix
+    attemptMixTitle: 'محاولات التسجيل (آخر 24 ساعة)',
+    attemptMixSubtitle: 'إجمالي المحاولات في النافذة: {total}',
+    attemptSuccess: 'ناجحة',
+    attemptDuplicate: 'بريد مكرَّر',
+    attemptRateLimited: 'مُقيَّدة بحدّ المعدّل',
+    attemptValidationFailed: 'فشل التحقق',
+
+    // Cron health
+    cronTitle: 'حالة مهام التنظيف الدورية',
+    cronSubtitle:
+      'كلّ مهمّة تكتب صفّاً في operator_cron_tick_history بعد كلّ تشغيل. الحالة "متأخّرة" إن مرّ وقت أطول من ضعف الفاصل المتوقَّع.',
+    cronJobLabel: 'المهمّة',
+    cronLastRunLabel: 'آخر تشغيل',
+    cronDeletedCountLabel: 'صفوف محذوفة',
+    cronStatusLabel: 'الحالة',
+    cronStatusHealthy: 'سليمة',
+    cronStatusStale: 'متأخّرة',
+    cronStatusError: 'فشل',
+    cronStatusUnknown: 'لم تُشغَّل بعد',
+    cronNeverRan: 'لم تُشغَّل بعد',
+
+    // Relative time formatting. The page formatter
+    // assembles "<prefix> <N> <unit>", e.g. "منذ 5 دقيقة".
+    justNow: 'الآن',
+    relativePrefix: 'منذ',
+    minutesUnit: 'دقيقة',
+    hoursUnit: 'ساعة',
+    daysUnit: 'يوم',
+  },
+
+  // ------------------------------------------------------------
   // List filter chips
   // ------------------------------------------------------------
   filters: {
