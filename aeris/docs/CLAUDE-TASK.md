@@ -390,31 +390,60 @@ ALTER TABLE trip_distribution_log ENABLE ROW LEVEL SECURITY;
 ### §3.9 — Cleanup cron RPCs registered in
 `operator_cron_tick_history` (PR 1 + PR 4)
 
-Add 3 new job names to the existing CHECK constraint:
+The CHECK extension is split across PR ownership boundaries
+(Codex round 2 P2 #2 fix) so each PR's migration only touches
+the constraint when its corresponding cron route + RPC are
+also landing.
+
+**PR 1 migration adds 3 client-cleanup job names** (the cron
+routes + RPCs ship in the same migration):
 
 ```sql
--- PR 1 adds these via ALTER TABLE ... DROP CONSTRAINT +
--- ADD CONSTRAINT (Postgres does not support modifying CHECK
--- constraints in place):
 ALTER TABLE operator_cron_tick_history
   DROP CONSTRAINT IF EXISTS operator_cron_tick_history_job_name_check;
 
 ALTER TABLE operator_cron_tick_history
   ADD CONSTRAINT operator_cron_tick_history_job_name_check
   CHECK (job_name IN (
-    -- Phase 8 PR 2e jobs
+    -- Phase 8 PR 2e jobs (existing on production)
     'cleanup_expired_operator_sessions',
     'cleanup_expired_password_reset_tokens',
     'cleanup_expired_otp_codes',
     'cleanup_old_signup_attempts',
-    -- Phase 9 PR 1 jobs
+    -- Phase 9 PR 1 jobs (NEW)
+    'cleanup_expired_client_sessions',
+    'cleanup_expired_client_password_reset_tokens',
+    'cleanup_old_client_signup_attempts'
+  ));
+```
+
+**PR 4 migration extends the CHECK with the 1 redispatch
+job name** (its cron route + RPC ship in the same migration):
+
+```sql
+ALTER TABLE operator_cron_tick_history
+  DROP CONSTRAINT IF EXISTS operator_cron_tick_history_job_name_check;
+
+ALTER TABLE operator_cron_tick_history
+  ADD CONSTRAINT operator_cron_tick_history_job_name_check
+  CHECK (job_name IN (
+    -- Phase 8 PR 2e jobs (existing on production)
+    'cleanup_expired_operator_sessions',
+    'cleanup_expired_password_reset_tokens',
+    'cleanup_expired_otp_codes',
+    'cleanup_old_signup_attempts',
+    -- Phase 9 PR 1 jobs (added by PR 1)
     'cleanup_expired_client_sessions',
     'cleanup_expired_client_password_reset_tokens',
     'cleanup_old_client_signup_attempts',
-    -- Phase 9 PR 4 job
+    -- Phase 9 PR 4 job (NEW)
     'redispatch_stale_trip_requests'
   ));
 ```
+
+Total: **4 new Phase 9 job names** (3 in PR 1 + 1 in PR 4).
+Each PR's migration restates the FULL constraint to keep
+each migration file self-contained for replay/DR scenarios.
 
 Important: rename the table to a generic name? **No** — it
 keeps `operator_` prefix for historical accuracy. Re-purpose
@@ -446,6 +475,39 @@ Mirrors Phase 8 PR 2a operator suite.
 | `client_mint_password_reset_token(p_email, p_token_hash, p_expires_at, p_ip)` | INSERT row; returns `{ok:true, no_op:true}` for unknown emails (enumeration-safe) |
 | `client_verify_password_reset(p_token_hash, p_new_password_hash)` | atomic verify + update + mark used; revokes all sessions |
 
+**Token-hash shape validation contract (Codex round 2 P2 #1
+fix).** Every PR 1 RPC that accepts a `p_session_token_hash`
+or `p_token_hash` parameter MUST validate the input shape via
+the existing Phase 8 PR 2a `_is_sha256_hex(TEXT)` helper
+**before** any read or write. The helper is already on
+production (Phase 8 PR 2a hotfix migration revoked it from
+`anon, authenticated, service_role`; only function-owner
+roles inside SECURITY DEFINER bodies can call it — exactly
+the access pattern PR 1 client RPCs need).
+
+Affected RPCs:
+- `client_login_create_session` — validate `p_session_token_hash`
+- `client_logout` — validate `p_session_token_hash`
+- `client_session_validate` — validate `p_session_token_hash`
+- `client_mint_password_reset_token` — validate `p_token_hash`
+- `client_verify_password_reset` — validate `p_token_hash`
+
+Failure mode: a non-sha256-hex value (NULL, < 64 chars,
+non-hex chars) MUST return `{ok: false, error:
+'invalid_token_hash'}` instead of falling through to a raw
+PostgreSQL CHECK violation. This closes the same DB-boundary
+weakness Phase 8 PR 2a fixed for operator RPCs (see Phase 8
+closure entry §"Lessons learned" #3 in `CLAUDE-WORK-LOG.md`).
+
+PR 1 does NOT redefine `_is_sha256_hex` — the migration
+header explicitly cites the existing function as a dependency.
+Probe 2 grant assertion is amended to verify
+`_is_sha256_hex` ACL is unchanged after PR 1 deploys (no
+accidental GRANT relaxation). A new sub-probe — Probe 3-shape
+— curls `client_session_validate` with a 65-char hex string
+and asserts the structured `invalid_token_hash` error
+surfaces.
+
 ### §4.2 — Trip RPC (PR 2) — 1 public
 
 | RPC | Purpose |
@@ -468,19 +530,36 @@ mechanism without changing the create RPC.
 **Phase 5 token issuance contract for `auto_dispatch_trip_request`
 (Codex round 1 P1 #4 fix)**
 
-The existing Phase 5 dispatch path requires each
-`trip_dispatch_targets` row to carry:
+The existing Phase 5 dispatch path persists each
+`trip_dispatch_targets` row with the columns shipped by the
+Phase 5 migration — **the table has no `operator_id` column**
+(Codex round 2 P1 #1 fix). Operator ownership of a target row
+is recovered downstream via the `target_phone` ↔
+`operators.contact_phone` join, NOT via FK on the targets
+table itself. The columns `auto_dispatch_trip_request` must
+populate (whether by calling `open_phase5_dispatch_round` or
+inlining the equivalent INSERT):
 
 | Column | Source | Notes |
 |---|---|---|
 | `id` | `uuid_generate_v4()` | PK |
 | `dispatch_round_id` | from the newly opened round | FK |
-| `operator_id` | from scoring top-N | FK |
-| `target_phone` | from operators.contact_phone | wa.me destination |
+| `target_phone` | from operators.contact_phone (looked up via the scoring output's `operator_id`) | wa.me destination |
 | `nonce` | `gen_random_bytes(16)::hex` | 32-char hex, HMAC payload |
 | `sent_at` | `NOW()` | dispatch timestamp |
 | `expires_at` | `NOW() + INTERVAL '4 hours'` | matches §1 retention |
 | `status` | `'pending'` | dispatch_target_status enum |
+
+The operator → target relation is preserved in
+`trip_distribution_log` (which DOES have `operator_id` per
+§3.8) plus the `dispatch_target_id` FK back to
+`trip_dispatch_targets`. Admin canary joins flow:
+
+```sql
+trip_distribution_log
+  JOIN trip_dispatch_targets ON dispatch_target_id = id
+  JOIN operators            ON trip_distribution_log.operator_id = operators.id
+```
 
 The RPC MUST either:
 (a) **Reuse** the existing `open_phase5_dispatch_round(trip_id,
@@ -495,10 +574,11 @@ The RPC MUST either:
     shape so operator-side `/operator/offer/[token]` accepts
     the wa.me link without code change.
 
-`trip_distribution_log` rows are populated FROM the resulting
-`trip_dispatch_targets`: one log row per (trip, operator, target)
-triple, with `dispatch_target_id` set so admin canary readouts
-can join back to the dispatch round.
+`trip_distribution_log` rows are populated AFTER the
+`trip_dispatch_targets` rows are inserted: one log row per
+(trip, operator, target) triple, with `operator_id` filled
+from the scoring output and `dispatch_target_id` filled from
+the newly-INSERTed target row's id.
 
 Probe 17 asserts the wa.me link in each
 `trip_distribution_log` row resolves to the operator-side
@@ -782,8 +862,15 @@ extension, ~800 lines)
     re-fire of `auto_dispatch_trip_request` (escape valve
     when auto-dispatch failed silently).
 
-**Env vars:**
-- `ENABLE_TRIP_AUTO_DISTRIBUTION=true`
+**Env vars (Codex round 2 P1 #2 fix — defaults align with
+§2 #11 + Acceptance §7 flip-after-probes discipline):**
+- `ENABLE_TRIP_AUTO_DISTRIBUTION=false` — **DEPLOY VALUE**.
+  Stays `false` until Probes 16 + 17 confirm scoring +
+  Phase 5 token issuance + wa.me delivery on production.
+  Founder flips to `true` explicitly post-probe via Vercel
+  env edit + redeploy. Until then, every client trip lands
+  `pending` for manual admin dispatch via
+  `DispatchPanelV2`.
 - `INTERNAL_DISPATCH_SECRET` (HMAC for the internal route)
 - `TRIP_REDISPATCH_STALE_HOURS=4` (default 4h, configurable)
 
