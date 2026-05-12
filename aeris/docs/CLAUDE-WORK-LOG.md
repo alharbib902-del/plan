@@ -6808,4 +6808,220 @@ trip requests, the matcher routes them to operators,
 operators submit offers, clients accept). Phase 9 will
 start with a fresh spec round.
 
+## Phase 8 PR 2e + 4 hotfixes — closure addendum (2026-05-11)
+
+PR 2e (Cron + canary readout) shipped end-to-end on
+production as of PR #52 squash sha `d2c2020`
+(`2026-05-11T11:15:38Z`), four hotfixes after the
+initial #48 merge. Probe 20 (manual cron-route trigger
++ scheduled Vercel Cron tick + DB tick-history
+verification) passed at `2026-05-11T11:17:41+00`. All
+4 cleanup cron jobs return `{ ok: true, deleted_count }`
+on **manual invocation**, and all 4 wrote `success=true`
+rows to `operator_cron_tick_history`. Vercel Cron
+registration was proven by the **autonomous scheduled
+tick of `cleanup_expired_otp_codes` at `11:00:40+00`**
+(before any manual curl). The other three jobs run on
+a 6-hour cadence and are pending observable evidence
+on their next scheduled invocation; the route handlers,
+auth, GRANTs, and history-write path are all identical
+to the OTP cron, so the scheduled-tick contract is
+sound.
+
+### PR sequence (5 PRs, 1 production migration + 1 hotfix migration)
+
+| PR | Scope | Squash sha |
+|---|---|---|
+| #48 | PR 2e initial — 4 cleanup RPCs + cron routes + canary page + tick history table + 9-case stale-flag test | `138f004` |
+| #49 | Hotfix #1 — revert Functions-map entries that collapsed `Args` inference for every other RPC, breaking CI + canary SSR (HTTP 500) | `d50fb75` |
+| #50 | Hotfix #2 (UX) — hide stale `last_failure_at` / `last_failure_reason` rendering when channel status is `healthy` (canary was painting green badges with red footer text) | `3868625` |
+| #51 | Hotfix #3 — fix `this`-binding loss on Supabase `.rpc()` cast (cron route 500 → `rpc_failed`) | `ea18f95` |
+| #52 | Hotfix #4 — replace `consumed_at` → `used_at` in 2 cleanup RPCs (Postgres error 42703 caught by manual curl + cron tick history audit row) | `d2c2020` |
+
+### Codex iterations
+
+| PR | Rounds | Highlights |
+|---|---|---|
+| #48 | 4 | service_role missing GRANT on 5 RPCs (P1), header overstated FOR UPDATE (P2), inventory named missing helper `_select_op_cron_owner` (P2) |
+| #49 | 1 | accepted directly |
+| #50 | 1 | accepted directly |
+| #51 | 1 | accepted directly |
+| #52 | 1 | accepted directly |
+
+Total Codex review surface: 3 substantive findings on PR
+#48 (caught BEFORE merge — service_role GRANT, FOR UPDATE
+overstatement, helper-name inventory drift) + 4 hotfixes
+after merge for issues that escaped review (Functions-map
+collapse, channel-health UX, `this`-binding loss, column-
+name drift). Net: 7 distinct correctness findings landed
+clean by the time PR #52 closed.
+
+### Lessons learned (3 systemic gaps)
+
+These are NOT one-off mistakes — each represents a
+class of issue worth a future engineering investment:
+
+1. **Hand-maintained `database.ts` Functions-map fragility.**
+   PR 2e added 5 new entries with `Args: Record<string,
+   never>` for parameterless RPCs. The mapped-empty-object
+   shape collapsed `Functions[FnName]['Args']` inference
+   across the entire object, making EVERY other RPC's
+   args resolve to `undefined`. CI failed on PR #48 with
+   ~80 type errors in unrelated files (booking-addons,
+   checkout-prep, empty-legs, operators-public, etc.).
+   The hotfix removed the 5 entries entirely and uses
+   structural casts at the call sites. Permanent fix:
+   regenerate `database.ts` via `npm run db:types` against
+   the live schema (deferred per Phase 7 + 8 closure
+   posture).
+
+2. **`this`-binding pitfall when extracting Supabase methods.**
+   PR 2e initially wrote `const rpc = client.rpc; await
+   rpc(name)` to apply a TypeScript cast. The extraction
+   detached the method from its `this` binding, breaking
+   Supabase's PostgrestClient internals. TS did not warn
+   because the call type-checks; the failure was purely
+   runtime (HTTP 500 on first invocation). Fix: cast the
+   WHOLE client to a structural type, then invoke `.rpc()`
+   as a method (preserves `this`).
+
+3. **Schema column-name drift in hand-written RPCs.**
+   PR 2e wrote two cleanup RPCs against a `consumed_at`
+   column that does not exist on `operator_otp_codes` or
+   `operator_password_reset_tokens` (real column:
+   `used_at`). Other Phase 8 RPCs reference `used_at`
+   correctly; PR 2e was the outlier. Symptom: PostgreSQL
+   error 42703 surfaced ONLY at runtime, recorded in
+   `operator_cron_tick_history` as `error_label='rpc_error:
+   42703'`. Defense pattern that worked: every cron route
+   already records its tick attempt to history with a
+   structured error label, so the production diagnosis
+   was a single SQL query away.
+
+### Production state at closure
+
+#### Migrations applied to production
+
+- `20260515000024_phase_8_pr_2e_cleanup_rpcs.sql` — 4
+  cleanup RPCs (DELETE … WHERE expired-or-marker
+  predicate), `record_operator_cron_tick` helper,
+  `_operator_cron_marker` placeholder, the
+  `operator_cron_tick_history` observability table +
+  index, GRANT EXECUTE TO service_role on the 5
+  callable RPCs.
+- `20260515000025_phase_8_pr_2e_hotfix_column_names.sql` —
+  `CREATE OR REPLACE FUNCTION` on the two cleanup RPCs
+  that referenced `consumed_at`; corrected to `used_at`.
+  Each replaced function is followed by an explicit
+  `REVOKE ALL FROM PUBLIC + REVOKE FROM anon, authenticated +
+  GRANT EXECUTE TO service_role` block (Codex round 2 PR #53
+  P2 fix) so the hotfix is self-contained on a fresh DB and
+  does not rely on `CREATE OR REPLACE FUNCTION` ACL
+  preservation as its security contract.
+
+#### Vercel Cron entries
+
+| Path | Schedule |
+|---|---|
+| `/api/cron/operator/sessions` | every 6 hours |
+| `/api/cron/operator/reset-tokens` | every 6 hours |
+| `/api/cron/operator/otp-codes` | every 30 min |
+| `/api/cron/operator/signup-attempts` | every 6 hours |
+
+#### Production env vars
+
+- `CRON_SECRET` — set, validated by Probe 20 manual curl;
+  rotated after the manual test (the Step-3 transcript
+  exposed the value in chat history). Old value rejected
+  with HTTP 401 after rotation; new value accepted with
+  HTTP 200.
+- All other Phase 8 / 8.1 env vars unchanged from the
+  prior closure entries.
+
+### Probe 20 — passed
+
+Manual curl of all 4 cron routes after PR #52 + the
+column-name migration deployed:
+
+| Cron route | Response | tick_history row |
+|---|---|---|
+| `cleanup_expired_otp_codes` | `{ ok: true, deleted_count: 0 }` | `success=true`, `error_label=null` |
+| `cleanup_expired_operator_sessions` | `{ ok: true, deleted_count: 1 }` | `success=true`, `error_label=null` |
+| `cleanup_expired_password_reset_tokens` | `{ ok: true, deleted_count: 0 }` | `success=true`, `error_label=null` |
+| `cleanup_old_signup_attempts` | `{ ok: true, deleted_count: 0 }` | `success=true`, `error_label=null` |
+
+The `cleanup_expired_password_reset_tokens` direct SQL
+call (run during diagnosis) deleted 4 real rows
+accumulated from Probe 14 + Probe 18-WA + the prior
+session work — the cleanup is not just structurally
+correct but operationally meaningful.
+
+The Vercel scheduled cron tick for `cleanup_expired_otp_codes`
+fired at `11:00:40+00` autonomously (before manual
+curl), confirming the Vercel Cron registration picked
+up the new entries correctly. The first scheduled tick
+hit the broken RPC (PR #51 was already deployed; PR
+#52 was not yet live), which is why
+`operator_cron_tick_history` retains 2 historical
+`success=false` rows with `error_label='rpc_error: 42703'`.
+After PR #52 deployed, the next manual curl produced
+the 4 healthy rows above.
+
+### Operational hygiene follow-ups
+
+- **CRON_SECRET rotation discipline** — the Probe 20
+  diagnosis required pasting the secret into a curl
+  command, which leaked it into the conversation
+  transcript. Rotation took ~2 minutes via the
+  Vercel UI + redeploy. Future probes that involve
+  CRON_SECRET should generate a **disposable** secret
+  for the test window and rotate it back to the
+  production value at the end. Or: invoke the cron
+  routes via the Vercel CLI's authenticated function
+  invoker, which never exposes the secret to the user
+  shell.
+- **Branch Protection on `main` not yet active** — PR
+  #48 merged to main with **failing CI** because no
+  branch protection rule gates merges on green CI.
+  Vercel deployed the broken build; canary returned
+  HTTP 500 for ~22 minutes before PR #49 landed. The
+  Phase 3.5.1 documentation in
+  `docs/checklists/ci-pipeline.md` describes the rule
+  to enable; the founder paused the activation chain
+  before the Verification PR step. Reactivating that
+  chain is the highest-leverage protection against
+  this category of regression.
+- **`database.ts` regen** — same posture carried over:
+  the file remains hand-maintained. The Phase 8 PR 2e
+  Functions-map collapse is the strongest evidence yet
+  that the regen ritual would prevent a class of
+  cross-cutting type drift. Worth scheduling for the
+  Phase 9 prep window.
+- **Stale historical rows in `operator_cron_tick_history`** —
+  the table accumulates indefinitely. A retention
+  cron (delete rows older than 30 days) would close
+  the loop on the observability table itself. Out of
+  scope for PR 2e; flagged for Phase 8.x or Phase 9.
+
+### Next phase
+
+Phase 8 + 8.x are now closed end-to-end on production.
+The next planned work is **Phase 9 — Charter & Trip
+Requests** with a fresh Codex spec round. The Phase 9
+spec scope (per the original roadmap):
+
+- Public form `/charter` for clients to submit trip
+  requests (origin, destination, dates, passengers,
+  preferences).
+- `trip_requests` table + admin/operator surfaces.
+- Distribution engine that scores operators against
+  each request (mirror of the Phase 7 Empty Legs
+  matching engine, but client-initiated).
+- Operator offer surface (operators see assigned
+  requests, submit offers).
+- Client accept/decline flow.
+
+Estimated 5-7 PRs over the spec + implementation
+window.
+
 
