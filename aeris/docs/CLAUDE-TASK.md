@@ -159,10 +159,18 @@ These are settled before spec acceptance:
     admin flow stays. NO migration of existing lead rows to
     trip_requests; admin promotes one-by-one as today.
 
-11. **Auto-dispatch CAN be disabled.** Env flag
-    `ENABLE_TRIP_AUTO_DISTRIBUTION=true` (default true). When
-    false, the post-create trigger is skipped and the trip
-    sits in `pending` for manual admin dispatch.
+11. **Auto-dispatch ships OFF by default.** Env flag
+    `ENABLE_TRIP_AUTO_DISTRIBUTION` defaults to **`false`**
+    (Codex round 1 P1 #3 fix). The flag is flipped to `true`
+    explicitly by the founder ONLY AFTER Probes 16 + 17
+    confirm the scoring + Phase 5 token issuance + wa.me
+    delivery path all work on production. Until then, every
+    trip lands `pending` for manual admin dispatch via
+    `DispatchPanelV2`. PR 2's create-trip Server Action
+    inspects the flag and skips the fire-and-forget POST when
+    false; PR 4's auto-dispatch RPC is callable directly
+    (admin force-dispatch button) regardless of the flag for
+    smoke testing.
 
 12. **Auto-dispatch retention window.** Auto-dispatched trips
     that no operator responds to within 4 hours fall back to
@@ -455,7 +463,47 @@ mechanism without changing the create RPC.
 | RPC | Purpose |
 |---|---|
 | `score_operators_for_trip(p_trip_request_id) → JSON` | reads trip + operators, returns top-5 `[{operator_id, score, rank, contact_phone, …}]` ordered by score desc; pure read, no writes |
-| `auto_dispatch_trip_request(p_trip_request_id) → JSON` | calls scoring, opens dispatch round, INSERTs `trip_distribution_log` rows, sets `trip_requests.current_dispatch_round_id`; returns `{ok:true, dispatched_count, round_id}` |
+| `auto_dispatch_trip_request(p_trip_request_id) → JSON` | scores → opens Phase 5 dispatch round with per-target token issuance (see contract below) → INSERTs `trip_distribution_log` rows → sets `trip_requests.current_dispatch_round_id`; returns `{ok:true, dispatched_count, round_id, targets:[{operator_id, target_id, wa_me_url}]}` |
+
+**Phase 5 token issuance contract for `auto_dispatch_trip_request`
+(Codex round 1 P1 #4 fix)**
+
+The existing Phase 5 dispatch path requires each
+`trip_dispatch_targets` row to carry:
+
+| Column | Source | Notes |
+|---|---|---|
+| `id` | `uuid_generate_v4()` | PK |
+| `dispatch_round_id` | from the newly opened round | FK |
+| `operator_id` | from scoring top-N | FK |
+| `target_phone` | from operators.contact_phone | wa.me destination |
+| `nonce` | `gen_random_bytes(16)::hex` | 32-char hex, HMAC payload |
+| `sent_at` | `NOW()` | dispatch timestamp |
+| `expires_at` | `NOW() + INTERVAL '4 hours'` | matches §1 retention |
+| `status` | `'pending'` | dispatch_target_status enum |
+
+The RPC MUST either:
+(a) **Reuse** the existing `open_phase5_dispatch_round(trip_id,
+    targets[])` RPC by building the `targets[]` argument from
+    the scoring output. This is the preferred path — zero new
+    token logic, identical wa.me URL shape (`v=2` token over
+    `dispatch_target.id + nonce`) as today's admin dispatch.
+(b) **Inline** the equivalent INSERT-per-target + token mint
+    if (a) is infeasible (e.g. open_phase5 has a different
+    argument shape). This path MUST cite which Phase 5 helper
+    function generates the v=2 token + emit identical URL
+    shape so operator-side `/operator/offer/[token]` accepts
+    the wa.me link without code change.
+
+`trip_distribution_log` rows are populated FROM the resulting
+`trip_dispatch_targets`: one log row per (trip, operator, target)
+triple, with `dispatch_target_id` set so admin canary readouts
+can join back to the dispatch round.
+
+Probe 17 asserts the wa.me link in each
+`trip_distribution_log` row resolves to the operator-side
+form without 404; this is the end-to-end check that the
+token issuance contract holds.
 
 ### §4.4 — Cleanup cron RPCs (PR 1 + PR 4) — 4 publics
 
@@ -472,9 +520,16 @@ Mirror Phase 8 PR 2e:
 
 ## 5. PR breakdown
 
-### PR 1 — Client auth (10 storage surfaces, 12 RPCs, 9
-Server Actions, 7 pages, ~12 components, 1 middleware
-extension, 4 cleanup-cron entries)
+### PR 1 — Client auth (5 new tables, 10 publics + 1 helper,
+8 Server Actions, 7 pages, ~12 components, 1 middleware
+extension, 3 cleanup-cron entries)
+
+Inventory (Codex round 1 P1 #1 alignment): **10 PR 1 publics
+= 7 auth (§4.1) + 3 cleanup (§4.4 — the 4th cleanup
+`redispatch_stale_trip_requests` is PR 4 only)**. Plus 1
+internal helper (`_normalize_client_email`). Plus 8 Server
+Actions (§5 list below). Probe 2 grant-count assertion is
+keyed to this allowlist exactly.
 
 **Migrations (1 file):**
 - `20260520000026_phase_9_pr_1_client_auth.sql` — sections
@@ -512,24 +567,55 @@ extension, 4 cleanup-cron entries)
 - `lib/notifications/client-email.ts` — Resend wrappers for
   reset link + welcome (welcome unused in PR 1).
 - `lib/notifications/client-email-alert-status.ts` —
-  recordClientEmailAlertStatus (mirror of Phase 8.1).
+  recordClientEmailAlertStatus (mirror of Phase 8.1) PLUS a
+  read helper `getClientNotificationAlertStatus()` consumed
+  by the canary page extension below.
+
+**Canary page extension (Codex round 1 P2 #1 fix):**
+
+PR 1 extends the existing Phase 8 PR 2e canary page at
+`/admin/operators/canary` with a 4th `<ChannelHealth>` card
+inside the existing "صحّة قنوات الإشعار" section, reading
+from the new `client_notification_alert_status` singleton:
+
+- Card label: "بريد العملاء (Resend)"
+- Status maps: `healthy` → emerald, `config_missing` → amber,
+  `send_failed` → rose (same tone map as operator channels).
+- Failure context only renders when status !== 'healthy'
+  (PR #50 UX hotfix discipline carries over).
+
+A new founder probe (Probe 4-canary) asserts the visibility:
+unset `CLIENT_PASSWORD_RESET_TOKEN_SECRET` in Vercel staging,
+trigger forgot-password, refresh canary → confirm the new
+card flips to amber "إعدادات ناقصة" with the verbatim env
+name in the failure reason text. Restore the env var, refresh
+again → card returns to emerald without stale failure context.
+
+This closes the "write-only alert table" gap that would
+otherwise leave founder blind to client-side Resend / reset-
+token-secret misconfigurations.
 
 **Middleware extension:**
 - `middleware.ts` — extend matcher to `/me/:path*` + add
   `x-pathname` injection (mirrors Phase 8 PR 2c) for the
   must-change-password redirect (Phase 9.x; not used yet).
 
-**Cron routes (4 files):**
+**Cron routes (3 files — PR 1 owns ONLY client cleanups):**
 - `app/api/cron/client/sessions/route.ts`
 - `app/api/cron/client/reset-tokens/route.ts`
 - `app/api/cron/client/signup-attempts/route.ts`
-- `app/api/cron/operator/redispatch-stale/route.ts` (PR 4)
+
+The `redispatch-stale` cron route + its vercel.json entry
+are PR 4's responsibility, NOT PR 1's (Codex round 1 P1 #2
+fix). Shipping the entry in PR 1 before the route lands
+would create production 404s for the entire PR 1 → PR 4
+interval and pollute the canary tick history with phantom
+failures.
 
 **vercel.json:** add 3 PR-1 cron entries:
 - `/api/cron/client/sessions` — every 6h
 - `/api/cron/client/reset-tokens` — every 6h
 - `/api/cron/client/signup-attempts` — every 6h
-- `/api/cron/operator/redispatch-stale` — every 30 min (PR 4)
 
 **i18n:** new `clientsAr` module
 (`lib/i18n/clients-ar.ts`) with ~80 strings: nav, auth
@@ -571,9 +657,16 @@ Actions, 1 page + 1 component, ~250 lines)
 
 **Server Actions (`app/actions/clients-trip-requests.ts`):**
 - `createAuthenticatedTripRequest` — wraps
-  `create_authenticated_trip_request` RPC + fire-and-forget
-  call to `/api/trip-distribution/internal/dispatch` (PR 4
-  endpoint; PR 2 leaves a TODO marker pointing to PR 4).
+  `create_authenticated_trip_request` RPC. Conditionally
+  fires the auto-dispatch trigger ONLY when
+  `process.env.ENABLE_TRIP_AUTO_DISTRIBUTION === 'true'`
+  (Codex round 1 P1 #3 alignment — default off; trip lands
+  `pending` for manual admin dispatch until the founder
+  flips the flag after Probes 16 + 17). When enabled, fires
+  fire-and-forget POST to
+  `/api/trip-distribution/internal/dispatch` (PR 4 endpoint;
+  PR 2 lands the call-site guarded by the flag so PR 4's
+  endpoint switches on with zero PR 2 code change).
 - `cancelMyTripRequest` — flips `status='cancelled'` for a
   trip the client owns; pre-SELECT ownership check.
 
@@ -694,9 +787,10 @@ extension, ~800 lines)
 - `INTERNAL_DISPATCH_SECRET` (HMAC for the internal route)
 - `TRIP_REDISPATCH_STALE_HOURS=4` (default 4h, configurable)
 
-**vercel.json:** redispatch-stale cron entry already added
-in PR 1 (the only Phase 9 cron added in PR 4 is implicit
-via the existing entry, kept inert until PR 4 deploys).
+**vercel.json:** add 1 PR-4 cron entry (Codex round 1 P1 #2
+fix — moved out of PR 1 so the route exists when the entry
+ships):
+- `/api/cron/operator/redispatch-stale` — every 30 min
 
 **i18n:** extend `clientsAr` + admin i18n with auto-dist
 canary labels.
@@ -705,21 +799,43 @@ canary labels.
 
 ## 6. Founder probes
 
-20 probes for Phase 9. Each is run on production after the
-relevant PR ships.
+21 probes for Phase 9 (1–7 PR1 + 4-canary inline + 8–10
+PR2 + 11–14 PR3 + 15–20 PR4). Each is run on production
+after the relevant PR ships.
 
-### PR 1 probes (1–7):
+### PR 1 probes (1–7 + 4-canary):
 
 1. **Schema state** — 5 new tables exist, 1 new ENUM,
    audit trigger active.
-2. **RPC GRANTs** — 12 publics revoke from anon/authenticated,
-   grant to service_role; 1 helper revokes from all 4 roles.
+2. **RPC GRANTs** — exactly **10 PR-1 publics**
+   (`client_signup`, `client_login_lookup`,
+   `client_login_create_session`, `client_logout`,
+   `client_session_validate`,
+   `client_mint_password_reset_token`,
+   `client_verify_password_reset`,
+   `cleanup_expired_client_sessions`,
+   `cleanup_expired_client_password_reset_tokens`,
+   `cleanup_old_client_signup_attempts`) revoke from
+   anon + authenticated, grant to service_role; 1 helper
+   (`_normalize_client_email`) revokes from anon +
+   authenticated + service_role with no GRANT
+   (function-owner-only).
 3. **Signup → login chain** — POST signup form with founder's
    personal email; verify session cookie set; verify clients
    row created with bcrypt hash.
 4. **Reset link delivery** — POST forgot-password form;
    verify Resend delivery; verify token rejected after 30
    min.
+4-canary. **Client channel visibility (Codex round 1 P2 #1
+   fix)** — unset `CLIENT_PASSWORD_RESET_TOKEN_SECRET` in
+   Vercel staging; trigger forgot-password; refresh
+   `/admin/operators/canary` → confirm the 4th
+   ChannelHealth card flips amber "إعدادات ناقصة" with the
+   verbatim env name in the failure reason text. Restore
+   the env var; trigger another reset; refresh canary →
+   card returns emerald with no stale failure footer (PR #50
+   UX hotfix discipline). Closes the write-only-alert-table
+   gap.
 5. **Session expiry** — manually update `expires_at` to past;
    verify `session_validate` RPC returns `expired`; verify
    `requireClientSession()` redirects to `/login`.
@@ -794,8 +910,10 @@ relevant PR ships.
 Phase 9 is closed when:
 
 - [ ] All 4 PRs merged to main, each cleared Codex 100/100.
-- [ ] All 4 migrations applied to production.
-- [ ] All 20 probes pass (or are explicitly deferred with
+- [ ] All 3 migrations applied to production (PR 1 + PR 2
+      + PR 4; PR 3 is no-migration per §9 — Codex round 1
+      P2 #2 fix).
+- [ ] All 21 probes pass (or are explicitly deferred with
       written rationale, mirrored from Phase 7 closure
       pattern).
 - [ ] `ENABLE_CLIENT_PORTAL=true` set in Vercel
@@ -838,11 +956,17 @@ Surfaced for Codex review:
 
 | Phase 9 PR | Migrations | Routes | Server Actions | Lib | Components | i18n | Tests |
 |---|---|---|---|---|---|---|---|
-| PR 1 | 1 | 4 public + 3 client | 9 | 6 | ~12 | 1 module | 3 suites |
+| PR 1 | 1 | 4 public + 3 client + 3 cron | 8 | 6 | ~12 | 1 module | 3 suites |
 | PR 2 | 1 | 1 | 2 | 0 | 1 | extend | 1 suite |
 | PR 3 | 0 | 4 | 3 | 1 | ~6 | extend | 1 suite |
 | PR 4 | 1 | 1 internal API + 1 cron | 2 admin | 2 (engine + tests-only) | 0 | extend | 1 suite (~20 cases) |
-| **Total** | **3** | **14** | **16** | **9** | **~19** | **2 modules + extensions** | **6 suites** |
+| **Total** | **3** | **17** | **15** | **9** | **~19** | **2 modules + extensions** | **6 suites** |
+
+Inventory cross-reference (Codex round 1 P1 #1 alignment):
+**PR 1 = 10 publics + 1 helper RPC + 8 Server Actions +
+3 client cleanup cron routes**. PR 1 owns ONLY client cron
+routes; PR 4 owns the 1 redispatch cron route + its
+vercel.json entry (Codex round 1 P1 #2 alignment).
 
 Estimated: ~3,500 net-new lines + ~800 modified lines
 across 4 PRs. Within range of Phase 8 (~5,000 net-new).
