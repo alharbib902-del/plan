@@ -362,7 +362,14 @@ ALTER TABLE client_notification_alert_status ENABLE ROW LEVEL SECURITY;
 ### §3.8 — `trip_distribution_log` (PR 4)
 
 Observability table for the auto-distribution engine.
-One row per trip × dispatched-target pair.
+One row per (trip × round × operator) triple — the
+uniqueness key is **target-scoped** (Codex round 3 P1 #2
+fix). The earlier `UNIQUE (trip_request_id, operator_id)`
+proposal blocked the legitimate redispatch + admin-force-
+dispatch flows: a stale/timeout redispatch may legitimately
+choose the same top-ranked operator in a fresh round, and
+`adminForceAutoDispatch` re-fires the dispatcher; both
+would have hit the cross-round uniqueness violation.
 
 ```sql
 CREATE TABLE IF NOT EXISTS trip_distribution_log (
@@ -372,11 +379,16 @@ CREATE TABLE IF NOT EXISTS trip_distribution_log (
   dispatched_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   score               DECIMAL(5,2) NOT NULL,        -- 0.00 .. 100.00
   rank                INT NOT NULL,                  -- 1..5 (top-N)
-  dispatch_target_id  UUID REFERENCES trip_dispatch_targets(id) ON DELETE SET NULL,
+  dispatch_target_id  UUID NOT NULL REFERENCES trip_dispatch_targets(id) ON DELETE CASCADE,
   notification_channel TEXT NOT NULL DEFAULT 'whatsapp_link'
     CHECK (notification_channel IN ('whatsapp_link', 'email', 'sms')),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (trip_request_id, operator_id)
+  -- Round-scoped uniqueness: dispatch_target_id is unique
+  -- per (round, operator) by Phase 5's targets table design,
+  -- so this naturally prevents double-logging within a round
+  -- while allowing the same operator to appear in subsequent
+  -- rounds for the same trip (legitimate redispatch).
+  UNIQUE (dispatch_target_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_trip_distribution_log_trip
@@ -386,6 +398,14 @@ CREATE INDEX IF NOT EXISTS idx_trip_distribution_log_op
 
 ALTER TABLE trip_distribution_log ENABLE ROW LEVEL SECURITY;
 ```
+
+Notes on the changed FK semantics:
+- `dispatch_target_id` is now `NOT NULL` (was nullable).
+  Every log row corresponds to a specific dispatch target.
+- The FK `ON DELETE` action changed from `SET NULL` to
+  `CASCADE`: if a target row is hard-deleted (rare; only via
+  data-cleanup scripts), the log row goes with it. Soft
+  closure via `status='cancelled'` keeps the FK intact.
 
 ### §3.9 — Cleanup cron RPCs registered in
 `operator_cron_tick_history` (PR 1 + PR 4)
@@ -524,8 +544,36 @@ mechanism without changing the create RPC.
 
 | RPC | Purpose |
 |---|---|
-| `score_operators_for_trip(p_trip_request_id) → JSON` | reads trip + operators, returns top-5 `[{operator_id, score, rank, contact_phone, …}]` ordered by score desc; pure read, no writes |
+| `score_operators_for_trip(p_trip_request_id) → JSON` | reads trip + operators (filtered by eligibility predicate, see below), returns top-5 `[{operator_id, score, rank, contact_phone, …}]` ordered by score desc; pure read, no writes |
 | `auto_dispatch_trip_request(p_trip_request_id) → JSON` | scores → opens Phase 5 dispatch round with per-target token issuance (see contract below) → INSERTs `trip_distribution_log` rows → sets `trip_requests.current_dispatch_round_id`; returns `{ok:true, dispatched_count, round_id, targets:[{operator_id, target_id, wa_me_url}]}` |
+
+**Operator eligibility predicate (Codex round 3 P1 #1
+fix).** `score_operators_for_trip` MUST restrict the
+candidate pool to operators that are:
+
+```sql
+WHERE signup_status = 'approved'
+  AND contact_phone IS NOT NULL
+  AND TRIM(contact_phone) <> ''
+```
+
+Rationale: Phase 8 introduced the `operator_status` ENUM
+(`pending` / `approved` / `suspended` / `rejected`).
+Without this filter, auto-dispatch could route real
+client trips to:
+- Pending operators (haven't been admin-approved yet)
+- Suspended operators (admin-blocked, possibly for
+  safety/compliance reasons)
+- Rejected operators (admin explicitly denied entry)
+- Operators with NULL/blank `contact_phone` (Phase 5 wa.me
+  link generation would emit a malformed URL)
+
+The filter MUST be enforced inside the RPC body itself
+(not at the application layer) so any future caller
+inherits the safety guarantee. Probes 15 + 16 are amended
+to seed an unapproved operator with high default scoring
+data and assert it is excluded from both the preview
+output AND the dispatched-targets log.
 
 **Phase 5 token issuance contract for `auto_dispatch_trip_request`
 (Codex round 1 P1 #4 fix)**
@@ -594,7 +642,64 @@ Mirror Phase 8 PR 2e:
 | `cleanup_expired_client_sessions()` | DELETE WHERE expires_at <= NOW() OR revoked_at IS NOT NULL |
 | `cleanup_expired_client_password_reset_tokens()` | DELETE WHERE expires_at <= NOW() OR used_at IS NOT NULL |
 | `cleanup_old_client_signup_attempts()` | DELETE WHERE attempted_at < NOW() - INTERVAL '24 hours' |
-| `redispatch_stale_trip_requests()` (PR 4) | finds trips dispatched > 4 hours ago with no `phase5_operator_offers`; emits founder batch alert (best-effort) + flips `current_dispatch_round_id` to NULL so admin queue picks them up |
+| `redispatch_stale_trip_requests()` (PR 4) | finds trips dispatched > 4 hours ago with no `phase5_operator_offers`; for each stale trip executes the full state-cleanup transaction below; emits founder batch alert (best-effort, post-commit) |
+
+**`redispatch_stale_trip_requests` state-cleanup contract
+(Codex round 3 P2 #2 fix).** Flipping
+`trip_requests.current_dispatch_round_id` to NULL alone
+leaves the stale Phase 5 round + targets looking "open" in
+both `DispatchPanelV2` and admin SQL audits even though the
+trip is back in the queue. The RPC MUST execute the
+following inside a single transaction per stale trip:
+
+```sql
+-- For each stale trip (trip_request_id, current_round_id):
+--
+-- 1. Cancel any still-pending targets in the stale round
+--    (status='submitted' targets stay as-is — operator
+--    already responded; status='cancelled'/'expired' are
+--    no-ops).
+UPDATE trip_dispatch_targets
+   SET status = 'cancelled'
+ WHERE dispatch_round_id = :current_round_id
+   AND status = 'pending';
+
+-- 2. Close the stale round with a dedicated reason.
+--    PR 4 migration ALTERs the closed_reason check (or
+--    extends the dispatch_round_status closed_reason
+--    enum) to add 'stale_timeout' as a fourth value
+--    alongside 'offer_accepted', 'redispatched',
+--    'admin_cancel'. The new value is added explicitly so
+--    audit queries can distinguish auto-timeout from admin-
+--    initiated cancellation.
+UPDATE trip_dispatch_rounds
+   SET status = 'closed',
+       closed_reason = 'stale_timeout',
+       closed_at = NOW()
+ WHERE id = :current_round_id
+   AND status = 'open';
+
+-- 3. NULL the trip's current_dispatch_round_id so
+--    DispatchPanelV2 (and any read query keyed on
+--    "open round") re-picks it up.
+UPDATE trip_requests
+   SET current_dispatch_round_id = NULL
+ WHERE id = :trip_request_id;
+```
+
+The three UPDATEs run in the order above. If any fails, the
+transaction rolls back and the next cron tick retries. The
+founder batch alert is best-effort and emitted ONLY after
+the transaction commits (mirrors the Phase 7 §16 outreach
+alert post-commit pattern). Probe 18 is amended to assert
+all three state changes (target = `cancelled`, round =
+`closed`/`stale_timeout`, trip's `current_dispatch_round_id`
+= NULL) AFTER the cron tick.
+
+The PR 4 migration adds the `'stale_timeout'` value to the
+`closed_reason` enum/CHECK in the same migration that
+defines `redispatch_stale_trip_requests`, so the RPC body
+and the schema constraint ship atomically.
 
 ---
 
@@ -886,30 +991,50 @@ canary labels.
 
 ## 6. Founder probes
 
-21 probes for Phase 9 (1–7 PR1 + 4-canary inline + 8–10
-PR2 + 11–14 PR3 + 15–20 PR4). Each is run on production
+23 probes for Phase 9 (1, 2, 3, 3-shape, 4, 4-canary, 5–10
+PR1+PR2 + 11–14 PR3 + 15–20 PR4). Each is run on production
 after the relevant PR ships.
 
-### PR 1 probes (1–7 + 4-canary):
+### PR 1 probes (1–7 + 3-shape + 4-canary):
 
 1. **Schema state** — 5 new tables exist, 1 new ENUM,
    audit trigger active.
-2. **RPC GRANTs** — exactly **10 PR-1 publics**
-   (`client_signup`, `client_login_lookup`,
-   `client_login_create_session`, `client_logout`,
-   `client_session_validate`,
-   `client_mint_password_reset_token`,
-   `client_verify_password_reset`,
-   `cleanup_expired_client_sessions`,
-   `cleanup_expired_client_password_reset_tokens`,
-   `cleanup_old_client_signup_attempts`) revoke from
-   anon + authenticated, grant to service_role; 1 helper
-   (`_normalize_client_email`) revokes from anon +
-   authenticated + service_role with no GRANT
-   (function-owner-only).
+2. **RPC GRANTs (Codex round 3 P2 #1 alignment)** — query
+   `pg_proc` × `aclexplode` for the **10 PR-1 publics** +
+   the **1 PR-1 helper** + the **reused Phase 8 helper**
+   `_is_sha256_hex(TEXT)` together in a single SQL roundtrip:
+   - The 10 PR-1 publics (`client_signup`,
+     `client_login_lookup`, `client_login_create_session`,
+     `client_logout`, `client_session_validate`,
+     `client_mint_password_reset_token`,
+     `client_verify_password_reset`,
+     `cleanup_expired_client_sessions`,
+     `cleanup_expired_client_password_reset_tokens`,
+     `cleanup_old_client_signup_attempts`) MUST list
+     exactly `{postgres, service_role}` as grantees.
+   - The PR-1 helper `_normalize_client_email(TEXT)` MUST
+     list exactly `{postgres}` (function-owner only;
+     no GRANT to anon/authenticated/service_role).
+   - The reused Phase 8 helper `_is_sha256_hex(TEXT)` MUST
+     STILL list exactly `{postgres}` after PR 1 deploys —
+     PR 1's migration cites it as a dependency but does
+     NOT touch its ACL. Any drift here means an
+     accidental GRANT relaxation slipped in.
 3. **Signup → login chain** — POST signup form with founder's
    personal email; verify session cookie set; verify clients
    row created with bcrypt hash.
+3-shape. **sha256-hex shape validator (Codex round 3 P2 #1
+   fix)** — call `client_session_validate` directly via
+   `client.rpc()` with a 65-char hex string AND a 63-char
+   hex string AND a 64-char string containing a non-hex
+   character (e.g. `'g' * 64`). All three calls MUST return
+   the structured shape `{ ok: false, error:
+   'invalid_token_hash' }` with HTTP 200, NOT a raw
+   PostgreSQL CHECK violation or HTTP 500. Repeat for
+   `client_logout`, `client_mint_password_reset_token`, and
+   `client_verify_password_reset` (sample 1 malformed input
+   per RPC). Closes the same DB-boundary weakness Phase 8
+   PR 2a fixed for operator RPCs.
 4. **Reset link delivery** — POST forgot-password form;
    verify Resend delivery; verify token rejected after 30
    min.
@@ -964,23 +1089,44 @@ after the relevant PR ships.
 
 ### PR 4 probes (15–20):
 
-15. **Scoring** — admin clicks "Preview score" on a
+15. **Scoring + eligibility (Codex round 3 P1 #1
+    alignment)** — admin clicks "Preview score" on a
     pending trip; verify ranked list of 5 operators with
-    score breakdown.
-16. **Auto-dispatch fires** — submit a fresh charter form;
+    score breakdown. Then INSERT a synthetic operator with
+    `signup_status='pending'` AND high default rating, OR
+    set an existing approved operator's `contact_phone` to
+    NULL. Re-run Preview → verify the synthetic/NULL-phone
+    operator does NOT appear in the ranked output (filter
+    enforced inside `score_operators_for_trip`).
+16. **Auto-dispatch fires + eligibility (Codex round 3
+    P1 #1 alignment)** — submit a fresh charter form;
     verify `auto_dispatch_trip_request` ran (3+ rows in
     `trip_distribution_log`) + dispatch round opened with
-    same operators.
+    same operators. Verify NO `trip_distribution_log` row
+    references the synthetic pending/NULL-phone operator
+    from Probe 15.
 17. **Operators receive WhatsApp link** — confirm the
     Phase 5 dispatch flow fires + each top-N operator
     gets a wa.me link (manual visual probe in Vercel
     Functions logs OR the existing operator outreach
-    queue).
-18. **Redispatch-stale** — set
-    `TRIP_REDISPATCH_STALE_HOURS=0.01` (≈ 36 sec) for a
-    test trip; submit; wait 1 min; verify the cron flips
-    `current_dispatch_round_id` back to NULL + a founder
-    alert fires.
+    queue). Each `trip_distribution_log` row's
+    `dispatch_target_id` MUST resolve via the wa.me URL to
+    the operator-side `/operator/offer/[token]` form
+    without 404.
+18. **Redispatch-stale (Codex round 3 P2 #2 alignment)** —
+    set `TRIP_REDISPATCH_STALE_HOURS=0.01` (≈ 36 sec) for
+    a test trip; submit; wait 1 min; verify ALL of the
+    following after the cron tick:
+    - `trip_dispatch_targets` rows for the stale round:
+      every `status='pending'` row flipped to `'cancelled'`
+      (already-`'submitted'` rows untouched).
+    - `trip_dispatch_rounds` row for the stale round:
+      `status='closed'`, `closed_reason='stale_timeout'`,
+      `closed_at` set.
+    - `trip_requests.current_dispatch_round_id` = NULL for
+      the stale trip.
+    - Founder batch alert fired (Resend log shows the
+      delivery).
 19. **Auto-dispatch disabled** — flip
     `ENABLE_TRIP_AUTO_DISTRIBUTION=false`; submit a
     charter form; verify trip lands `pending` with NO
@@ -1000,7 +1146,7 @@ Phase 9 is closed when:
 - [ ] All 3 migrations applied to production (PR 1 + PR 2
       + PR 4; PR 3 is no-migration per §9 — Codex round 1
       P2 #2 fix).
-- [ ] All 21 probes pass (or are explicitly deferred with
+- [ ] All 23 probes pass (or are explicitly deferred with
       written rationale, mirrored from Phase 7 closure
       pattern).
 - [ ] `ENABLE_CLIENT_PORTAL=true` set in Vercel
