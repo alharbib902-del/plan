@@ -8,16 +8,16 @@
 
 ---
 
-## 📍 Current state (last updated: PR 2 round 0 — initial commit ready for review)
+## 📍 Current state (last updated: PR 2 round 1 fixes)
 
 | Field | Value |
 |---|---|
 | **Active PR** | [#56 — Phase 9 PR 2 Charter form](https://github.com/alharbib902-del/plan/pull/56) |
 | **Branch** | `feature/phase-9-pr-2-charter-form` |
-| **Code HEAD** | `d5fabb8` (PR 2 initial — 1 RPC + 2 Server Actions + 1 page + 16 tests) |
-| **Status** | ⏳ Awaiting Codex round 1 review |
-| **Last action** | PR #56 opened against `main` |
-| **Next action** | Codex round 1 review → iterate or merge |
+| **Code HEAD** | `6f6ce19` (Codex round 1 fixes — 2 P1 + 1 P2) |
+| **Status** | ⏳ Awaiting Codex round 2 review |
+| **Last action** | Round 1 fixes pushed: bookings.client_id FK retarget + IATA airports lookup + datetime-local Riyadh helper |
+| **Next action** | Codex round 2 review → iterate or merge |
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
-| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `d5fabb8` | Charter form — 10 files, 16 new tests, 9 RPC contracts |
+| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `6f6ce19` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
@@ -155,6 +155,41 @@ rounds that MUST be applied:
     Use the `password_hash_malformed` contract (already in
     `clientsAr.errors`) so vocabulary stays consistent
     across signup + reset.
+14. **When introducing a new identity table, sweep ALL FKs
+    that point at the legacy table** (Codex round 1 PR #56
+    P1 #1). PR 2 retargeted `trip_requests.client_id` from
+    `users(id)` to `clients(id)`, but missed
+    `bookings.client_id` — `accept_offer` would have died
+    at booking creation with a 23503 FK violation. Audit
+    the full graph: `bookings`, `loyalty_transactions`,
+    `notifications`, `medevac_requests`, `cargo_requests`,
+    etc. Phase 9 only retargets the path the new flow
+    actually walks (`trip_requests` → `accept_offer` →
+    `bookings`); the rest stay on `users(id)` until their
+    own client-portal flows land.
+15. **Reference-table existence check before INSERT, don't
+    rely on FK violation as the structured contract**
+    (Codex round 1 PR #56 P1 #2). When an RPC accepts a
+    free-text value that maps to a FK-backed column
+    (IATA codes → `airports(iata_code)`), do an explicit
+    `IF NOT EXISTS (SELECT 1 FROM ... WHERE ...) THEN
+    RETURN structured_error END IF;` BEFORE the INSERT.
+    Otherwise the Server Action sees a raw `23503
+    foreign_key_violation` PostgreSQL error code instead of
+    a friendly per-field contract. Two contracts when the
+    field could be either side (e.g. `departure_airport_unknown`
+    + `arrival_airport_unknown`) so the form can highlight
+    the offending field.
+16. **`<input type="datetime-local">` ALWAYS needs an
+    explicit Asia/Riyadh `+03:00` suffix before the Server
+    Action call** (Codex round 1 PR #56 P2 #3 + Phase 7
+    round-2 P2 #1). The browser interprets the naive value
+    in the user's local zone, so a non-Riyadh user storing
+    14:00 ends up with the wrong instant in TIMESTAMPTZ.
+    The shared helper lives at
+    `lib/utils/datetime-local.ts` (`datetimeLocalToRiyadhIso`);
+    every form that ships a `datetime-local` value to a
+    SECURITY DEFINER RPC MUST call it.
 
 ---
 
@@ -267,11 +302,11 @@ Open items:
 - **PR 1 production activation pending** — see "PR 1
   production activation" panel at the top. Founder action
   out of band; doesn't block PR 2 review.
-- **PR 2 — code committed at `d5fabb8`, branch pushed,
-  awaiting `gh pr create` + Codex round 1.** Validation
-  green locally (TS clean, ESLint 0, 42 client tests pass:
-  10 reset-token + 6 auth-session + 10 email-normalize +
-  16 trip-request-validators).
+- **PR 2 — Code HEAD `6f6ce19` after Codex round 1
+  (2 P1 + 1 P2 closed)**. Awaiting Codex round 2.
+  Validation green: TS clean, ESLint 0, 48 tests pass
+  (10 reset-token + 6 auth-session + 10 email-normalize +
+  16 trip-request-validators + 6 datetime-local).
 
 ---
 
