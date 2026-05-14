@@ -137,3 +137,123 @@ export const clientUpdateProfileSchema = z.object({
 export type ClientUpdateProfileInput = z.infer<
   typeof clientUpdateProfileSchema
 >;
+
+// ============================================================
+// 7. createAuthenticatedTripRequest (Phase 9 PR 2)
+// ============================================================
+//
+// Mirrors the SQL contract of `create_authenticated_trip_request`.
+// The DB enforces every rule below as a defence-in-depth structured
+// contract; Zod gives the form a friendlier error path before the
+// network round-trip.
+
+const iataSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, {
+    message: 'كود المطار يجب أن يكون 3 أحرف لاتينية (مثل: RUH)',
+  });
+
+const isoDatetimeSchema = z
+  .string()
+  .min(1, { message: 'التاريخ مطلوب' })
+  .refine(
+    (value) => {
+      const d = new Date(value);
+      return Number.isFinite(d.getTime());
+    },
+    { message: 'التاريخ غير صالح' }
+  );
+
+const tripLegSchema = z.object({
+  from: iataSchema,
+  to: iataSchema,
+  date: isoDatetimeSchema,
+  // Optional time-of-day hint kept as free string so client
+  // can pass either ISO time ('14:30') or local-format. The
+  // RPC only persists the array verbatim into trip_requests.legs.
+  time: z
+    .string()
+    .trim()
+    .max(8, { message: 'التوقيت غير صالح' })
+    .optional()
+    .nullable(),
+});
+
+export const createTripRequestSchema = z
+  .object({
+    legs: z
+      .array(tripLegSchema)
+      .min(1, { message: 'يجب إضافة قطعة طيران واحدة على الأقل' })
+      .max(8, { message: 'الحد الأقصى 8 قطع طيران' }),
+    departure_iata: iataSchema,
+    arrival_iata: iataSchema,
+    departure_date: isoDatetimeSchema,
+    return_date: isoDatetimeSchema.optional().nullable(),
+    passengers: z
+      .number()
+      .int({ message: 'عدد الركاب يجب أن يكون رقماً صحيحاً' })
+      .min(1, { message: 'يجب أن يكون هناك راكب واحد على الأقل' })
+      .max(19, { message: 'الحد الأقصى 19 راكباً' }),
+    aircraft_pref: z
+      .enum(['light', 'mid', 'super_mid', 'heavy', 'long_range'])
+      .optional()
+      .nullable(),
+    special_requests: z
+      .string()
+      .trim()
+      .max(2000, {
+        message: 'الطلبات الخاصة يجب أن تكون أقل من 2000 حرف',
+      })
+      .optional()
+      .nullable(),
+  })
+  // Cross-field refinement: return_date must strictly exceed
+  // departure_date when present. Mirrors the RPC's
+  // invalid_return_date contract — caught here so the form
+  // can highlight the return field directly.
+  .refine(
+    (input) => {
+      if (!input.return_date) return true;
+      const dep = new Date(input.departure_date).getTime();
+      const ret = new Date(input.return_date).getTime();
+      if (!Number.isFinite(dep) || !Number.isFinite(ret)) return true;
+      return ret > dep;
+    },
+    {
+      message: 'تاريخ العودة يجب أن يكون بعد تاريخ المغادرة',
+      path: ['return_date'],
+    }
+  )
+  // Departure date must strictly be in the future. The RPC
+  // enforces NOW() too; Zod gives a friendlier error.
+  .refine(
+    (input) => {
+      const dep = new Date(input.departure_date).getTime();
+      if (!Number.isFinite(dep)) return true;
+      return dep > Date.now();
+    },
+    {
+      message: 'تاريخ المغادرة يجب أن يكون في المستقبل',
+      path: ['departure_date'],
+    }
+  );
+
+export type CreateTripRequestInput = z.infer<
+  typeof createTripRequestSchema
+>;
+
+// ============================================================
+// 8. cancelMyTripRequest (Phase 9 PR 2)
+// ============================================================
+
+export const cancelTripRequestSchema = z.object({
+  trip_request_id: z.string().uuid({
+    message: 'معرّف الطلب غير صالح',
+  }),
+});
+
+export type CancelTripRequestInput = z.infer<
+  typeof cancelTripRequestSchema
+>;

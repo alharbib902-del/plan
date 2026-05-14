@@ -8,25 +8,33 @@
 
 ---
 
-## 📍 Current state (last updated: PR 1 round 4 fix)
+## 📍 Current state (last updated: PR 2 round 4 fix)
 
 | Field | Value |
 |---|---|
-| **Active PR** | [#55 — Phase 9 PR 1 Client Auth](https://github.com/alharbib902-del/plan/pull/55) |
-| **Branch** | `feature/phase-9-pr-1-client-auth` |
-| **Code HEAD** | `3d55632` (Codex round 4 P2 #1 fix — reset RPC bcrypt format) |
+| **Active PR** | [#56 — Phase 9 PR 2 Charter form](https://github.com/alharbib902-del/plan/pull/56) |
+| **Branch** | `feature/phase-9-pr-2-charter-form` |
+| **Code HEAD** | `45bced7` (Codex round 4 P1 fix — `LEFT(users.full_name, 120)` truncation in backfill) |
 | **Status** | ⏳ Awaiting Codex round 5 review |
-| **Last action** | Round 4 fix (1x P2) pushed at `3d55632` |
+| **Last action** | Round 4 fix pushed: width-safe backfill (`LEFT(120)` for full_name + `BTRIM`/empty-fallback for phone) on both trip_requests + bookings UPDATEs |
 | **Next action** | Codex round 5 review → iterate or merge |
 
+### PR 1 production activation (founder, can run in parallel with PR 2 dev)
+
+1. Apply migration in Supabase:
+   `aeris/supabase/migrations/20260520000026_phase_9_pr_1_client_auth.sql`
+2. Set Vercel env vars (Production + Preview):
+   - `ENABLE_CLIENT_PORTAL=true`
+   - `CLIENT_PASSWORD_RESET_TOKEN_SECRET=<openssl rand -hex 32>`
+3. Redeploy
+4. Run the 9 PR 1 probes per Phase 9 spec §6 (probes 1, 2, 3,
+   3-shape, 4, 4-canary, 5, 6, 7)
+
 > **Note on `Code HEAD` vs `git log` tip:** the row above
-> records the last *code* commit. Each update to this
-> resume-doc itself produces an additional commit on the
-> branch (one of `bc0384d`/`f65c7c1`/`031636a`/this one),
-> so `git rev-parse HEAD` may be one commit ahead of `Code
-> HEAD`. The doc-only commits never change product
-> behaviour; Codex review still applies to `Code HEAD`.
-> See Codex round 3 PR #55 P2 #2 for the rationale.
+> records the last *code* commit on the active branch.
+> Resume-doc commits never change product behaviour, so
+> `git rev-parse HEAD` may be one commit ahead of `Code
+> HEAD`. See Codex round 3 PR #55 P2 #2 for the rationale.
 
 ---
 
@@ -35,8 +43,8 @@
 | # | PR | Status | sha | Notes |
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
-| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `3d55632` | Client auth (32 files, 26 tests) |
-| PR 2 | — | ⏳ pending | — | Charter form (~250 lines) |
+| PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
+| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `45bced7` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
@@ -147,50 +155,136 @@ rounds that MUST be applied:
     Use the `password_hash_malformed` contract (already in
     `clientsAr.errors`) so vocabulary stays consistent
     across signup + reset.
+14. **When introducing a new identity table, sweep ALL FKs
+    that point at the legacy table** (Codex round 1 PR #56
+    P1 #1). PR 2 retargeted `trip_requests.client_id` from
+    `users(id)` to `clients(id)`, but missed
+    `bookings.client_id` — `accept_offer` would have died
+    at booking creation with a 23503 FK violation. Audit
+    the full graph: `bookings`, `loyalty_transactions`,
+    `notifications`, `medevac_requests`, `cargo_requests`,
+    etc. Phase 9 only retargets the path the new flow
+    actually walks (`trip_requests` → `accept_offer` →
+    `bookings`); the rest stay on `users(id)` until their
+    own client-portal flows land.
+15. **Reference-table existence check before INSERT, don't
+    rely on FK violation as the structured contract**
+    (Codex round 1 PR #56 P1 #2). When an RPC accepts a
+    free-text value that maps to a FK-backed column
+    (IATA codes → `airports(iata_code)`), do an explicit
+    `IF NOT EXISTS (SELECT 1 FROM ... WHERE ...) THEN
+    RETURN structured_error END IF;` BEFORE the INSERT.
+    Otherwise the Server Action sees a raw `23503
+    foreign_key_violation` PostgreSQL error code instead of
+    a friendly per-field contract. Two contracts when the
+    field could be either side (e.g. `departure_airport_unknown`
+    + `arrival_airport_unknown`) so the form can highlight
+    the offending field.
+16. **`<input type="datetime-local">` ALWAYS needs an
+    explicit Asia/Riyadh `+03:00` suffix before the Server
+    Action call** (Codex round 1 PR #56 P2 #3 + Phase 7
+    round-2 P2 #1). The browser interprets the naive value
+    in the user's local zone, so a non-Riyadh user storing
+    14:00 ends up with the wrong instant in TIMESTAMPTZ.
+    The shared helper lives at
+    `lib/utils/datetime-local.ts` (`datetimeLocalToRiyadhIso`);
+    every form that ships a `datetime-local` value to a
+    SECURITY DEFINER RPC MUST call it.
+17. **NEVER eagerly `VALIDATE CONSTRAINT` after retargeting
+    a FK in a migration that ships in front of any potential
+    legacy data** (Codex round 2 PR #56 P1 #1). PR 2 retargeted
+    `trip_requests.client_id` and `bookings.client_id` from
+    `users(id)` to `clients(id)`. Adding the new FK as
+    `NOT VALID` and immediately running `VALIDATE CONSTRAINT`
+    in the same migration would block production activation /
+    DR replay if any legacy `users(id)`-backed pointer
+    survived in either table. Defer the `VALIDATE` to a
+    follow-up cleanup migration after activation is cold-quiet.
+18. **`NOT VALID` is NOT enough on its own — inline-backfill
+    legacy orphans inside the same FK-retarget migration**
+    (Codex round 3 PR #56 P1 #1). PostgreSQL still applies a
+    `NOT VALID` FK to every forward INSERT/UPDATE; only
+    pre-existing rows are skipped. So the moment a downstream
+    RPC (Phase 6 `accept_offer` copying `v_trip.client_id`
+    into `bookings.client_id`) tries to write a still-orphaned
+    legacy pointer, the new FK rejects it. The correct
+    pattern for an identity-table FK retarget is:
+    1. DROP old FK
+    2. **Inline-backfill orphans (3 ordered UPDATEs per
+       table)**:
+       a. snapshot-fill from the legacy table (e.g. `users`)
+          for orphans whose legacy row still exists, into
+          whatever snapshot columns the row has
+          (`customer_name`/`customer_phone` on
+          trip_requests; `customer_name_snapshot`/
+          `customer_phone_snapshot` on bookings — yes the
+          column names DIFFER between tables). **ALWAYS
+          width-truncate the source via `LEFT(src, n)`** if
+          the source column is wider than the target
+          (`users.full_name` is `VARCHAR(200)` and the
+          snapshots are `VARCHAR(120)` — Codex round 4 PR
+          #56 P1 #1: a 120+ char legitimate name otherwise
+          aborts the migration with `value too long for
+          type character varying(120)`). Pipe phone-like
+          source values through `NULLIF(BTRIM(src), '')` so
+          empty-string rows fall through to the placeholder
+          rather than overwriting the snapshot with a blank;
+       b. placeholder-fill (e.g. `'Legacy customer'` /
+          `'unknown'`) for orphans whose legacy row is also
+          gone, so any identity_check passes after NULL;
+       c. `UPDATE … SET fk_column = NULL WHERE fk_column IS
+          NOT NULL AND NOT EXISTS (SELECT 1 FROM new_table
+          WHERE id = fk_column);`
+    3. ADD new FK with `NOT VALID` (per #17 above).
+    4. Defer `VALIDATE CONSTRAINT` to cleanup migration.
+    The UPDATEs are idempotent (orphan filter no longer
+    matches once NULLed) so DR replay is safe.
 
 ---
 
 ## ▶️ Resume instructions
 
-### If PR #55 review is back
+### If you're resuming PR 2 mid-flight
 
-Send the Codex findings to me as a code block. I'll
-apply the fixes, validate, and push as a new commit on
-the same branch.
+1. `git checkout feature/phase-9-pr-2-charter-form`
+2. Read Phase 9 spec §5 PR 2 inventory (below) + §3.1.c
+   trip_requests adjustments + §4.2 RPC contract.
+3. Continue from the open todo (`git status` to see what's
+   staged); validate (type-check + lint + new test) before
+   each push.
 
-### If PR #55 is accepted 100/100
+### PR 2 inventory (Phase 9 spec §5)
 
-1. Merge PR #55 (squash + delete branch)
+- **1 migration** `20260521000027_phase_9_pr_2_create_authenticated_trip_request.sql`:
+  - `create_authenticated_trip_request` RPC
+  - extends `trip_requests` if needed for client_id /
+    cancellation flow
+- **1 page** `app/(client)/me/charter/page.tsx`
+- **1 component** `components/clients/charter-form.tsx`
+- **2 Server Actions** (`app/actions/clients-trip-requests.ts`):
+  - `createAuthenticatedTripRequest` — wraps the new RPC;
+    auto-dispatch trigger gated by
+    `ENABLE_TRIP_AUTO_DISTRIBUTION === 'true'` (default
+    false until PR 4 + probes 16 + 17 pass)
+  - `cancelMyTripRequest` — with `cancel_not_allowed` status
+    guard (spec round 4 P1 #1)
+- **Validators** extended in `lib/validators/clients.ts`:
+  `createTripRequestSchema`, `cancelTripRequestSchema`
+- **i18n** entries added to `clientsAr` for charter form +
+  cancel + error contracts
+- **1 test suite** (Jest tsx pattern, mirror PR 1 layout)
+
+### If PR #55 review comes back later (shouldn't — it's
+merged) — N/A. Current focus is PR 2.
+
+### When PR 2 reaches Codex 100/100
+
+1. Merge PR 2 (squash + delete branch)
 2. Sync main locally
-3. Update this file: change PR 1 row to ✅ MERGED with the
-   merge sha
-4. Update Active PR row to PR 2
-5. Begin **PR 2: Authenticated charter form** per
-   Phase 9 spec §5 PR 2 inventory:
-   - 1 migration (`create_authenticated_trip_request` RPC)
-   - 1 page `/(client)/me/charter`
-   - 1 component `charter-form.tsx`
-   - 2 Server Actions (`createAuthenticatedTripRequest`,
-     `cancelMyTripRequest` — with status guard per spec
-     round 4 P1 #1)
-   - Validators extended (`createTripRequestSchema`,
-     `cancelTripRequestSchema`)
-   - 1 test suite
-   - Auto-dispatch trigger gated by
-     `ENABLE_TRIP_AUTO_DISTRIBUTION === 'true'` (default
-     false until PR 4 + Probes 16 + 17 pass)
-
-### If PR #55 was merged but production not yet activated
-
-Founder needs to:
-1. Run migration in Supabase:
-   `20260520000026_phase_9_pr_1_client_auth.sql`
-2. Set Vercel env vars (Production + Preview):
-   - `ENABLE_CLIENT_PORTAL=true`
-   - `CLIENT_PASSWORD_RESET_TOKEN_SECRET=<openssl rand -hex 32>`
-3. Redeploy
-4. Run the 9 PR 1 probes (1, 2, 3, 3-shape, 4, 4-canary,
-   5, 6, 7) per Phase 9 spec §6
+3. Update this file: PR 2 row → ✅ MERGED + merge sha
+4. Set Active PR row to PR 3
+5. Begin PR 3 (client portal — `/me/requests`, `/me/offers`,
+   `/me/bookings` per Phase 9 spec §5)
 
 ---
 
@@ -249,9 +343,28 @@ client_status (active | suspended | deleted)
 
 ## 🚨 Open risks / unresolved
 
-None known at this point. All Codex round 1 + 2 + 3 + 4
-findings addressed (4 + 3 + 1 + 1 = 9 total: 3 P1 + 6 P2).
-Next blocking step is the round 5 review.
+PR #55 → MERGED at `dfd14d1` after Codex round 5 (0
+findings, 100/100). Cumulative findings closed across all 5
+rounds: **9 total — 3 P1 + 6 P2.**
+
+Open items:
+- **PR 1 production activation pending** — see "PR 1
+  production activation" panel at the top. Founder action
+  out of band; doesn't block PR 2 review.
+- **PR 2 — Code HEAD `45bced7` after Codex round 4
+  (1 P1 closed)**. Awaiting Codex round 5. Validation green:
+  TS clean, ESLint 0, 48 tests pass. Cumulative PR #56:
+  4 rounds, 6 findings closed (2 P1 + 1 P2 in round 1,
+  1 P1 in round 2, 1 P1 in round 3, 1 P1 in round 4).
+- **Follow-up cleanup migration (lighter scope after round
+  3)**: post-Phase 9 activation, run `ALTER TABLE …
+  VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
+  Round 3's inline backfill already cleared every legacy
+  orphan; the deferred VALIDATE is now just a
+  belt-and-braces safety net against any concurrent process
+  slipping a stray pointer in between the backfill and the
+  FK swap (which Postgres serialises within a single
+  migration anyway, so this is mostly paperwork).
 
 ---
 
