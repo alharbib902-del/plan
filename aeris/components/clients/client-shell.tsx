@@ -46,6 +46,18 @@ export function ClientShell({ fullName, children }: ClientShellProps) {
                 {clientsAr.navMyArea}
               </NavLink>
               <NavLink
+                href="/me/requests"
+                active={pathname.startsWith('/me/requests')}
+              >
+                {clientsAr.meRequestsTitle}
+              </NavLink>
+              <NavLink
+                href="/me/bookings"
+                active={pathname.startsWith('/me/bookings')}
+              >
+                {clientsAr.meBookingsTitle}
+              </NavLink>
+              <NavLink
                 href="/me/profile"
                 active={pathname.startsWith('/me/profile')}
               >

@@ -128,6 +128,92 @@ export const clientsAr = {
   cancelTripSuccess: 'تم إلغاء الطلب.',
 
   // ------------------------------------------------------------
+  // Phase 9 PR 3 — Client portal (/me/requests + /me/bookings)
+  // ------------------------------------------------------------
+  meRequestsTitle: 'طلباتي',
+  meRequestsEmpty:
+    'لا توجد طلبات حالياً. أرسل طلبك الأول من صفحة Charter.',
+  meRequestsNewCta: 'طلب رحلة جديدة',
+  meRequestsFilterAll: 'الكل',
+  meRequestsTableNumber: 'رقم الطلب',
+  meRequestsTableRoute: 'الرحلة',
+  meRequestsTableDeparture: 'المغادرة',
+  meRequestsTablePassengers: 'الركاب',
+  meRequestsTableStatus: 'الحالة',
+  meRequestsTableActions: 'إجراءات',
+  meRequestsViewDetails: 'عرض التفاصيل',
+
+  meBookingsTitle: 'حجوزاتي',
+  meBookingsEmpty: 'لا توجد حجوزات بعد.',
+  meBookingsTableNumber: 'رقم الحجز',
+  meBookingsTableRoute: 'الرحلة',
+  meBookingsTableDeparture: 'المغادرة',
+  meBookingsTableOperator: 'المشغّل',
+  meBookingsTableTotal: 'الإجمالي (ريال)',
+  meBookingsViewDetails: 'عرض التفاصيل',
+
+  // Trip status chips (Arabic labels for trip_request_status enum)
+  tripStatusPending: 'قيد المراجعة',
+  tripStatusDistributed: 'موزّع على المشغّلين',
+  tripStatusOffered: 'يوجد عروض',
+  tripStatusBooked: 'محجوز',
+  tripStatusCancelled: 'ملغى',
+
+  // Request detail surface
+  requestDetailMetaHeading: 'تفاصيل الطلب',
+  requestDetailRouteLabel: 'المسار',
+  requestDetailDepartureLabel: 'تاريخ المغادرة',
+  requestDetailReturnLabel: 'تاريخ العودة',
+  requestDetailPassengersLabel: 'عدد الركاب',
+  requestDetailAircraftLabel: 'فئة الطائرة',
+  requestDetailSpecialRequestsLabel: 'الطلبات الخاصة',
+  requestDetailStatusLabel: 'الحالة',
+  requestDetailOffersHeading: 'العروض المقدّمة',
+  requestDetailOffersEmpty:
+    'لم تصل عروض بعد. سنُحدّث هذه الصفحة فور وصول أي عرض من المشغّلين.',
+  requestDetailNotFound:
+    'هذا الطلب غير موجود أو لا يخصّ حسابك.',
+
+  // Offer card actions (client-side)
+  offerAccept: 'قبول العرض',
+  offerAccepting: 'جارٍ القبول...',
+  offerDecline: 'رفض',
+  offerDeclining: 'جارٍ الرفض...',
+  offerSourcePhase4: 'عرض مباشر',
+  offerSourcePhase5: 'عرض من جولة التوزيع',
+  offerSourceCurrentRound: 'الجولة الحالية',
+  offerStatusPending: 'قيد المراجعة',
+  offerStatusViewed: 'تمت المشاهدة',
+  offerStatusAccepted: 'مقبول',
+  offerStatusRejected: 'مرفوض',
+  offerStatusExpired: 'منتهي الصلاحية',
+  offerExpiresLabel: 'صلاحية حتى',
+  offerPriceLabel: 'السعر الإجمالي',
+  offerDepartureEtaLabel: 'موعد الإقلاع المقترح',
+  offerAircraftLabel: 'الطائرة',
+
+  // Booking detail surface
+  bookingDetailHeading: 'تفاصيل الحجز',
+  bookingDetailNumberLabel: 'رقم الحجز',
+  bookingDetailRouteLabel: 'المسار',
+  bookingDetailDepartureLabel: 'موعد الإقلاع',
+  bookingDetailOperatorLabel: 'المشغّل',
+  bookingDetailAircraftLabel: 'الطائرة',
+  bookingDetailTotalLabel: 'الإجمالي',
+  bookingDetailPaymentStatusLabel: 'حالة الدفع',
+  bookingDetailFlightStatusLabel: 'حالة الرحلة',
+  bookingDetailNotFound:
+    'هذا الحجز غير موجود أو لا يخصّ حسابك.',
+  bookingPaymentPending: 'في انتظار الدفع',
+  bookingPaymentPaid: 'مدفوع',
+  bookingPaymentRefunded: 'مسترجع',
+  bookingFlightConfirmed: 'مؤكّد',
+  bookingFlightBoarding: 'في الإركاب',
+  bookingFlightInFlight: 'في الجو',
+  bookingFlightCompleted: 'مكتمل',
+  bookingFlightCancelled: 'ملغى',
+
+  // ------------------------------------------------------------
   // Error translation map (RPC error codes → Arabic strings)
   // ------------------------------------------------------------
   errors: {
@@ -198,5 +284,18 @@ export const clientsAr = {
       'الطلبات الخاصة يجب أن تكون أقل من 2000 حرف.',
     cancel_not_allowed:
       'لا يمكن إلغاء هذا الطلب الآن (قد يكون محجوزاً أو لم يعد متاحاً).',
+
+    // Phase 9 PR 3 — accept/decline offer contracts.
+    accept_failed:
+      'تعذّر قبول العرض الآن. حاول لاحقاً.',
+    decline_not_allowed:
+      'لا يمكن رفض هذا العرض الآن (قد يكون مقبولاً أو منتهي الصلاحية).',
+    // Pass-through from accept_offer (Phase 5/6 RPC):
+    unknown_source: 'مصدر العرض غير معروف.',
+    offer_not_pending: 'هذا العرض لم يعد قيد المراجعة.',
+    trip_not_open:
+      'هذا الطلب لم يعد مفتوحاً للعروض (قد يكون محجوزاً أو ملغياً).',
+    offer_expired:
+      'انتهت صلاحية هذا العرض. اطلب جولة جديدة من الدعم.',
   } as Record<string, string>,
 } as const;
