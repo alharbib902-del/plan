@@ -8,16 +8,16 @@
 
 ---
 
-## 📍 Current state (last updated: PR 1 round 3 fixes)
+## 📍 Current state (last updated: PR 1 round 4 fix)
 
 | Field | Value |
 |---|---|
 | **Active PR** | [#55 — Phase 9 PR 1 Client Auth](https://github.com/alharbib902-del/plan/pull/55) |
 | **Branch** | `feature/phase-9-pr-1-client-auth` |
-| **Code HEAD** | `d63dea0` (Codex round 3 P2 #1 fix — clientSignup ip_required) |
-| **Status** | ⏳ Awaiting Codex round 4 review |
-| **Last action** | Round 3 fix (1x P2) pushed at `d63dea0` |
-| **Next action** | Codex round 4 review → iterate or merge |
+| **Code HEAD** | `3d55632` (Codex round 4 P2 #1 fix — reset RPC bcrypt format) |
+| **Status** | ⏳ Awaiting Codex round 5 review |
+| **Last action** | Round 4 fix (1x P2) pushed at `3d55632` |
+| **Next action** | Codex round 5 review → iterate or merge |
 
 > **Note on `Code HEAD` vs `git log` tip:** the row above
 > records the last *code* commit. Each update to this
@@ -35,7 +35,7 @@
 | # | PR | Status | sha | Notes |
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
-| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `d63dea0` | Client auth (32 files, 26 tests) |
+| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `3d55632` | Client auth (32 files, 26 tests) |
 | PR 2 | — | ⏳ pending | — | Charter form (~250 lines) |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
@@ -126,6 +126,27 @@ rounds that MUST be applied:
     actions DO pass `clientIp()` directly because their
     target columns (`*_sessions.ip_address`,
     `*_password_reset_tokens.ip_address`) are nullable INET.
+13. **Every RPC that writes `password_hash` MUST validate
+    bcrypt format** (Codex round 4 PR #55 P2 #1). Both signup
+    AND reset paths need the full triple-check before any
+    UPDATE/INSERT touches the column:
+    ```sql
+    IF p_new_password_hash IS NULL
+       OR length(p_new_password_hash) <> 60
+       OR p_new_password_hash !~ '^\$2[aby]\$'
+    THEN
+      RETURN json_build_object('ok', false,
+        'error', 'password_hash_malformed');
+    END IF;
+    ```
+    A NULL/empty-only guard is insufficient: a buggy Server
+    Action or repair script could store a non-bcrypt string
+    and the client could not log in afterwards (and on the
+    reset path, the single-use token has already been
+    consumed at that point — no recovery without admin).
+    Use the `password_hash_malformed` contract (already in
+    `clientsAr.errors`) so vocabulary stays consistent
+    across signup + reset.
 
 ---
 
@@ -228,9 +249,9 @@ client_status (active | suspended | deleted)
 
 ## 🚨 Open risks / unresolved
 
-None known at this point. All Codex round 1 + 2 + 3
-findings addressed (4 + 3 + 1 = 8 total: 3 P1 + 5 P2).
-Next blocking step is the round 4 review.
+None known at this point. All Codex round 1 + 2 + 3 + 4
+findings addressed (4 + 3 + 1 + 1 = 9 total: 3 P1 + 6 P2).
+Next blocking step is the round 5 review.
 
 ---
 
