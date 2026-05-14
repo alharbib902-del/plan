@@ -184,6 +184,10 @@ export const clientsAr = {
     invalid_legs:
       'يجب إضافة قطعة طيران واحدة على الأقل.',
     invalid_iata: 'كود المطار يجب أن يكون 3 أحرف لاتينية.',
+    departure_airport_unknown:
+      'كود مطار المغادرة غير معروف. تأكّد من إدخال كود IATA صحيح (مثل: RUH).',
+    arrival_airport_unknown:
+      'كود مطار الوصول غير معروف. تأكّد من إدخال كود IATA صحيح (مثل: JED).',
     invalid_departure_date:
       'تاريخ المغادرة يجب أن يكون في المستقبل.',
     invalid_return_date:

@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { createAuthenticatedTripRequest } from '@/app/actions/clients-trip-requests';
+import { datetimeLocalToRiyadhIso } from '@/lib/utils/datetime-local';
 import { ClientBanner, clientErrorMessage } from './error-banner';
 
 type AircraftPref =
@@ -36,9 +37,24 @@ export function ClientCharterForm() {
     const arrivalIata = String(fd.get('arrival_iata') ?? '')
       .trim()
       .toUpperCase();
-    const departureDate = String(fd.get('departure_date') ?? '');
+
+    // Codex round 1 PR #56 P2 #3 fix — convert the naive
+    // <input type="datetime-local"> wall-time value into an
+    // explicit Asia/Riyadh ISO before shipping it to the
+    // Server Action. Without this, a user outside Riyadh
+    // would store the wrong instant in trip_requests.
+    // departure_date / return_date (TIMESTAMPTZ). Mirrors
+    // the Phase 7 admin/operator publish-form discipline.
+    const departureDateRaw = String(fd.get('departure_date') ?? '');
+    const departureDate =
+      departureDateRaw.length > 0
+        ? datetimeLocalToRiyadhIso(departureDateRaw)
+        : '';
     const returnDateRaw = String(fd.get('return_date') ?? '');
-    const returnDate = returnDateRaw.length > 0 ? returnDateRaw : null;
+    const returnDate =
+      returnDateRaw.length > 0
+        ? datetimeLocalToRiyadhIso(returnDateRaw)
+        : null;
     const passengersRaw = String(fd.get('passengers') ?? '');
     const passengers = Number.parseInt(passengersRaw, 10);
     const aircraftPrefRaw = String(fd.get('aircraft_pref') ?? '');

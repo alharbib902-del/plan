@@ -7,14 +7,21 @@
 --
 -- Scope of this migration:
 --   §1   trip_requests.client_id FK retarget (users → clients)
---   §2   create_authenticated_trip_request(...)  RPC
+--   §2   bookings.client_id    FK retarget (users → clients)
+--                              [Codex round 1 PR #56 P1 #1 fix]
+--   §3   create_authenticated_trip_request(...)  RPC
 --
 -- Dependencies:
---   - Phase 1   trip_requests, trip_type, aircraft_category,
---               trip_request_status, generate_request_number()
+--   - Phase 1   trip_requests, bookings, trip_type,
+--               aircraft_category, trip_request_status,
+--               generate_request_number(), airports(iata_code)
 --   - Phase 4   trip_requests.client_id DROP NOT NULL +
 --               customer_name / customer_phone / customer_source
 --               snapshot columns + trip_requests_identity_check
+--   - Phase 6   bookings now sets `customer_name` /
+--               `customer_phone` snapshots in accept_offer,
+--               so dropping NOT NULL on bookings.client_id is
+--               safe (the row stays readable post-FK clear).
 --   - Phase 9 PR 1   clients table (id, full_name, contact_phone,
 --                    signup_status), client_status enum
 --
@@ -100,7 +107,75 @@ ALTER TABLE trip_requests
 
 
 -- ============================================================
--- §2 — create_authenticated_trip_request
+-- §2 — Retarget bookings.client_id FK
+-- ============================================================
+--
+-- Codex round 1 PR #56 P1 #1 fix. Phase 1 created the column
+-- with `NOT NULL REFERENCES users(id) ON DELETE RESTRICT`,
+-- back when the buying side lived in `users.role='client'`.
+-- Phase 6's `accept_offer` body copies `v_trip.client_id`
+-- straight into `bookings.client_id`. After §1 retargets
+-- trip_requests to clients(id), accept_offer would attempt
+-- to write a clients.id into a users(id)-bound FK and raise
+-- 23503 foreign_key_violation — every PR 9 charter booking
+-- would die at the booking-creation step.
+--
+-- Plan:
+--   1. Drop NOT NULL: required for ON DELETE SET NULL to
+--      work, AND aligns the column with the trip_requests
+--      side which dropped NOT NULL in Phase 4 (a guest-trip
+--      that gets booked needs a NULL pointer too).
+--   2. Drop the legacy FK to users(id).
+--   3. Re-add the FK to clients(id) with ON DELETE SET NULL,
+--      NOT VALID, then VALIDATE in a separate statement so
+--      legacy bookings rows surface explicitly.
+--
+-- Snapshot survival: Phase 6 PR 2a's accept_offer extension
+-- writes `customer_name` / `customer_phone` snapshots on
+-- every booking INSERT (the migration header comment in
+-- 20260508000007_phase_6_2_addons.sql §340-345 documents the
+-- contract). So a bookings row whose client_id eventually
+-- clears (privacy delete, FK retarget mismatch) stays
+-- readable for ZATCA / audit.
+--
+-- DR/replay safety: each step uses IF EXISTS / DO blocks so
+-- a partial replay does not error out.
+
+ALTER TABLE bookings ALTER COLUMN client_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'bookings_client_id_fkey'
+       AND conrelid = 'public.bookings'::regclass
+  ) THEN
+    ALTER TABLE bookings
+      DROP CONSTRAINT bookings_client_id_fkey;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'bookings_client_id_clients_fkey'
+       AND conrelid = 'public.bookings'::regclass
+  ) THEN
+    ALTER TABLE bookings
+      ADD CONSTRAINT bookings_client_id_clients_fkey
+        FOREIGN KEY (client_id) REFERENCES clients(id)
+        ON DELETE SET NULL
+        NOT VALID;
+  END IF;
+END $$;
+
+ALTER TABLE bookings
+  VALIDATE CONSTRAINT bookings_client_id_clients_fkey;
+
+
+-- ============================================================
+-- §3 — create_authenticated_trip_request
 -- ============================================================
 --
 -- INSERTs into trip_requests with `client_id` set + a frozen
@@ -146,7 +221,9 @@ ALTER TABLE trip_requests
 --       { ok: false, error: 'client_not_active' }         suspended/deleted
 --       { ok: false, error: 'invalid_trip_type' }         not 'charter'
 --       { ok: false, error: 'invalid_legs' }              not array / empty
---       { ok: false, error: 'invalid_iata' }              departure or arrival shape
+--       { ok: false, error: 'invalid_iata' }              departure or arrival shape (3-letter regex)
+--       { ok: false, error: 'departure_airport_unknown' }  IATA shape OK, not in airports table (Codex round 1 PR #56 P1 #2)
+--       { ok: false, error: 'arrival_airport_unknown' }    IATA shape OK, not in airports table (Codex round 1 PR #56 P1 #2)
 --       { ok: false, error: 'invalid_departure_date' }    NULL or past
 --       { ok: false, error: 'invalid_return_date' }       <= departure
 --       { ok: false, error: 'invalid_passengers' }        out of 1..19
@@ -209,20 +286,36 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'invalid_legs');
   END IF;
 
-  -- IATA: 3 uppercase letters. The column is VARCHAR(10)
-  -- referencing airports.iata_code; the spec's standard-IATA
-  -- format is 3 letters. We do NOT join airports here because
-  -- the same row would later fail the existing FK
-  -- (departure_airport / arrival_airport reference
-  -- airports.iata_code) — which is the desired strict
-  -- behaviour. Shape check just gives a friendlier upstream
-  -- error than a raw 23503 foreign_key_violation.
+  -- IATA shape: 3 uppercase letters. Cheap regex first so the
+  -- airports lookup below never gets a malformed code.
   IF p_departure_iata IS NULL
      OR p_arrival_iata IS NULL
      OR p_departure_iata !~ '^[A-Z]{3}$'
      OR p_arrival_iata   !~ '^[A-Z]{3}$'
   THEN
     RETURN json_build_object('ok', false, 'error', 'invalid_iata');
+  END IF;
+
+  -- Codex round 1 PR #56 P1 #2 fix — IATA existence check
+  -- against the airports reference table BEFORE the INSERT.
+  -- The previous shape-only check let `ZZZ`-style payloads
+  -- pass the regex, then the INSERT into FK-backed
+  -- departure_airport / arrival_airport surfaced as a raw
+  -- 23503 foreign_key_violation reaching the Server Action.
+  -- Two structured contracts (departure / arrival) so the
+  -- form can highlight the offending field directly. The
+  -- form does free-text IATA entry, so this is the most
+  -- likely user error path.
+  IF NOT EXISTS (
+    SELECT 1 FROM airports WHERE iata_code = p_departure_iata
+  ) THEN
+    RETURN json_build_object('ok', false, 'error', 'departure_airport_unknown');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM airports WHERE iata_code = p_arrival_iata
+  ) THEN
+    RETURN json_build_object('ok', false, 'error', 'arrival_airport_unknown');
   END IF;
 
   -- departure_date: required + must be in the future. The Zod
