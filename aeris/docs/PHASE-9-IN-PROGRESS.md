@@ -12,12 +12,12 @@
 
 | Field | Value |
 |---|---|
-| **Active PR** | PR 2 — Authenticated charter form (branch pushed, awaiting PR open) |
+| **Active PR** | [#56 — Phase 9 PR 2 Charter form](https://github.com/alharbib902-del/plan/pull/56) |
 | **Branch** | `feature/phase-9-pr-2-charter-form` |
 | **Code HEAD** | `d5fabb8` (PR 2 initial — 1 RPC + 2 Server Actions + 1 page + 16 tests) |
-| **Status** | ⏳ Ready to open PR; awaiting Codex round 1 review |
-| **Last action** | PR 2 code commit pushed at `d5fabb8` (10 files, +1452/-11) |
-| **Next action** | Open PR via `gh pr create` → run CI → invite Codex review |
+| **Status** | ⏳ Awaiting Codex round 1 review |
+| **Last action** | PR #56 opened against `main` |
+| **Next action** | Codex round 1 review → iterate or merge |
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
-| **PR 2** | (about to open) | ⏳ READY FOR REVIEW | `d5fabb8` | Charter form — 10 files, 16 new tests, 9 RPC contracts |
+| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `d5fabb8` | Charter form — 10 files, 16 new tests, 9 RPC contracts |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
