@@ -3,6 +3,7 @@ import 'server-only';
 import { unstable_noStore as noStore } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { isUuid } from '@/lib/utils/uuid';
 import type { BookingRow } from '@/types/database';
 
 /**
@@ -42,6 +43,13 @@ export async function getBookingForClient(
   bookingId: string
 ): Promise<BookingRow | null> {
   noStore();
+
+  // Codex round 1 PR #57 P2 #1 fix — same short-circuit as
+  // me-requests.getTripRequestForClient. A malformed
+  // /me/bookings/<id> route would otherwise 500 because
+  // PostgREST throws on the UUID comparison.
+  if (!isUuid(bookingId)) return null;
+
   const admin = createAdminClient();
 
   const { data, error } = await admin

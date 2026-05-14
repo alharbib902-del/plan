@@ -3,6 +3,7 @@ import 'server-only';
 import { unstable_noStore as noStore } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { isUuid } from '@/lib/utils/uuid';
 import type { TripRequestRow } from '@/types/database';
 
 /**
@@ -82,6 +83,15 @@ export async function getTripRequestForClient(
   tripRequestId: string
 ): Promise<TripRequestRow | null> {
   noStore();
+
+  // Codex round 1 PR #57 P2 #1 fix — short-circuit when the
+  // route param is not a UUID. Without this, PostgREST
+  // rejects the .eq('id', tripRequestId) comparison with
+  // 22P02 invalid_text_representation and the page renders
+  // a 500. NULL collapses naturally into the not-found UX
+  // the page already handles.
+  if (!isUuid(tripRequestId)) return null;
+
   const admin = createAdminClient();
 
   const { data, error } = await admin
