@@ -995,9 +995,20 @@ map entries** for the new RPCs (avoid Phase 8 PR 2e #48
 collapse pattern).
 
 **Env vars:**
-- `CLIENT_SESSION_TOKEN_SECRET` (HMAC for session tokens)
 - `CLIENT_PASSWORD_RESET_TOKEN_SECRET` (HMAC for reset tokens)
 - `ENABLE_CLIENT_PORTAL=true` (kill-switch)
+
+> **Session-token shape (Codex round 2 PR #55 P2 #3
+> alignment):** session tokens are opaque random 32-byte
+> hex values stored as `sha256(raw_token)` in
+> `client_sessions.token_hash` — same model as Phase 8
+> operator sessions. There is **no** `CLIENT_SESSION_TOKEN_SECRET`
+> env var: the only secret material in flight is the raw
+> 256-bit cookie value itself, which never leaves the
+> browser; on the server side we only ever store / compare
+> the hash. An earlier draft listed an HMAC session secret;
+> that was removed because it implied a security property
+> the implementation does not provide.
 
 ### PR 2 — Authenticated charter form (1 RPC, 2 Server
 Actions, 1 page + 1 component, ~250 lines)

@@ -424,7 +424,42 @@ export async function clientRequestPasswordReset(input: {
       sendResult,
       'clientRequestPasswordReset'
     );
+  } else if (!result.ok) {
+    // Codex round 2 PR #55 P2 #2 fix — record a degraded
+    // alert when the RPC returns a structured failure
+    // (`invalid_expiry`, `invalid_token_hash`, …). Previously
+    // these silent fall-throughs left the admin canary in
+    // 'healthy' state while no email shipped, hiding genuine
+    // wiring bugs (e.g. a future caller that drifts the
+    // expiry contract). Browser still sees the opaque
+    // success below to prevent enumeration; admin sees the
+    // real cause via the alert singleton.
+    console.error(
+      '[clients-public.clientRequestPasswordReset] rpc structured failure',
+      result.error
+    );
+    try {
+      await recordClientEmailAlertStatus(
+        adminClient,
+        {
+          ok: false,
+          reason: 'send_failed',
+          detail: `reset_token_rpc_failed: ${result.error}`,
+        },
+        'clientRequestPasswordReset'
+      );
+    } catch (alertErr) {
+      console.error(
+        '[clients-public.clientRequestPasswordReset] alert update failed',
+        alertErr
+      );
+    }
   }
+  // The remaining branch — { ok: true, no_op: true } for an
+  // unknown email — is intentionally silent: admin must NOT
+  // get a degraded-alert ping every time someone types a
+  // wrong address into the forgot form. The whole point of
+  // no_op is enumeration-resistance.
 
   // Always opaque ok to prevent enumeration
   return { ok: true };

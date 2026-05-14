@@ -289,31 +289,40 @@ DECLARE
   v_existing_id   UUID;
   v_recent_count  INT;
 BEGIN
-  -- Validation: required fields present, basic shape
-  IF NULLIF(TRIM(p_email), '') IS NULL
-     OR NULLIF(TRIM(p_password_hash), '') IS NULL
-     OR NULLIF(TRIM(p_full_name), '') IS NULL
-     OR NULLIF(TRIM(p_phone), '') IS NULL
-     OR p_ip IS NULL THEN
+  -- Codex round 2 PR #55 P1 #1 — explicit ip_required guard.
+  -- client_signup_attempts.ip_address is NOT NULL, so every
+  -- downstream INSERT (validation_failed / duplicate_email /
+  -- rate_limited / success) would raise a raw 23502 if p_ip
+  -- were NULL. The Server Action MUST extract the IP from the
+  -- request headers before calling this RPC; an absent IP is
+  -- a Server Action bug and gets a structured 'ip_required'
+  -- error rather than a DB constraint error reaching the user.
+  IF p_ip IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'ip_required');
+  END IF;
+
+  -- Codex round 2 PR #55 P1 #1 — validate p_email shape BEFORE
+  -- _normalize_client_email + advisory lock. Without this guard:
+  --   - NULL p_email surfaces as a raw NOT NULL / advisory-lock
+  --     error instead of a structured 'email_invalid' contract
+  --   - a malformed but non-null p_email is stored forever as
+  --     the immutable auth_email column (it is NOT NULL per
+  --     §3.1.b and the LOWER() unique index is the only
+  --     constraint on the address itself)
+  --   - over-length p_email (>120 chars, the VARCHAR ceiling)
+  --     surfaces as a raw 22001 string_data_right_truncation
+  -- The validation rules mirror Phase 8 operator_signup:
+  -- RFC-shape regex + 120-char ceiling matching the VARCHAR.
+  IF p_email IS NULL
+     OR p_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+     OR length(p_email) > 120
+  THEN
     INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
-      VALUES (COALESCE(p_ip, '0.0.0.0'::INET), NOW(), p_email, 'validation_failed');
-    RETURN json_build_object('ok', false, 'error', 'validation_failed');
+      VALUES (p_ip, NOW(), p_email, 'validation_failed');
+    RETURN json_build_object('ok', false, 'error', 'email_invalid');
   END IF;
 
   v_normalized := _normalize_client_email(p_email);
-
-  -- Rate limit: 3 success / IP / 24h
-  SELECT COUNT(*) INTO v_recent_count
-    FROM client_signup_attempts
-   WHERE ip_address = p_ip
-     AND result = 'success'
-     AND attempted_at > NOW() - INTERVAL '24 hours';
-
-  IF v_recent_count >= 3 THEN
-    INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
-      VALUES (p_ip, NOW(), v_normalized, 'rate_limited');
-    RETURN json_build_object('ok', false, 'error', 'rate_limited');
-  END IF;
 
   -- Per-email advisory transaction lock. The bigint key is
   -- derived from the first 16 hex chars of md5(normalized)
@@ -337,6 +346,59 @@ BEGIN
     INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
       VALUES (p_ip, NOW(), v_normalized, 'duplicate_email');
     RETURN json_build_object('ok', false, 'error', 'duplicate_email');
+  END IF;
+
+  -- Rate limit: 3 success / IP / 24h. Checked AFTER duplicate
+  -- so legitimate retries by an honest user whose previous
+  -- attempt failed are not counted toward the cap.
+  SELECT COUNT(*) INTO v_recent_count
+    FROM client_signup_attempts
+   WHERE ip_address = p_ip
+     AND result = 'success'
+     AND attempted_at > NOW() - INTERVAL '24 hours';
+
+  IF v_recent_count >= 3 THEN
+    INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
+      VALUES (p_ip, NOW(), v_normalized, 'rate_limited');
+    RETURN json_build_object('ok', false, 'error', 'rate_limited');
+  END IF;
+
+  -- Codex round 2 PR #55 P1 #1 — defense-in-depth bcrypt format
+  -- check. The Server Action runs bcryptjs.hashSync(plaintext,
+  -- 12) which always emits exactly 60 chars starting with
+  -- $2a$ / $2b$ / $2y$. A malformed hash here is a Server
+  -- Action bug; reject with a structured contract instead of
+  -- letting an unverifiable login row reach production.
+  IF p_password_hash IS NULL
+     OR length(p_password_hash) <> 60
+     OR p_password_hash !~ '^\$2[aby]\$'
+  THEN
+    INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
+      VALUES (p_ip, NOW(), v_normalized, 'validation_failed');
+    RETURN json_build_object('ok', false, 'error', 'password_hash_malformed');
+  END IF;
+
+  -- Codex round 2 PR #55 P1 #1 — full_name shape (BTRIM 2-120
+  -- to match VARCHAR(120) column). Server-side Zod already
+  -- caps at 120 with min(2); this is defense in depth.
+  IF p_full_name IS NULL
+     OR length(BTRIM(p_full_name)) < 2
+     OR length(p_full_name) > 120
+  THEN
+    INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
+      VALUES (p_ip, NOW(), v_normalized, 'validation_failed');
+    RETURN json_build_object('ok', false, 'error', 'full_name_invalid');
+  END IF;
+
+  -- Codex round 2 PR #55 P1 #1 — phone shape (BTRIM 6-20 to
+  -- match VARCHAR(20) column).
+  IF p_phone IS NULL
+     OR length(BTRIM(p_phone)) < 6
+     OR length(p_phone) > 20
+  THEN
+    INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
+      VALUES (p_ip, NOW(), v_normalized, 'validation_failed');
+    RETURN json_build_object('ok', false, 'error', 'contact_phone_invalid');
   END IF;
 
   -- INSERT with defense-in-depth EXCEPTION handler. Should

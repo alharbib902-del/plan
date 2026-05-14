@@ -111,6 +111,19 @@ export const clientsAr = {
     account_not_active:
       'الحساب غير مفعّل (موقوف أو محذوف). تواصل مع الدعم.',
     invalid_email: 'صيغة البريد الإلكتروني غير صحيحة.',
+    // Codex round 2 PR #55 P1 #1 — structured DB-validation
+    // contracts mirrored from Phase 8 operator_signup. These
+    // are defence-in-depth: Zod in the Server Action catches
+    // them first; if anything reaches here, the user gets a
+    // precise hint instead of the generic rpc_failed.
+    email_invalid: 'صيغة البريد الإلكتروني غير صحيحة.',
+    password_hash_malformed: 'صيغة كلمة المرور غير مدعومة.',
+    full_name_invalid:
+      'الاسم الكامل يجب أن يكون بين 2 و 120 حرف.',
+    contact_phone_invalid:
+      'رقم الجوال يجب أن يكون بين 6 و 20 خانة.',
+    ip_required:
+      'تعذّر التحقق من جلستك. حاول من شبكة مختلفة أو تواصل مع الدعم.',
     invalid_token_hash: 'رابط غير صالح.',
     invalid_client: 'حساب غير صالح.',
     client_not_found: 'الحساب غير موجود.',
