@@ -1,22 +1,19 @@
-# Phase 8 — Operator Account Onboarding
+# Phase 9 — Charter & Client Portal
 
 > **Status:** Draft for Codex review (round 1).
-> **Predecessor:** Phase 7 (Empty Legs marketplace) — closed
-> 2026-05-09 at sha `6468dfb`. Phase 7 introduced the
-> short-lived `phase7_operator_stubs` table because the real
-> `operators` table required FK targets (user accounts +
-> regulatory documents) that Phase 7 could not populate.
-> Phase 8 retires that shim by giving operators real,
-> authenticated accounts.
+> **Predecessor:** Phase 8 + Phase 8.x (Operator Portal +
+> wasender WhatsApp + cleanup cron) — closed
+> 2026-05-12 at sha `14adb7a`. Phase 8 gave operators
+> first-class authenticated accounts; Phase 9 does the same
+> for clients and closes the trip-request → offer → booking
+> loop **without admin mediation**.
 >
-> **Scope (locked).** A full operator portal — public
-> hybrid signup → admin approval → custom-bcrypt session
-> auth → minimal-but-real dashboard, legs management,
-> bookings (read-only), profile, mock earnings — plus the
-> admin surfaces that approve/reject/suspend operators,
-> upload regulatory documents, and convert
-> `phase7_operator_stubs` rows into real `operators` rows
-> while preserving every `empty_legs` linkage.
+> **Scope (locked).** Four PRs:
+> 1. PR 1 — Client auth (mirror of Phase 8 PR 2c, adapted).
+> 2. PR 2 — Authenticated charter form + RPC.
+> 3. PR 3 — Client portal (my requests + offer comparison +
+>    self-accept).
+> 4. PR 4 — Auto-distribution engine + cron + admin canary.
 >
 > Every PR in this phase MUST clear Codex 100/100 before
 > merge.
@@ -25,434 +22,238 @@
 
 ## 0. Objective
 
-Replace the Phase-7-scoped `phase7_operator_stubs` shim
-with first-class operator accounts. After Phase 8:
+Replace the admin-mediated guest trip-request flow with a
+real client-account flow:
 
-1. **Operators self-onboard** at `/operator/signup` — they
-   pick an email, set a bcrypt password, and submit
-   `company_name + contact_email + contact_phone` plus a
-   freeform notes blob. The account lands in
-   `operators.signup_status = 'pending'`.
+1. **Clients self-onboard** at `/login` + `/signup` — they
+   pick an email, set a bcrypt password, and complete their
+   profile (name + phone). The account lands in
+   `clients.signup_status='active'` immediately (no admin
+   approval required — clients are the demand side, friction
+   should be zero).
 
-2. **Admin approves** at `/admin/operators/<id>` — flips
-   `signup_status` to `'approved'` and triggers a welcome
-   email containing a magic link that completes first
-   login (a one-shot HMAC token signed by a separate
-   secret; the operator follows the link, lands on a
-   "set up your session" page, and is logged into the
-   portal directly).
+2. **Authenticated clients submit trip requests** at
+   `/me/charter` — origin/destination, dates, passengers,
+   aircraft preference, special requests. The Server Action
+   writes directly to `trip_requests` with `client_id` set,
+   bypassing the lead-inquiry intermediary.
 
-3. **Operator logs in** at `/operator/login` with email +
-   password. Sessions are cookie-based, 7-day default,
-   30-day with "تذكّرني" toggle, custom HMAC over a row
-   in `operator_sessions` (mirrors the Phase 7 admin
-   cookie discipline; replaces the URL-token flow).
+3. **Auto-distribution dispatches** the new request to the
+   top-N matching operators automatically (no admin
+   intervention). Replaces today's manual `DispatchPanelV2`
+   for client-originated trips. Admin retains the panel for
+   guest leads + manual override.
 
-4. **Admin uploads regulatory documents** at
-   `/admin/operators/<id>/documents` — `commercial_registration`,
-   `gaca_license`, `license_expiry`. The operator can
-   view (read-only) at `/operator/profile/documents`.
+4. **Operators see + respond** via the existing
+   `/operator/offer/[token]` flow (Phase 4/5 unchanged).
+   Operator portal `/operator/(authed)/requests` is added in
+   PR 4 as a logged-in inbox alternative.
 
-5. **Admin converts existing stubs** at
-   `/admin/empty-legs/operators/<stub_id>/convert` —
-   picks (or creates) a target `operators` row, the RPC
-   reassigns every `empty_legs.operator_stub_id =
-   stub_id` to the operator's `operator_id` AND archives
-   the stub. Stubs that admin elects not to convert stay
-   coexistence-mode forever (the `empty_legs.operator_stub_id`
-   FK and the `phase7_operator_stubs` table are NOT
-   removed — Phase 8 ships the conversion path, not a
-   forced migration).
+5. **Clients accept / decline offers** at `/me/requests/[id]`
+   — sees all submitted offers side-by-side via
+   `UnifiedOfferCard` (the existing admin component, made
+   reusable). Accept calls the existing `accept_offer` RPC
+   via a NEW Server Action that ownership-checks the trip's
+   `client_id = session.client_id` before invoking.
 
-6. **Recovery flows** are first-class:
-   - **Email reset link** — operator opens
-     `/operator/forgot-password`, types email, gets a
-     one-shot HMAC reset link via Resend (separate
-     secret, 30-min TTL).
-   - **WhatsApp OTP** — admin can mint a 6-digit OTP at
-     `/admin/operators/<id>` that the operator types at
-     `/operator/login/otp` to bypass password (rare path,
-     for recovery without email access).
-   - **Admin reset** — admin can directly set a new
-     password from `/admin/operators/<id>`; the operator
-     receives an email with the new password (one-shot,
-     must change on next login).
+6. **Guest flow stays alive.** `/(public)/request` keeps
+   writing to `lead_inquiries` for unauthenticated traffic.
+   Admin promotes leads → trip_requests as today. The
+   authenticated flow is a parallel, NOT a replacement.
 
-7. **The Phase 7 token-URL operator flow stays
-   functional** during the canary window (no breaking
-   change). Once admin is comfortable, the
-   `ENABLE_OPERATOR_PORTAL` flag stays on AND the
-   `ENABLE_OPERATOR_LEGACY_TOKEN` flag (new, default on)
-   can be flipped off to retire the URL-token path.
+7. **Recovery flows** mirror Phase 8 operator side: email
+   reset link with HMAC token (30-min TTL), admin reset (rare
+   path; admin already can re-auth a stuck client by inserting
+   a fresh password hash via a new RPC).
 
 ---
 
-## 1. Product decisions (locked)
+## 1. What this phase does NOT do
 
-These are the founder's confirmed choices, captured before
-the spec was drafted. Codex must verify the rest of the
-document is consistent with each decision; any drift is a
-blocker.
+Out of scope (deferred to Phase 9.x or later):
 
-| # | Decision | Value | Rationale |
-|:-:|---|---|---|
-| 1 | **Auth provider** | Custom + bcrypt (founder-confirmed) | The founder explicitly picked **(ج) Custom + bcrypt** from a 3-way choice (Supabase Auth / HMAC-only / Custom + bcrypt) in the pre-spec decisions thread. Rationale: full control over hash cost / rotation / session shape; avoids the Supabase Auth coupling that would force `auth.users` rows for every operator AND complicate the existing admin cookie flow (which is already Custom + bcrypt-style HMAC). The Phase 7 operator HMAC-token flow stays available behind a kill-switch flag during the canary window — see §8 retire-legacy plan. **Codex round 1 P1 #1 audit:** Codex round 1 flagged this as "spec reverses the agreed auth provider — we settled on Supabase Auth", which is incorrect — the founder's confirmed choice IS Custom + bcrypt; this row is the durable record. The Codex finding is recorded here so that audit trail is complete. |
-| 2 | **Registration flow** | Hybrid (self-signup → pending → admin approval) | Operators discover Aeris via marketing / referrals; self-signup lowers onboarding friction. Admin approval gate keeps regulatory posture tight (no spam accounts; admin verifies every operator before legs publish). |
-| 3 | **Document handling** | Admin completes documents | Operators rarely have `gaca_license` / `commercial_registration` PDFs ready at signup. Admin coordinates document collection out-of-band (WhatsApp / email) and uploads on the operator's behalf. |
-| 4 | **Stub migration strategy** | Manual conversion (admin-controlled) | Forced automatic migration would either lose data (stubs lack `user_id` / regulatory docs) or surface NULLs in `operators` columns the schema enforces. Manual gives admin a UI to pick the target operator + reassign legs atomically per stub. Stubs that aren't converted coexist with operators forever. |
-| 5 | **Operator UI scope** | Full portal | Login + dashboard + legs + bookings (read-only) + profile + mock earnings. Replaces the Phase 7 token-URL flow with session auth. ~12 pages. |
-| 6 | **Recovery flow** | Email reset link **AND** WhatsApp OTP **AND** admin direct reset | Email reset is the default; WhatsApp OTP covers the lost-email-access case; admin reset is the operational override. All three paths land at the same "set new password" page. |
-| 7 | **Codex 100/100** | Required on every PR | Same discipline as Phase 7. Hotfixes (single-line + regression test) exempt by direct command. |
-| 8 | **Document upload** | Supabase Storage (admin uploads) | Re-uses the existing Supabase project. Operator sees read-only signed URLs from `/operator/profile/documents`. Stored under bucket `operator-documents/<operator_id>/...`. |
-| 9 | **Earnings page** | Mock data + "قريباً" placeholder | Real earnings calculation is Phase 11 territory (HyperPay + ZATCA payout + commission). Phase 8 ships the read-only page shell so the navigation surface is complete; the data row is `pending Phase 11`. |
-| 10 | **Bookings page** | Read-only | Operator sees confirmed bookings from `/operator/bookings`. No actions (no accept/reject/cancel on the operator side — admin owns those flows). |
-| 11 | **Session TTL** | 7 days default; 30 days with "تذكّرني" | Mirrors the customer-checkout token shape. Cookie name `aeris_operator`. |
-| 12 | **Self-signup rate limit** | 3 attempts / IP / day; 24h ban after threshold | Anti-spam without locking out legitimate operators. The ban is IP-only, not email-based, so a real operator who shares a VPN with a spammer can still sign up from a different IP. |
-| 13 | **Email verification** | Welcome-link magic auth (no separate verify step) | After admin approval, the welcome email contains a one-shot HMAC magic link. Clicking it completes "first login" — the operator lands authenticated on the portal and is prompted to set a password (or they kept the password from signup, in which case the magic link just reuses it for the first session). Saves a verification round-trip. |
-
----
-
-## 2. Schema reality (production, post-Phase-7)
-
-Confirmed via `\d+` against the production Supabase as of
-`6468dfb` (Phase 7 closure):
-
-### `operators` (existing, from initial schema; Phase 8 extends)
-
-Confirmed against `20260422000001_initial_schema.sql:141-167`
-during PR 1 implementation (Codex round-6 implementation
-reality fix: rounds 0-5 of this spec described `status` /
-`commercial_registration` / `gaca_license` as
-`TEXT + CHECK`, but the initial-schema migration uses the
-PostgreSQL ENUM type `operator_status` and `VARCHAR(N)`
-column types respectively):
-
-```
-id UUID PK DEFAULT uuid_generate_v4()
-user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE   -- ← Phase 8 will RELAX to NULLABLE
-company_name VARCHAR(200) NOT NULL
-company_name_ar VARCHAR(200)
-commercial_registration VARCHAR(50) NOT NULL                   -- ← Phase 8 will RELAX to NULLABLE
-vat_number VARCHAR(20)
-gaca_license VARCHAR(100) NOT NULL                             -- ← Phase 8 will RELAX to NULLABLE
-license_expiry DATE NOT NULL                                   -- ← Phase 8 will RELAX to NULLABLE
-base_airport VARCHAR(10) REFERENCES airports(iata_code)
-operating_airports TEXT[] DEFAULT ARRAY[]::TEXT[]
-contact_email VARCHAR(255) NOT NULL
-contact_phone VARCHAR(20) NOT NULL
-bank_iban VARCHAR(50)
-bank_name VARCHAR(100)
-commission_rate DECIMAL(4,2) DEFAULT 8.0
-rating DECIMAL(3,2) DEFAULT 0
-total_trips INTEGER DEFAULT 0
-response_time_avg INTEGER
-documents_urls JSONB DEFAULT '[]'::jsonb
-status operator_status DEFAULT 'pending'                       -- ← ENUM TYPE; Phase 8 RENAMES to signup_status + ADDs 'rejected'
-approved_at TIMESTAMPTZ                                        -- ← EXISTS; Phase 8 REUSES (no add)
-approved_by UUID REFERENCES users(id)                          -- ← EXISTS; Phase 8 leaves untouched (admin reset audit goes to audit_logs, not this column)
-rejection_reason TEXT                                          -- ← EXISTS; Phase 8 REUSES (no add)
-created_at TIMESTAMPTZ DEFAULT NOW()
-updated_at TIMESTAMPTZ DEFAULT NOW()
-```
-
-The `user_id NOT NULL REFERENCES users(id)` clause is the
-single biggest Phase 7 blocker that Phase 8 retires.
-Custom + bcrypt auth means an operator account does NOT
-need a row in `users` (which is the customer auth table).
-Phase 8 RELAXES `operators.user_id` to nullable + adds
-`operators.password_hash` etc.
-
-The `status` column is a **PostgreSQL ENUM** named
-`operator_status` (CREATE TYPE statement in
-`20260422000001_initial_schema.sql:19`), already containing
-`'pending' / 'approved' / 'suspended'`. Phase 8 EXTENDS the
-ENUM with `'rejected'` via `ALTER TYPE operator_status ADD
-VALUE IF NOT EXISTS 'rejected'` and renames the column to
-`signup_status` (to avoid confusion with `empty_legs.status`).
-The ENUM is preserved (NOT converted to TEXT + CHECK) — the
-type-safety of a real ENUM is worth more than the spec-text
-uniformity, and the migration is simpler. The rename is
-atomic; PostgreSQL automatically updates any dependent
-index (`idx_operators_status` becomes `idx_operators_signup_status`
-in the catalog without an explicit re-create).
-
-`approved_at` and `rejection_reason` already exist in the
-initial schema. Phase 8 REUSES them — they carry the same
-semantics they did at Phase 1 (set when admin approves /
-rejects). The §3.3 migration block therefore lists **12 new
-columns**, not 14; the prior round-2 + round-3 wording of
-"14" referenced two columns that production already has.
-
-### `phase7_operator_stubs` (existing, Phase 7 §14)
-
-```
-id UUID PK DEFAULT uuid_generate_v4()
-company_name VARCHAR(200) NOT NULL
-contact_email VARCHAR(255) NOT NULL                -- (Codex round-1 P2 #2 fix on PR 2c)
-contact_phone VARCHAR(20) NOT NULL                 -- (Codex round-1 P2 #2 fix on PR 2c)
-status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived'))
-notes TEXT
-created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-```
-
-Phase 8 keeps this table. The conversion RPC in §3
-flips a stub's `status` to `'archived'` after its legs
-have been reassigned to a real `operators.id`.
-
-### `empty_legs` (existing, Phase 7 §1)
-
-```
-operator_id UUID NULL REFERENCES operators(id) ON DELETE SET NULL
-operator_stub_id UUID NULL REFERENCES phase7_operator_stubs(id) ON DELETE SET NULL
-```
-
-Both FKs coexist. Phase 7 admin/operator publish only set
-`operator_stub_id`. Phase 8's conversion RPC: SET
-`operator_id = <new operator id>` AND `operator_stub_id
-= NULL` for every leg whose `operator_stub_id` matched.
-
-### `operator_empty_leg_sessions` (existing, Phase 7 §15)
-
-```
-id UUID PK
-operator_stub_id UUID NOT NULL REFERENCES phase7_operator_stubs(id) ON DELETE CASCADE
-token_hash VARCHAR(64) NOT NULL
-issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-expires_at TIMESTAMPTZ NOT NULL
-revoked_at TIMESTAMPTZ
-created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-```
-
-Phase 8 LEAVES this table untouched. It backs the
-URL-token operator portal that stays available behind
-`ENABLE_OPERATOR_LEGACY_TOKEN` (default `true`) for the
-canary window. Phase 8 §11 documents the flag-flip plan.
-
-### Other Phase 7 surfaces (unaffected)
-
-`empty_leg_notifications`, `empty_leg_outreach_alert_status`,
-`empty_leg_events_outbox`, `lead_inquiries`. Phase 8 does
-NOT touch any of them.
+- **WhatsApp OTP / WhatsApp delivery for clients.** Phase 8.1
+  added wasender for operators; Phase 9 keeps client
+  notifications on email only. Adding wasender for clients
+  is a follow-up PR after the trial expires + the founder
+  subscribes.
+- **Phone verification.** Clients submit `phone` but there
+  is no SMS/WhatsApp verify step. The phone is captured
+  for future booking confirmation use (admin/operator manual
+  outreach).
+- **Client document uploads.** Operators upload regulatory
+  docs in Phase 8; clients have no equivalent (no licensure
+  to attach). Passport upload + KYC for high-value bookings
+  is Phase 10+.
+- **Loyalty / Privilege tier integration.** The
+  `loyalty_transactions` table exists from initial schema
+  but Phase 9 does not surface tier status, points earned,
+  or redemption flows. Privilege phase is separate.
+- **Multi-leg / round-trip request UI.** `trip_requests.legs`
+  JSONB exists but the new authenticated form ships
+  one-way + simple round-trip only. Multi-city itinerary
+  builder is Phase 9.x.
+- **Real-time offer notifications.** Clients see new offers
+  on page refresh / `/me/requests` poll. Realtime via
+  Supabase Realtime is Phase 9.x.
+- **Client "saved trips" / "favorites" / repeat-booking
+  shortcuts.** Trip-request history is read-only in PR 3.
 
 ---
 
-## 3. PR 1 — Schema (DDL only, no runtime code)
+## 2. Locked decisions
 
-PR 1 ships the migration that prepares the schema for the
-new auth + admin surfaces in PR 2a-d. Mirrors the Phase 7
-PR 1 discipline: every `CREATE TABLE` is `IF NOT EXISTS`,
-every `CREATE INDEX` is `IF NOT EXISTS`, every constraint
-add is wrapped in a `pg_constraint`-guarded DO block.
+These are settled before spec acceptance:
 
-Migration file:
-`supabase/migrations/20260512000020_phase_8_operator_accounts.sql`
+1. **Client identity table.** New `clients` table parallel
+   to `operators`, NOT a `users.role='client'` extension.
+   Mirrors Phase 8 §3.1 rationale: separate auth surface,
+   separate session table, separate audit trigger. Avoids
+   coupling the customer-facing auth schema to the existing
+   admin/operator user model.
 
-### 3.1 Relax `operators.user_id` to nullable
+2. **Email is the unique identifier.** `clients.auth_email`
+   with unique LOWER() index (mirrors Phase 8
+   `_normalize_operator_email` discipline). One client per
+   email, case-insensitive lookup.
 
-```sql
-ALTER TABLE operators ALTER COLUMN user_id DROP NOT NULL;
-```
+3. **No admin approval gate.** New clients land in
+   `signup_status='active'` immediately. The friction model
+   from Phase 8 (operator approval) does not apply — clients
+   are the buying side, abandon if blocked.
 
-Existing rows: zero (production `operators` is empty per
-Phase 7 §Schema reality §1, iteration-10 P1 #3 audit).
-The relaxation is a no-op for live data, future-safe for
-custom-auth operators that never get a `users.id`.
+4. **bcrypt cost = 12.** Same as Phase 8; vetted for Vercel
+   cold-start latency.
 
-### 3.2 Relax regulatory columns
+5. **Session TTL: 7 days default, 30 days with "تذكّرني".**
+   Same as Phase 8 operators.
 
-```sql
-ALTER TABLE operators ALTER COLUMN commercial_registration DROP NOT NULL;
-ALTER TABLE operators ALTER COLUMN gaca_license DROP NOT NULL;
-ALTER TABLE operators ALTER COLUMN license_expiry DROP NOT NULL;
-```
+6. **Auto-dispatch fan-out: top 5 operators.** Mirrors the
+   spec sketch in CLAUDE.md "Trip Distribution Engine".
+   Score weights: rating 40 / response time 30 / price 20
+   / location 10. PR 4 ships the implementation.
 
-Per decision §3 (admin completes documents). The columns
-stay typed-correct; admin uploads populate them later.
+7. **Auto-dispatch trigger.** Fire-and-forget after the
+   `create_authenticated_trip_request` RPC commits, mirroring
+   the Phase 7 PR 2e match-trigger pattern. Failures fall back
+   to the admin queue (`DispatchPanelV2` shows "auto-dispatch
+   failed, dispatch manually" affordance).
 
-### 3.3 Add custom-auth columns (12 new + 2 reused)
+8. **Existing `accept_offer` RPC stays unchanged.** PR 3 wires
+   a new client-callable Server Action that:
+   - Pre-SELECTs `trip_requests WHERE id=:trip AND
+     client_id=:session.client_id` (defense-in-depth ownership
+     check; the RPC itself remains admin-callable as
+     today).
+   - Calls `accept_offer(source, offer_id)` unchanged.
+   - Revalidates `/me/requests` + `/me/requests/[id]` paths.
 
-Codex round-6 implementation reality fix: the prior wording
-of "14 new columns" double-counted `approved_at` and
-`rejection_reason`, which already exist in production per
-§2 above. The migration adds **12 new columns**; PR 2a's
-admin-approve / admin-reject RPCs WRITE to the existing
-`approved_at` and `rejection_reason` columns rather than
-creating fresh ones (avoids duplicate columns + preserves
-any future Phase 1-era data the columns might carry).
+9. **Client portal route group.** New `(client)` route group
+   for protected client pages. URL stays clean: `/me/charter`,
+   `/me/requests`, `/me/requests/[id]`, `/me/profile`,
+   `/me/profile/password`. The `(client)` group is invisible
+   in the URL, mirrors Phase 8 `(authed)` for operators.
 
-```sql
-ALTER TABLE operators
-  ADD COLUMN IF NOT EXISTS auth_email TEXT,
-  ADD COLUMN IF NOT EXISTS password_hash TEXT,
-  ADD COLUMN IF NOT EXISTS password_set_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS password_must_change BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS approved_by_admin_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS suspension_reason TEXT,
-  ADD COLUMN IF NOT EXISTS welcome_token_hash VARCHAR(64),
-  ADD COLUMN IF NOT EXISTS welcome_token_expires_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS welcome_token_used_at TIMESTAMPTZ;
+10. **Backwards compatibility for guests.** `(public)/request`
+    keeps writing to `lead_inquiries`. The promote-to-trip
+    admin flow stays. NO migration of existing lead rows to
+    trip_requests; admin promotes one-by-one as today.
 
--- auth_email is the immutable login identifier (Codex
--- round-2 P1 #1 + round-3 P1 #1 fix). Migration enforces
--- the invariant in three steps:
---   (1) ADD COLUMN IF NOT EXISTS auth_email TEXT
---       — nullable on add to satisfy ALTER semantics on
---       a non-empty table (defense in depth: production
---       has zero operators, but a future replay on a
---       populated DB must succeed).
---   (2) UPDATE operators SET auth_email = contact_email
---       WHERE auth_email IS NULL — backfill from the
---       existing email column for any pre-existing row.
---   (3) ALTER COLUMN auth_email SET NOT NULL — close
---       the invariant. Every Phase-8-and-later operator
---       row carries a non-null auth_email.
-UPDATE operators SET auth_email = contact_email
-  WHERE auth_email IS NULL;
+11. **Auto-dispatch ships OFF by default.** Env flag
+    `ENABLE_TRIP_AUTO_DISTRIBUTION` defaults to **`false`**
+    (Codex round 1 P1 #3 fix). The flag is flipped to `true`
+    explicitly by the founder ONLY AFTER Probes 16 + 17
+    confirm the scoring + Phase 5 token issuance + wa.me
+    delivery path all work on production. Until then, every
+    trip lands `pending` for manual admin dispatch via
+    `DispatchPanelV2`. PR 2's create-trip Server Action
+    inspects the flag and skips the fire-and-forget POST when
+    false; PR 4's auto-dispatch RPC is callable directly
+    (admin force-dispatch button) regardless of the flag for
+    smoke testing.
 
-ALTER TABLE operators ALTER COLUMN auth_email SET NOT NULL;
+12. **Auto-dispatch retention window.** Auto-dispatched trips
+    that no operator responds to within 4 hours fall back to
+    the admin queue + send a founder batch alert (mirrors
+    Phase 7 §16 outreach alert pattern).
 
--- Unique index on the normalized column. No WHERE
--- clause needed now that auth_email is NOT NULL.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_operators_auth_email_unique
-  ON operators(LOWER(auth_email));
-```
+---
 
-The signup form passes `auth_email` and
-`contact_email` as separate parameters to
-`operator_signup` and MAY seed them with different
-values: `auth_email` is the immutable login identity
-(used at every subsequent login + password-reset
-lookup), while `contact_email` is the mutable
-operational contact (the address admin + Resend send
-notifications to). They can match if the operator
-chose to reuse the login email at signup, but the
-schema and the signup contract treat them as
-independent columns from row 1 (Codex round-5 P2
-fix: prior wording said the form wrote the same
-value to both, contradicting the round-4 fix to
-`operator_signup` step 6 that already persists
-`contact_email=p_contact_email`). Profile edits
-change `contact_email` only; `auth_email` is
-read-only post-signup. Login + password-reset look
-up by `auth_email`. The
-`LOWER()` index normalizes on read — see helper
-`_normalize_operator_email()` in §4 — so
-`Founder@Aeris.sa` and `founder@aeris.sa` resolve to
-the same row at lookup time.
+## 3. Schema (PR 1 + PR 4 migrations)
 
-**Probe-fixture impact** (Codex round-3 P1 #1 fix):
-every fixture INSERT in Probes 6, 7, and the smoke
-queries in §3 MUST set `auth_email` explicitly (and
-`password_hash` for Probe 7). The probe text in §4
-references this requirement inline; the §3 audit-trigger
-smoke also seeds `auth_email = 'probe-trigger@aeris.test'`
-to satisfy the NOT NULL constraint inside the
-transaction.
+### §3.1 — `clients` table (PR 1)
 
-`password_hash` is nullable for the welcome-magic-link
-path: an operator who completed signup with a password
-already has a hash; an operator who is admin-created
-without a password gets one only after the first login.
+Mirrors Phase 8 `operators` extension shape but standalone
+(no inheritance from `users`).
 
-`welcome_token_*` columns are the magic-link state.
-`token_hash` matches the wire format `sha256(rawToken)`.
-
-### 3.4 Extend the `operator_status` ENUM + rename the column
-
-Codex round-6 implementation reality fix: rounds 0-5 of
-this spec assumed `operators.status` was `TEXT NOT NULL
-CHECK (...)` and used a DROP/ADD CONSTRAINT pattern. The
-production schema uses the `operator_status` PostgreSQL
-ENUM type (per `20260422000001_initial_schema.sql:19`),
-so the migration extends the ENUM with `'rejected'` and
-renames the column atomically:
+**Migration order (Codex round 6 P1 #1 fix).** The
+`client_status` enum MUST be created BEFORE `CREATE TABLE
+clients` because `clients.signup_status` references the
+type at table-creation time. The earlier round-5 ordering
+placed the enum DO block AFTER the CREATE TABLE, which
+would fail with `type "client_status" does not exist` on
+a fresh DB. The migration ships the enum block first, then
+the table:
 
 ```sql
--- Extend the existing operator_status ENUM with the 4th
--- value. ADD VALUE IF NOT EXISTS makes this replayable on
--- any DB state (already-extended ENUM is a no-op).
-ALTER TYPE operator_status ADD VALUE IF NOT EXISTS 'rejected';
-
--- Rename the column inside an idempotent guard so the
--- migration is replayable on any DB state (Codex round-1
--- P1 fix on PR 1: an unconditional RENAME would raise on
--- every re-apply because the source column 'status' no
--- longer exists after the first successful run).
+-- §3.1.a — client_status enum (must run BEFORE CREATE
+-- TABLE clients). Replay-safe via DO block + pg_type
+-- existence check, schema-scoped to public to avoid
+-- false positives from same-name types in other schemas
+-- (Codex round 6 P1 #1 hardening).
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'operators'
-      AND table_schema = 'public'
-      AND column_name = 'status'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'operators'
-      AND table_schema = 'public'
-      AND column_name = 'signup_status'
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'client_status'
+      AND n.nspname = 'public'
   ) THEN
-    ALTER TABLE operators RENAME COLUMN status TO signup_status;
+    CREATE TYPE public.client_status AS ENUM (
+      'active',     -- normal state
+      'suspended',  -- admin-suspended (rare; future moderation)
+      'deleted'     -- soft-delete; sessions revoked, login blocked
+    );
   END IF;
 END $$;
 
--- The companion index idx_operators_status (created by the
--- initial schema at 20260422000001_initial_schema.sql:170)
--- continues to index the renamed column — PostgreSQL updates
--- the stored definition + catalog dependencies, but does NOT
--- rename the index object itself (Codex round-1 P2 fix on
--- PR 1: prior wording incorrectly claimed an automatic rename).
--- Rename the index explicitly for catalog clarity, also
--- guarded so the migration stays replayable.
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM pg_class
-    WHERE relname = 'idx_operators_status'
-      AND relkind = 'i'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM pg_class
-    WHERE relname = 'idx_operators_signup_status'
-      AND relkind = 'i'
-  ) THEN
-    ALTER INDEX idx_operators_status RENAME TO idx_operators_signup_status;
-  END IF;
-END $$;
+-- §3.1.b — clients table (depends on client_status above).
+CREATE TABLE IF NOT EXISTS clients (
+  id                       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  -- Identity (auth_email is the unique login key)
+  auth_email               VARCHAR(120) NOT NULL,
+  full_name                VARCHAR(120) NOT NULL,
+  contact_phone            VARCHAR(20)  NOT NULL,
+  -- Auth secrets
+  password_hash            TEXT NOT NULL,           -- bcrypt cost=12
+  password_must_change     BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Lifecycle
+  signup_status            client_status NOT NULL DEFAULT 'active',
+  last_login_at            TIMESTAMPTZ,
+  -- Notifications opt-in (capture once at signup; expand later)
+  marketing_opt_in         BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Timestamps
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Unique on lowercase email (case-insensitive lookup)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_auth_email_lower
+  ON clients (LOWER(auth_email));
+
+ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
+-- No RLS policies: service_role bypasses; runtime code
+-- always uses the service-role admin client. Client-side
+-- direct DB access is not available.
 ```
 
-No CHECK constraint is added — the ENUM type itself enforces
-the 4-value invariant. After this block:
-  - `signup_status` is of type `operator_status`
-  - `operator_status` ENUM contains `('pending', 'approved',
-    'suspended', 'rejected')` in insertion order
-  - any INSERT/UPDATE with a value outside the ENUM raises
-    `invalid input value for enum operator_status: ...`
-    at the SQL boundary
-  - the catalog index name is `idx_operators_signup_status`
-    after the explicit ALTER INDEX RENAME
-
-PostgreSQL pre-12 required `ALTER TYPE ... ADD VALUE` to
-run outside a transaction. PostgreSQL 12+ (Supabase runs 15+)
-allows it inside a transaction block, so the migration can
-ship as a single atomic file. No special transaction wrapper
-required.
-
-Both DO blocks check `information_schema` / `pg_class` before
-mutating, so a re-apply on an already-migrated DB is a no-op
-on every statement (the spec's "every CREATE / ALTER is
-idempotent" promise from the §3 intro is now satisfied for
-RENAME as well).
-
-### 3.5 New table `operator_sessions`
+### §3.2 — `client_sessions` table (PR 1)
 
 ```sql
-CREATE TABLE IF NOT EXISTS operator_sessions (
+CREATE TABLE IF NOT EXISTS client_sessions (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  operator_id     UUID NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
-  token_hash      VARCHAR(64) NOT NULL,                  -- sha256(rawToken)
+  client_id       UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  token_hash      VARCHAR(64) NOT NULL,    -- sha256(raw_token)
   issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at      TIMESTAMPTZ NOT NULL,
   remember_me     BOOLEAN NOT NULL DEFAULT FALSE,
@@ -462,127 +263,108 @@ CREATE TABLE IF NOT EXISTS operator_sessions (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_operator_sessions_token_hash
-  ON operator_sessions(token_hash)
-  WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_client_sessions_token_hash
+  ON client_sessions (token_hash);
+CREATE INDEX IF NOT EXISTS idx_client_sessions_client_id
+  ON client_sessions (client_id);
 
-CREATE INDEX IF NOT EXISTS idx_operator_sessions_operator_active
-  ON operator_sessions(operator_id, expires_at DESC)
-  WHERE revoked_at IS NULL;
-
-ALTER TABLE operator_sessions ENABLE ROW LEVEL SECURITY;
--- Service-role-only access. The portal Server Actions run
--- service-role; operators never touch this table directly.
+ALTER TABLE client_sessions ENABLE ROW LEVEL SECURITY;
 ```
 
-### 3.6 New table `operator_password_reset_tokens`
+### §3.3 — `client_password_reset_tokens` table (PR 1)
+
+Identical shape to `operator_password_reset_tokens` from
+Phase 8 §3.6.
 
 ```sql
-CREATE TABLE IF NOT EXISTS operator_password_reset_tokens (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  operator_id   UUID NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
-  token_hash    VARCHAR(64) NOT NULL,                    -- sha256(rawToken)
-  issued_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at    TIMESTAMPTZ NOT NULL,
-  used_at       TIMESTAMPTZ,
-  ip_address    INET,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS client_password_reset_tokens (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  client_id       UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  token_hash      VARCHAR(64) NOT NULL,
+  issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at      TIMESTAMPTZ NOT NULL,
+  used_at         TIMESTAMPTZ,
+  ip_address      INET,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_operator_password_reset_pending
-  ON operator_password_reset_tokens(token_hash)
-  WHERE used_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_client_reset_tokens_hash
+  ON client_password_reset_tokens (token_hash);
 
-ALTER TABLE operator_password_reset_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_password_reset_tokens ENABLE ROW LEVEL SECURITY;
 ```
 
-30-min TTL. Single-use. The reset RPC checks both
-`expires_at > NOW()` AND `used_at IS NULL`.
+### §3.4 — `client_signup_attempts` table (PR 1)
 
-### 3.7 New table `operator_otp_codes`
+Anti-spam log, mirrors Phase 8 §3.9.
 
 ```sql
-CREATE TABLE IF NOT EXISTS operator_otp_codes (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  operator_id   UUID NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
-  code_hash     VARCHAR(64) NOT NULL,                    -- sha256(6-digit-code)
-  channel       TEXT NOT NULL CHECK (channel IN ('whatsapp')),
-  purpose       TEXT NOT NULL CHECK (purpose IN ('login','recovery')),
-  issued_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at    TIMESTAMPTZ NOT NULL,
-  used_at       TIMESTAMPTZ,
-  attempt_count INT NOT NULL DEFAULT 0,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS client_signup_attempts (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  ip_address      INET NOT NULL,
+  attempted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  email_attempted TEXT,
+  result          TEXT NOT NULL CHECK (result IN ('success','duplicate_email','rate_limited','validation_failed')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_operator_otp_pending
-  ON operator_otp_codes(operator_id, expires_at DESC)
-  WHERE used_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_client_signup_attempts_ip_recent
+  ON client_signup_attempts (ip_address, attempted_at DESC);
 
-ALTER TABLE operator_otp_codes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_signup_attempts ENABLE ROW LEVEL SECURITY;
 ```
 
-10-min TTL. Single-use. Max 5 verification attempts —
-beyond that the row is locked (the verify RPC bumps
-`attempt_count` and rejects when >= 5). The `code_hash`
-stores `sha256(plaintext-6-digit)` so even a DB dump
-doesn't leak codes.
+### §3.5 — Extend `trip_requests` (PR 1)
 
-### 3.8 New table `operator_documents`
+`trip_requests.client_id` is already nullable per Phase 4
+PR #6. PR 1 confirms the column exists + adds a defensive
+index for the new client-portal queries:
 
 ```sql
-CREATE TABLE IF NOT EXISTS operator_documents (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  operator_id   UUID NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
-  document_type TEXT NOT NULL CHECK (document_type IN ('commercial_registration','gaca_license','license_expiry_proof')),
-  storage_path  TEXT NOT NULL,                            -- Supabase Storage object path
-  file_name     TEXT NOT NULL,
-  file_size     BIGINT NOT NULL,
-  content_type  TEXT NOT NULL,
-  uploaded_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  uploaded_by_admin BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_documents_unique
-  ON operator_documents(operator_id, document_type);
-
-ALTER TABLE operator_documents ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_trip_requests_client_status
+  ON trip_requests (client_id, status, created_at DESC)
+  WHERE client_id IS NOT NULL;
 ```
 
-The unique index ensures one document per type per
-operator (re-upload replaces via the admin Server Action,
-which DELETEs the old row + INSERTs the new one in one
-RPC).
+This index supports `/me/requests` listing (filter by client,
+order by recent) without a sequential scan once client traffic
+grows.
 
-### 3.9 New table `operator_signup_attempts` (rate limiting)
+### §3.6 — Audit trigger on `clients` (PR 1)
+
+Mirrors Phase 8 §3.11 for operators.
 
 ```sql
-CREATE TABLE IF NOT EXISTS operator_signup_attempts (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  ip_address    INET NOT NULL,
-  attempted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  email_attempted TEXT,                                   -- nullable: failed before email parsed
-  result        TEXT NOT NULL CHECK (result IN ('success','duplicate_email','rate_limited','validation_failed')),
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+CREATE OR REPLACE FUNCTION clients_audit_trigger()
+  RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.signup_status IS DISTINCT FROM NEW.signup_status THEN
+    INSERT INTO audit_logs (entity_type, entity_id, action, old_value, new_value)
+      VALUES ('client', NEW.id, 'signup_status_changed',
+              jsonb_build_object('signup_status', OLD.signup_status),
+              jsonb_build_object('signup_status', NEW.signup_status));
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.password_hash IS DISTINCT FROM NEW.password_hash THEN
+    INSERT INTO audit_logs (entity_type, entity_id, action, old_value, new_value)
+      VALUES ('client', NEW.id, 'password_changed', NULL, NULL);
+  END IF;
+  RETURN NEW;
+END;
+$$;
 
-CREATE INDEX IF NOT EXISTS idx_operator_signup_attempts_ip_recent
-  ON operator_signup_attempts(ip_address, attempted_at DESC);
-
-ALTER TABLE operator_signup_attempts ENABLE ROW LEVEL SECURITY;
+DROP TRIGGER IF EXISTS clients_audit ON clients;
+CREATE TRIGGER clients_audit AFTER UPDATE ON clients
+  FOR EACH ROW EXECUTE FUNCTION clients_audit_trigger();
 ```
 
-The signup RPC counts rows with `attempted_at > NOW() -
-INTERVAL '24 hours'` AND `result = 'success'` for the IP
-and rejects when `>= 3`. Failed attempts do NOT count
-against the cap (only successful or duplicate-email
-submissions).
+### §3.7 — `client_notification_alert_status` singleton (PR 1)
 
-### 3.10 Singleton `operator_notification_alert_status` (Codex round-1 P1 #3 fix)
+Mirrors Phase 8 §3.10 + Phase 8.1 WhatsApp extension. Email
+only at this phase (no whatsapp_status column — clients are
+email-only per §1).
 
 ```sql
-CREATE TABLE IF NOT EXISTS operator_notification_alert_status (
+CREATE TABLE IF NOT EXISTS client_notification_alert_status (
   id                   INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   status               TEXT NOT NULL DEFAULT 'healthy'
     CHECK (status IN ('healthy', 'config_missing', 'send_failed')),
@@ -591,1507 +373,1078 @@ CREATE TABLE IF NOT EXISTS operator_notification_alert_status (
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO operator_notification_alert_status (id, status)
+INSERT INTO client_notification_alert_status (id, status)
   VALUES (1, 'healthy')
   ON CONFLICT (id) DO NOTHING;
 
-ALTER TABLE operator_notification_alert_status
-  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_notification_alert_status ENABLE ROW LEVEL SECURITY;
 ```
 
-Mirrors the Phase 7 §16 `empty_leg_outreach_alert_status`
-table pattern. PR 2d (Resend + WhatsApp notifications)
-UPDATEs this row on every email send attempt. PR 2b's
-`/admin/operators` list page reads it on every render
-and renders a red Arabic-RTL banner when status is not
-`'healthy'` — same posture as the Phase 7 outreach-queue
-banner.
+### §3.8 — `trip_distribution_log` (PR 4)
 
-The seed INSERT guarantees the singleton row exists
-before PR 2d's first send attempt. The `id INT PK CHECK
-(id = 1)` constraint enforces single-row state.
-
-### 3.11 Audit trigger on `operators`
+Observability table for the auto-distribution engine.
+One row per (trip × round × operator) triple — the
+uniqueness key is **target-scoped** (Codex round 3 P1 #2
+fix). The earlier `UNIQUE (trip_request_id, operator_id)`
+proposal blocked the legitimate redispatch + admin-force-
+dispatch flows: a stale/timeout redispatch may legitimately
+choose the same top-ranked operator in a fresh round, and
+`adminForceAutoDispatch` re-fires the dispatcher; both
+would have hit the cross-round uniqueness violation.
 
 ```sql
-CREATE OR REPLACE FUNCTION operators_audit_trigger()
-  RETURNS TRIGGER LANGUAGE plpgsql AS $$
+CREATE TABLE IF NOT EXISTS trip_distribution_log (
+  id                  BIGSERIAL PRIMARY KEY,
+  trip_request_id     UUID NOT NULL REFERENCES trip_requests(id) ON DELETE CASCADE,
+  operator_id         UUID NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
+  dispatched_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  score               DECIMAL(5,2) NOT NULL,        -- 0.00 .. 100.00
+  rank                INT NOT NULL,                  -- 1..5 (top-N)
+  dispatch_target_id  UUID NOT NULL REFERENCES trip_dispatch_targets(id) ON DELETE CASCADE,
+  notification_channel TEXT NOT NULL DEFAULT 'whatsapp_link'
+    CHECK (notification_channel IN ('whatsapp_link', 'email', 'sms')),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Round-scoped uniqueness: dispatch_target_id is unique
+  -- per (round, operator) by Phase 5's targets table design,
+  -- so this naturally prevents double-logging within a round
+  -- while allowing the same operator to appear in subsequent
+  -- rounds for the same trip (legitimate redispatch).
+  UNIQUE (dispatch_target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trip_distribution_log_trip
+  ON trip_distribution_log (trip_request_id, dispatched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trip_distribution_log_op
+  ON trip_distribution_log (operator_id, dispatched_at DESC);
+
+ALTER TABLE trip_distribution_log ENABLE ROW LEVEL SECURITY;
+```
+
+Notes on the changed FK semantics:
+- `dispatch_target_id` is now `NOT NULL` (was nullable).
+  Every log row corresponds to a specific dispatch target.
+- The FK `ON DELETE` action changed from `SET NULL` to
+  `CASCADE`: if a target row is hard-deleted (rare; only via
+  data-cleanup scripts), the log row goes with it. Soft
+  closure via `status='cancelled'` keeps the FK intact.
+
+### §3.9 — Cleanup cron RPCs registered in
+`operator_cron_tick_history` (PR 1 + PR 4)
+
+The CHECK extension is split across PR ownership boundaries
+(Codex round 2 P2 #2 fix) so each PR's migration only touches
+the constraint when its corresponding cron route + RPC are
+also landing.
+
+**PR 1 migration adds 3 client-cleanup job names** (the cron
+routes + RPCs ship in the same migration):
+
+```sql
+ALTER TABLE operator_cron_tick_history
+  DROP CONSTRAINT IF EXISTS operator_cron_tick_history_job_name_check;
+
+ALTER TABLE operator_cron_tick_history
+  ADD CONSTRAINT operator_cron_tick_history_job_name_check
+  CHECK (job_name IN (
+    -- Phase 8 PR 2e jobs (existing on production)
+    'cleanup_expired_operator_sessions',
+    'cleanup_expired_password_reset_tokens',
+    'cleanup_expired_otp_codes',
+    'cleanup_old_signup_attempts',
+    -- Phase 9 PR 1 jobs (NEW)
+    'cleanup_expired_client_sessions',
+    'cleanup_expired_client_password_reset_tokens',
+    'cleanup_old_client_signup_attempts'
+  ));
+```
+
+**PR 4 migration extends the CHECK with the 1 redispatch
+job name** (its cron route + RPC ship in the same migration):
+
+```sql
+ALTER TABLE operator_cron_tick_history
+  DROP CONSTRAINT IF EXISTS operator_cron_tick_history_job_name_check;
+
+ALTER TABLE operator_cron_tick_history
+  ADD CONSTRAINT operator_cron_tick_history_job_name_check
+  CHECK (job_name IN (
+    -- Phase 8 PR 2e jobs (existing on production)
+    'cleanup_expired_operator_sessions',
+    'cleanup_expired_password_reset_tokens',
+    'cleanup_expired_otp_codes',
+    'cleanup_old_signup_attempts',
+    -- Phase 9 PR 1 jobs (added by PR 1)
+    'cleanup_expired_client_sessions',
+    'cleanup_expired_client_password_reset_tokens',
+    'cleanup_old_client_signup_attempts',
+    -- Phase 9 PR 4 job (NEW)
+    'redispatch_stale_trip_requests'
+  ));
+```
+
+Total: **4 new Phase 9 job names** (3 in PR 1 + 1 in PR 4).
+Each PR's migration restates the FULL constraint to keep
+each migration file self-contained for replay/DR scenarios.
+
+Important: rename the table to a generic name? **No** — it
+keeps `operator_` prefix for historical accuracy. Re-purpose
+existing infrastructure rather than fork tracking.
+
+---
+
+## 4. RPC layer (PR 1 + PR 2 + PR 4)
+
+All `SECURITY DEFINER`, `SET search_path = public, pg_temp`,
+`REVOKE ALL FROM PUBLIC + REVOKE FROM anon, authenticated +
+GRANT EXECUTE TO service_role` per Phase 8 PR 2a hotfix
+discipline. **No parameterless RPCs are added to
+`database.ts` Functions map** (the Phase 8 PR 2e #48 incident
+made that pattern brittle).
+
+### §4.1 — Auth RPCs (PR 1) — 7 publics + 1 helper
+
+Mirrors Phase 8 PR 2a operator suite.
+
+| RPC | Purpose |
+|---|---|
+| `_normalize_client_email(p_email TEXT) → TEXT` | helper: trim+lower, advisory-locked LOWER() lookup support |
+| `client_signup(p_email, p_password_hash, p_full_name, p_phone, p_marketing_opt_in, p_ip)` | INSERT into clients + writes signup_attempts row; rate-limited 3/IP/24h |
+| `client_login_lookup(p_email)` | NULL-safe email→client_id+password_hash lookup (RPC pre-bcrypt-compare) |
+| `client_login_create_session(p_client_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | INSERT client_sessions row, returns expiry |
+| `client_logout(p_session_token_hash)` | UPDATE revoked_at on the matching session |
+| `client_session_validate(p_session_token_hash)` | SELECT join: returns `{client_id, full_name, contact_phone, password_must_change, signup_status}`; rejects revoked / expired |
+| `client_mint_password_reset_token(p_email, p_token_hash, p_expires_at, p_ip)` | INSERT row; returns `{ok:true, no_op:true}` for unknown emails (enumeration-safe) |
+| `client_verify_password_reset(p_token_hash, p_new_password_hash)` | atomic verify + update + mark used; revokes all sessions |
+
+**Token-hash shape validation contract (Codex round 2 P2 #1
+fix).** Every PR 1 RPC that accepts a `p_session_token_hash`
+or `p_token_hash` parameter MUST validate the input shape via
+the existing Phase 8 PR 2a `_is_sha256_hex(TEXT)` helper
+**before** any read or write. The helper is already on
+production (Phase 8 PR 2a hotfix migration revoked it from
+`anon, authenticated, service_role`; only function-owner
+roles inside SECURITY DEFINER bodies can call it — exactly
+the access pattern PR 1 client RPCs need).
+
+Affected RPCs:
+- `client_login_create_session` — validate `p_session_token_hash`
+- `client_logout` — validate `p_session_token_hash`
+- `client_session_validate` — validate `p_session_token_hash`
+- `client_mint_password_reset_token` — validate `p_token_hash`
+- `client_verify_password_reset` — validate `p_token_hash`
+
+Failure mode: a non-sha256-hex value (NULL, < 64 chars,
+non-hex chars) MUST return `{ok: false, error:
+'invalid_token_hash'}` instead of falling through to a raw
+PostgreSQL CHECK violation. This closes the same DB-boundary
+weakness Phase 8 PR 2a fixed for operator RPCs (see Phase 8
+closure entry §"Lessons learned" #3 in `CLAUDE-WORK-LOG.md`).
+
+PR 1 does NOT redefine `_is_sha256_hex` — the migration
+header explicitly cites the existing function as a dependency.
+Probe 2 grant assertion is amended to verify
+`_is_sha256_hex` ACL is unchanged after PR 1 deploys (no
+accidental GRANT relaxation). A new sub-probe — Probe 3-shape
+— curls `client_session_validate` with a 65-char hex string
+and asserts the structured `invalid_token_hash` error
+surfaces.
+
+### §4.2 — Trip RPC (PR 2) — 1 public
+
+| RPC | Purpose |
+|---|---|
+| `create_authenticated_trip_request(p_client_id, p_trip_type, p_legs, p_departure_iata, p_arrival_iata, p_departure_date, p_return_date, p_passengers, p_aircraft_pref, p_special_requests)` | INSERT into trip_requests with `client_id` set + customer snapshot from clients row + status='pending'; returns `{ok, trip_request_id, request_number}` |
+
+The function **does NOT** dispatch — dispatch is a separate
+fire-and-forget call from the Server Action layer (mirrors
+Phase 7 PR 2e match-trigger pattern). This keeps the RPC
+testable in isolation + lets PR 4 swap the dispatch
+mechanism without changing the create RPC.
+
+### §4.3 — Auto-distribution RPC (PR 4) — 2 publics
+
+| RPC | Purpose |
+|---|---|
+| `score_operators_for_trip(p_trip_request_id) → JSON` | reads trip + operators (filtered by eligibility predicate, see below), returns top-5 `[{operator_id, score, rank, contact_phone, …}]` ordered by score desc; pure read, no writes |
+| `auto_dispatch_trip_request(p_trip_request_id) → JSON` | scores → opens Phase 5 dispatch round with per-target token issuance (see contract below) → INSERTs `trip_distribution_log` rows → sets `trip_requests.current_dispatch_round_id`; returns `{ok:true, dispatched_count, round_id, targets:[{operator_id, target_id, wa_me_url}]}` |
+
+**Operator eligibility predicate (Codex round 3 P1 #1
+fix).** `score_operators_for_trip` MUST restrict the
+candidate pool to operators that are:
+
+```sql
+WHERE signup_status = 'approved'
+  AND contact_phone IS NOT NULL
+  AND TRIM(contact_phone) <> ''
+```
+
+Rationale: Phase 8 introduced the `operator_status` ENUM
+(`pending` / `approved` / `suspended` / `rejected`).
+Without this filter, auto-dispatch could route real
+client trips to:
+- Pending operators (haven't been admin-approved yet)
+- Suspended operators (admin-blocked, possibly for
+  safety/compliance reasons)
+- Rejected operators (admin explicitly denied entry)
+- Operators with NULL/blank `contact_phone` (Phase 5 wa.me
+  link generation would emit a malformed URL)
+
+The filter MUST be enforced inside the RPC body itself
+(not at the application layer) so any future caller
+inherits the safety guarantee. Probes 15 + 16 are amended
+to seed an unapproved operator with high default scoring
+data and assert it is excluded from both the preview
+output AND the dispatched-targets log.
+
+**Phone dedupe contract (Codex round 4 P2 #2 fix).**
+Phase 5's `trip_dispatch_targets` table enforces uniqueness
+on `(dispatch_round_id, target_phone)` — two operators
+sharing the same `contact_phone` value (e.g. multi-account
+shell companies, data-entry duplicates, the same charter
+broker registered twice) would cause the SECOND target
+INSERT to fail with a unique-violation, aborting the entire
+dispatch transaction and leaving the trip in a partially-
+dispatched state.
+
+`auto_dispatch_trip_request` MUST dedupe the scoring output
+by normalised `contact_phone` BEFORE building the
+`trip_dispatch_targets` payload. The dedupe rule:
+
+```sql
+-- Pseudocode for the dedupe step (between scoring and
+-- target INSERT). Inside auto_dispatch_trip_request body,
+-- after `score_operators_for_trip` returns top-N:
+--
+--   1. Normalise each operator's contact_phone (TRIM +
+--      strip whitespace; canonical E.164 form is enforced
+--      by Phase 8 operator signup, but TRIM defends
+--      against drift).
+--   2. Group by normalised phone; for each group, keep
+--      ONLY the highest-ranked (lowest `rank` value)
+--      operator. Drop the rest.
+--   3. Re-rank the deduped list 1..N (so `rank` stays
+--      contiguous in trip_distribution_log).
+--   4. Pass the deduped list to the target INSERT
+--      pipeline.
+```
+
+If dedupe collapses the list below a minimum-fan-out floor
+(`PHASE_9_MIN_DISPATCH_FANOUT=2`, env-configurable, default
+2), the RPC returns `{ok:false, error:
+'insufficient_unique_operators', dispatched_count:0}` and
+**does NOT open a dispatch round** — the trip stays
+`pending` for admin review. This is strictly safer than
+dispatching to 1 operator (no competition → no offer
+pressure).
+
+**No DB audit row for this decline reason (Codex round 6
+P2 #1 fix).** The earlier round-4 wording promised an
+"audit row" for this decline, but `trip_distribution_log`
+requires NOT NULL `operator_id` + NOT NULL
+`dispatch_target_id`, which the dedupe-failure case has
+neither. Rather than add a parallel failure-events table
+(out of scope for the dedupe fix), the dedupe-decline
+signal lives in TWO places only:
+  1. The RPC's structured return value
+     (`{ok:false, error:'insufficient_unique_operators'}`)
+     — surfaced to the calling Server Action, which
+     can render an admin-visible toast / log line.
+  2. A `console.error()` line in the Internal API route
+     handler with the trip_request_id + the surviving-
+     unique-phone count, captured by Vercel Functions
+     logs.
+The admin canary readout (Phase 8 PR 2e infrastructure)
+shows the dispatched count per trip via
+`trip_distribution_log`; a dedupe-decline trip simply has
+zero log rows, which is the same observable signal as
+auto-dispatch being disabled. Founder triage path:
+inspect Vercel Functions logs for the `console.error`
+when admin notices a trip stuck `pending` past the
+expected dispatch window.
+
+The dedupe rule is documented in `lib/automation/trip-
+distribution.ts` JSDoc + asserted by 3+ unit-test cases in
+`__tests__/trip-distribution.test.ts`:
+  - 5 unique phones → 5 targets dispatched
+  - 5 operators, 2 sharing a phone → 4 targets (one
+    dropped, the lower-rank duplicate)
+  - 5 operators all sharing one phone → 1 unique → RPC
+    returns `insufficient_unique_operators`, no round
+    opened, no log rows written
+
+Probe 16 is amended to insert two synthetic approved
+operators with identical `contact_phone` values, dispatch a
+trip, and assert exactly ONE of them appears in
+`trip_distribution_log` (the higher-ranked) — confirming
+the SQL-level uniqueness violation never occurs in
+production.
+
+**Phase 5 token issuance contract for `auto_dispatch_trip_request`
+(Codex round 1 P1 #4 fix)**
+
+The existing Phase 5 dispatch path persists each
+`trip_dispatch_targets` row with the columns shipped by the
+Phase 5 migration — **the table has no `operator_id` column**
+(Codex round 2 P1 #1 fix). Operator ownership of a target row
+is recovered downstream via the `target_phone` ↔
+`operators.contact_phone` join, NOT via FK on the targets
+table itself. The columns `auto_dispatch_trip_request` must
+populate (whether by calling `open_phase5_dispatch_round` or
+inlining the equivalent INSERT):
+
+| Column | Source | Notes |
+|---|---|---|
+| `id` | `uuid_generate_v4()` | PK |
+| `dispatch_round_id` | from the newly opened round | FK |
+| `target_phone` | from operators.contact_phone (looked up via the scoring output's `operator_id`) | wa.me destination |
+| `nonce` | `encode(gen_random_bytes(16), 'hex')` | 32-char hex, HMAC payload (Codex round 5 P1 #2 fix — `bytea::hex` is not valid PostgreSQL syntax; use `encode(…, 'hex')` for bytea→text conversion). Implementations that mint the nonce in TypeScript before calling the existing Phase 5 opener may instead pass the hex string directly. |
+| `sent_at` | `NOW()` | dispatch timestamp |
+| `expires_at` | `NOW() + INTERVAL '4 hours'` | matches §1 retention |
+| `status` | `'pending'` | dispatch_target_status enum |
+
+The operator → target relation is preserved in
+`trip_distribution_log` (which DOES have `operator_id` per
+§3.8) plus the `dispatch_target_id` FK back to
+`trip_dispatch_targets`. Admin canary joins flow:
+
+```sql
+trip_distribution_log
+  JOIN trip_dispatch_targets ON dispatch_target_id = id
+  JOIN operators            ON trip_distribution_log.operator_id = operators.id
+```
+
+The RPC MUST either:
+(a) **Reuse** the existing `open_phase5_dispatch_round(trip_id,
+    targets[])` RPC by building the `targets[]` argument from
+    the scoring output. This is the preferred path — zero new
+    token logic, identical wa.me URL shape (`v=2` token over
+    `dispatch_target.id + nonce`) as today's admin dispatch.
+(b) **Inline** the equivalent INSERT-per-target + token mint
+    if (a) is infeasible (e.g. open_phase5 has a different
+    argument shape). This path MUST cite which Phase 5 helper
+    function generates the v=2 token + emit identical URL
+    shape so operator-side `/operator/offer/[token]` accepts
+    the wa.me link without code change.
+
+`trip_distribution_log` rows are populated AFTER the
+`trip_dispatch_targets` rows are inserted: one log row per
+(trip, operator, target) triple, with `operator_id` filled
+from the scoring output and `dispatch_target_id` filled from
+the newly-INSERTed target row's id.
+
+Probe 17 asserts the wa.me link in each
+`trip_distribution_log` row resolves to the operator-side
+form without 404; this is the end-to-end check that the
+token issuance contract holds.
+
+### §4.4 — Cleanup cron RPCs (PR 1 + PR 4) — 4 publics
+
+Mirror Phase 8 PR 2e:
+
+| RPC | Cleanup |
+|---|---|
+| `cleanup_expired_client_sessions()` | DELETE WHERE expires_at <= NOW() OR revoked_at IS NOT NULL |
+| `cleanup_expired_client_password_reset_tokens()` | DELETE WHERE expires_at <= NOW() OR used_at IS NOT NULL |
+| `cleanup_old_client_signup_attempts()` | DELETE WHERE attempted_at < NOW() - INTERVAL '24 hours' |
+| `redispatch_stale_trip_requests()` (PR 4) | finds trips dispatched > 4 hours ago with no `phase5_operator_offers`; for each stale trip executes the full state-cleanup transaction below; emits founder batch alert (best-effort, post-commit) |
+
+**`redispatch_stale_trip_requests` state-cleanup contract
+(Codex round 3 P2 #2 fix).** Flipping
+`trip_requests.current_dispatch_round_id` to NULL alone
+leaves the stale Phase 5 round + targets looking "open" in
+both `DispatchPanelV2` and admin SQL audits even though the
+trip is back in the queue. The RPC MUST execute the
+following inside a single transaction per stale trip:
+
+```sql
+-- For each stale trip (trip_request_id, current_round_id):
+--
+-- 1. Cancel any still-pending targets in the stale round
+--    (status='submitted' targets stay as-is — operator
+--    already responded; status='cancelled'/'expired' are
+--    no-ops).
+UPDATE trip_dispatch_targets
+   SET status = 'cancelled'
+ WHERE dispatch_round_id = :current_round_id
+   AND status = 'pending';
+
+-- 2. Close the stale round with a dedicated reason.
+--    Phase 5's trip_dispatch_rounds.closed_reason is plain
+--    text today (no CHECK constraint, no enum). PR 4
+--    migration adds an explicit CHECK constraint that
+--    pins the allowed values + the new 'stale_timeout'
+--    value (Codex round 5 P2 #1 fix — the round 4 wording
+--    incorrectly assumed an existing enum/CHECK; that was
+--    not in the schema audit). See migration block below
+--    this code sample.
+UPDATE trip_dispatch_rounds
+   SET status = 'closed',
+       closed_reason = 'stale_timeout',
+       closed_at = NOW()
+ WHERE id = :current_round_id
+   AND status = 'open';
+
+-- 3. NULL the trip's current_dispatch_round_id so
+--    DispatchPanelV2 (and any read query keyed on
+--    "open round") re-picks it up.
+UPDATE trip_requests
+   SET current_dispatch_round_id = NULL
+ WHERE id = :trip_request_id;
+```
+
+The three UPDATEs run in the order above. If any fails, the
+transaction rolls back and the next cron tick retries. The
+founder batch alert is best-effort and emitted ONLY after
+the transaction commits (mirrors the Phase 7 §16 outreach
+alert post-commit pattern). Probe 18 is amended to assert
+all three state changes (target = `cancelled`, round =
+`closed`/`stale_timeout`, trip's `current_dispatch_round_id`
+= NULL) AFTER the cron tick.
+
+**`closed_reason` CHECK constraint (Codex round 5 P2 #1
+fix).** The PR 4 migration introduces a real CHECK
+constraint on `trip_dispatch_rounds.closed_reason`,
+pinning the allowed values explicitly. Phase 5 currently
+stores this as unbounded text; the migration audits
+existing rows + adds the constraint atomically with the
+`redispatch_stale_trip_requests` RPC body so the
+`'stale_timeout'` value cannot land in production without
+the matching schema enforcement:
+
+```sql
+-- PR 4 migration §X (executed before the RPC CREATE):
+
+-- Audit existing rows. If any row has a value outside the
+-- expected set, fail loudly so a Phase 5 historical
+-- divergence is fixed manually before the constraint
+-- lands. (Audit confirmed Phase 5 ships only the three
+-- values below, but the assertion documents intent and
+-- guards future schema drift.)
+DO $$
+DECLARE
+  v_offending_count INT;
 BEGIN
-  IF TG_OP = 'UPDATE' AND OLD.signup_status IS DISTINCT FROM NEW.signup_status THEN
-    INSERT INTO audit_logs (entity_type, entity_id, action, old_value, new_value)
-      VALUES ('operator', NEW.id, 'signup_status_changed',
-              jsonb_build_object('signup_status', OLD.signup_status),
-              jsonb_build_object('signup_status', NEW.signup_status));
+  -- Audit allowlist MUST include 'stale_timeout' so a
+  -- replay AFTER redispatch_stale_trip_requests has
+  -- written its first row does not RAISE on values the
+  -- migration itself enabled (Codex round 6 P1 #2 fix).
+  SELECT COUNT(*) INTO v_offending_count
+    FROM trip_dispatch_rounds
+   WHERE closed_reason IS NOT NULL
+     AND closed_reason NOT IN (
+       'offer_accepted',
+       'redispatched',
+       'admin_cancel',
+       'stale_timeout'
+     );
+  IF v_offending_count > 0 THEN
+    RAISE EXCEPTION 'PR 4 migration: trip_dispatch_rounds has % rows with unexpected closed_reason values; manual cleanup required before CHECK can be added', v_offending_count;
   END IF;
-  IF TG_OP = 'UPDATE' AND OLD.password_hash IS DISTINCT FROM NEW.password_hash THEN
-    INSERT INTO audit_logs (entity_type, entity_id, action, old_value, new_value)
-      VALUES ('operator', NEW.id, 'password_changed',
-              NULL, NULL);
-  END IF;
-  RETURN NEW;
-END;
-$$;
+END $$;
 
-DROP TRIGGER IF EXISTS operators_audit_trigger ON operators;
-CREATE TRIGGER operators_audit_trigger
-  AFTER UPDATE ON operators
-  FOR EACH ROW EXECUTE FUNCTION operators_audit_trigger();
+-- Idempotent constraint application: drop the prior
+-- definition (if any) before re-adding so a replay does
+-- not fail with "constraint already exists" (Codex
+-- round 6 P1 #2 fix).
+ALTER TABLE trip_dispatch_rounds
+  DROP CONSTRAINT IF EXISTS trip_dispatch_rounds_closed_reason_check;
+
+ALTER TABLE trip_dispatch_rounds
+  ADD CONSTRAINT trip_dispatch_rounds_closed_reason_check
+  CHECK (
+    closed_reason IS NULL
+    OR closed_reason IN (
+      'offer_accepted',
+      'redispatched',
+      'admin_cancel',
+      'stale_timeout'
+    )
+  );
 ```
 
-Status changes + password changes are logged. The
-old/new values for status are JSONB; the password change
-is logged as a state-change event without including any
-hashes (no leak in the audit log itself).
-
-### 3.12 Migration footer + sanity check queries
-
-The migration ends with two sanity checks the founder
-runs from the SQL editor afterward:
-
-```sql
--- Check 1: every operator column added
-SELECT column_name, is_nullable
-  FROM information_schema.columns
-  WHERE table_name = 'operators'
-    AND column_name IN ('password_hash','signup_status','welcome_token_hash')
-  ORDER BY column_name;
-
--- Check 2: all 6 new tables exist (5 + the
--- alert-status singleton from Codex round-1 P1 #3 fix)
-SELECT table_name FROM information_schema.tables
-  WHERE table_name IN (
-    'operator_sessions',
-    'operator_password_reset_tokens',
-    'operator_otp_codes',
-    'operator_documents',
-    'operator_signup_attempts',
-    'operator_notification_alert_status'
-  )
-  ORDER BY table_name;
-
--- Check 3: alert-status singleton seed exists
-SELECT id, status FROM operator_notification_alert_status
-  WHERE id = 1;
-
--- Check 4 (Codex round-6 implementation reality fix):
--- the operator_status ENUM has been extended with 'rejected'.
--- Without this, PR 2a's admin-reject RPC would raise
--- `invalid input value for enum operator_status: rejected`.
-SELECT enum_range(NULL::operator_status);
--- Expected: {pending,approved,suspended,rejected}
-```
-
-### Files in PR 1
-
-- **Add:** `supabase/migrations/20260512000020_phase_8_operator_accounts.sql`
-- **Edit:** `types/database.ts` — extend the `Database` map
-  with the **6** new tables (Codex round-2 P2 #1 fix:
-  count updated to include
-  `operator_notification_alert_status` from §3.10) plus
-  the **12 new columns** on `operators` (Codex round-6
-  implementation reality fix: `approved_at` and
-  `rejection_reason` already exist in the initial schema
-  and are reused, not re-added). Also adds `'rejected'`
-  to the existing `operator_status` Enums entry (now
-  4 values: `pending / approved / suspended / rejected`)
-  and renames the `OperatorRow.status` field to
-  `signup_status`. The 6 tables are: `operator_sessions`,
-  `operator_password_reset_tokens`, `operator_otp_codes`,
-  `operator_documents`, `operator_signup_attempts`,
-  `operator_notification_alert_status`. Hand-maintained
-  per the Phase 7 alias-layer ritual; if Codex flags
-  this in round 3 we'll address with a thin alias layer
-  rather than a 39-file refactor.
-- **Edit:** `lib/empty-legs/types.ts` — re-export
-  `OperatorRow` (renamed from `OperatorRecord` if it
-  exists) for downstream PRs.
-
-### Founder probes after PR 1 (5 probes — was 4 in round 0; round 1 added 4a)
-
-1. **Schema state** — service-role psql: `\d+ operators`
-   shows the **12 new columns** + the renamed `signup_status`
-   column (typed `operator_status` ENUM, not TEXT + CHECK —
-   Codex round-6 implementation reality fix). The two
-   pre-existing lifecycle columns `approved_at` and
-   `rejection_reason` MUST still be present (Phase 8 reuses
-   them; the migration does not drop or alter their types).
-   Verify explicitly that `auth_email` is `NOT NULL` (Codex
-   round-4 P2 #1 fix: the auth-email invariant added in
-   round 2 + enforced in round 3 must show as "not null"
-   in the `\d+` modifier column — assert this directly
-   rather than trust column-count parity). Also run
-   `SELECT enum_range(NULL::operator_status);` and assert
-   the result is `{pending,approved,suspended,rejected}`
-   (Codex round-6 fix: the 4-value invariant is enforced
-   by the ENUM type, not by a CHECK constraint).
-2. **Six new tables** — `\dt operator_*` lists all 6
-   tables (`operator_sessions`, `operator_password_reset_tokens`,
-   `operator_otp_codes`, `operator_documents`,
-   `operator_signup_attempts`, `operator_notification_alert_status`)
-   plus the existing `operator_empty_leg_sessions`.
-3. **RLS posture** — every new table has RLS enabled
-   AND zero policies (service-role-only).
-4. **Audit trigger smoke** — INSERT a synthetic
-   `operators` row with **all required fixture columns**
-   (Codex round-3 P1 #1 fix: `auth_email` is NOT NULL):
-   ```sql
-   BEGIN;
-   INSERT INTO operators
-     (auth_email, contact_email, contact_phone,
-      company_name, signup_status)
-   VALUES
-     ('probe-trigger@aeris.test', 'probe-trigger@aeris.test',
-      '+966500000004', 'Probe 4 Co', 'pending')
-   RETURNING id;
-   -- (use the returned id below)
-   UPDATE operators SET signup_status = 'approved'
-     WHERE id = '<returned-id>';
-   SELECT entity_type, action FROM audit_logs
-     WHERE entity_id = '<returned-id>'
-     ORDER BY created_at DESC LIMIT 1;
-   ROLLBACK;
-   ```
-   Assert: the SELECT returns
-   `('operator', 'signup_status_changed')`. ROLLBACK
-   guarantees production stays byte-identical.
-4a. **Alert-status singleton seed** (Codex round-1 P1 #3
-    + P2 #1 fix) — `SELECT id, status FROM
-    operator_notification_alert_status WHERE id = 1`
-    returns one row with `status='healthy'`. The
-    `id INT PK CHECK (id = 1)` constraint also rejects
-    `INSERT (id=2)` (verified inside a transaction +
-    ROLLBACK). The `operator-documents` Supabase
-    Storage bucket is **operational, not migration-bound**
-    (admin creates it via Supabase Dashboard before
-    the first document upload — covered in PR 2b's
-    pre-deploy operational checklist, not as a SQL
-    probe).
+The CHECK ships in the same migration file as the
+`redispatch_stale_trip_requests` body, so the RPC's
+`closed_reason='stale_timeout'` write is always backed by
+schema enforcement on production. Future closed_reason
+values (e.g. Phase 10 admin merge/split) will require an
+explicit migration to extend the CHECK list (and to
+extend the audit allowlist above for the same replay-
+safety reason).
 
 ---
 
-## 4. PR 2a — RPC layer (SECURITY DEFINER)
+## 5. PR breakdown
 
-PR 2a ships the SQL function family that the Server
-Actions in PR 2b/2c/2d will wrap. Mirrors the Phase 7
-PR 2a discipline:
+### PR 1 — Client auth (5 new tables, 10 publics + 1 helper,
+8 Server Actions, 7 pages, ~12 components, 1 middleware
+extension, 3 cleanup-cron entries)
 
-- Every public function is `SECURITY DEFINER` + service-
-  role-only EXECUTE.
-- Structured-error contract: every validation failure
-  returns `{ ok: false, error: '<code>' }` JSON; no
-  `RAISE EXCEPTION`.
-- Helpers are REVOKEd from every role (callable only
-  from inside the publics).
-- Lock order is consistent: lock the `operators` row
-  first, then validate, then mutate.
+Inventory (Codex round 1 P1 #1 alignment): **10 PR 1 publics
+= 7 auth (§4.1) + 3 cleanup (§4.4 — the 4th cleanup
+`redispatch_stale_trip_requests` is PR 4 only)**. Plus 1
+internal helper (`_normalize_client_email`). Plus 8 Server
+Actions (§5 list below). Probe 2 grant-count assertion is
+keyed to this allowlist exactly.
 
-Migration file:
-`supabase/migrations/20260513000021_phase_8_operator_rpcs.sql`
+**Migrations (1 file):**
+- `20260520000026_phase_9_pr_1_client_auth.sql` — sections
+  §3.1 through §3.7 + §3.9 + §4.1 + §4.4 cleanup RPC bodies
+  + GRANTs + audit trigger.
 
-### 4.1 Function inventory (17 publics + 2 helpers)
+**Routes:**
+- `/(public)/login` — email + password + "تذكّرني" toggle.
+- `/(public)/signup` — email + password + full_name + phone
+  + opt-in checkbox.
+- `/(public)/forgot-password` — enumeration-safe form.
+- `/(public)/reset-password/[token]` — set new password.
+- `/(client)/me/profile/page.tsx` — view profile (read-only
+  email; editable name/phone).
+- `/(client)/me/profile/password/page.tsx` — change password.
+- `/(client)/me/page.tsx` — landing (placeholder until PR 2
+  + 3 land; redirects to `/me/charter` once available).
 
-Codex round-2 P1 #2 fix: the round-1 split of `operator_login`
-into a 2-step flow grew the public count from 15 to 16. The
-inventory below also reclassifies `consume_operator_welcome_token`
-from "stub" (round-0 wording was misleading; it was always
-fully implemented in PR 2a) to a regular public RPC, bringing
-the total to 17 publics + 1 helper. PR 2a Codex round-3 P2 #1
-fix on the migration added a second helper `_is_sha256_hex`
-(shared sha256-hex predicate for all session/welcome/reset/OTP
-hash validations); PR 2a Codex round-4 P2 brought this
-inventory + downstream probes/acceptance/implementation-order
-in line. The total is now **17 publics + 2 helpers**. Each
-function is enumerated on its own row so grants, generated
-types, and the RPC-grants probe can reference each one directly.
+**Server Actions (`app/actions/clients-public.ts`):**
+- `clientSignup`, `clientLogin`, `clientLogout`,
+  `clientRequestPasswordReset`, `clientVerifyPasswordReset`,
+  `clientChangePassword`, `clientUpdateProfile`,
+  `clientWelcomeConsume` (no welcome flow yet — placeholder
+  for Phase 9.x admin-mint).
 
-| # | Function | Caller (in subsequent PRs) |
-|:-:|---|---|
-| (helper) | `_normalize_operator_email(TEXT)` | internal — REVOKEd from every role |
-| (helper) | `_is_sha256_hex(TEXT)` | internal — REVOKEd from every role (PR 2a Codex round-3 P2 #1 fix) |
-| 1 | `operator_signup(p_email, p_password_hash, p_company_name, p_contact_email, p_contact_phone, p_notes, p_ip)` | PR 2c `/operator/signup` |
-| 2 | `operator_login_lookup(p_email)` | PR 2c `/operator/login` (step 1 of 2 — see §4.2) |
-| 3 | `operator_login_create_session(p_operator_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/login` (step 2 of 2 — see §4.2) |
-| 4 | `operator_logout(p_session_token_hash)` | PR 2c `/operator/logout` |
-| 5 | `operator_session_validate(p_token_hash)` | PR 2c every protected page + Server Action |
-| 6 | `admin_approve_operator(p_operator_id, p_welcome_token_hash, p_welcome_token_expires_at)` | PR 2b `/admin/operators/<id>` |
-| 7 | `admin_reject_operator(p_operator_id, p_reason)` | PR 2b `/admin/operators/<id>` |
-| 8 | `admin_suspend_operator(p_operator_id, p_reason)` | PR 2b `/admin/operators/<id>` |
-| 9 | `admin_unsuspend_operator(p_operator_id)` | PR 2b `/admin/operators/<id>` |
-| 10 | `admin_set_operator_documents(p_operator_id, p_commercial_registration, p_gaca_license, p_license_expiry)` | PR 2b `/admin/operators/<id>/documents` |
-| 11 | `admin_reset_operator_password(p_operator_id, p_new_password_hash)` | PR 2b `/admin/operators/<id>` |
-| 12 | `mint_operator_password_reset_token(p_email, p_token_hash, p_expires_at)` | PR 2d `/operator/forgot-password` |
-| 13 | `verify_operator_password_reset(p_token_hash, p_new_password_hash)` | PR 2d `/operator/reset-password/[token]` |
-| 14 | `mint_operator_otp(p_operator_id, p_code_hash, p_purpose, p_expires_at)` | PR 2b `/admin/operators/<id>` (admin-issued only in §6) |
-| 15 | `verify_operator_otp(p_operator_id, p_code_hash)` | PR 2c `/operator/login/otp` |
-| 16 | `convert_phase7_stub_to_operator(p_stub_id, p_operator_id)` | PR 2b `/admin/empty-legs/operators/<stub_id>/convert` |
-| 17 | `consume_operator_welcome_token(p_token_hash, p_session_token_hash, p_remember_me, p_ip, p_user_agent)` | PR 2c `/operator/welcome/[token]` |
+**Lib:**
+- `lib/clients/auth.ts` — `requireClientSession()`,
+  `setClientSessionCookie()`, `clearClientSessionCookie()`,
+  `getRawSessionTokenFromCookie()`, `hashSessionToken()`,
+  `mintClientSessionToken()`.
+- `lib/clients/password.ts` — `hashClientPassword()`,
+  `verifyClientPassword()` (bcryptjs cost=12).
+- `lib/clients/password-reset-token.ts` — HMAC-bound 30-min
+  TTL (separate secret env: `CLIENT_PASSWORD_RESET_TOKEN_SECRET`).
+- `lib/notifications/client-email.ts` — Resend wrappers for
+  reset link + welcome (welcome unused in PR 1).
+- `lib/notifications/client-email-alert-status.ts` —
+  recordClientEmailAlertStatus (mirror of Phase 8.1) PLUS a
+  read helper `getClientNotificationAlertStatus()` consumed
+  by the canary page extension below.
 
-### 4.2 Body sketches (key contracts)
+**Canary page extension (Codex round 1 P2 #1 fix):**
 
-#### `operator_signup`
+PR 1 extends the existing Phase 8 PR 2e canary page at
+`/admin/operators/canary` with a 4th `<ChannelHealth>` card
+inside the existing "صحّة قنوات الإشعار" section, reading
+from the new `client_notification_alert_status` singleton:
 
-1. Lock the email — SELECT … FROM operators WHERE
-   `_normalize_operator_email(auth_email)` =
-   `_normalize_operator_email(p_email)` FOR UPDATE.
-   (Codex round-2 P1 #1 fix: lookup by `auth_email`,
-   the immutable login identifier.)
-2. If a row exists → INSERT into
-   `operator_signup_attempts` with
-   `result='duplicate_email'` and return
-   `{ ok: false, error: 'email_in_use' }`.
-3. Rate-limit: COUNT(*) FROM `operator_signup_attempts`
-   WHERE `ip_address = p_ip` AND `attempted_at > NOW() - INTERVAL '24 hours'`
-   AND `result = 'success'`. If `>= 3` → INSERT
-   attempt row with `result='rate_limited'` + return
-   `{ ok: false, error: 'rate_limited' }`.
-4. Validate password hash format (bcrypt $2a$ / $2b$ /
-   $2y$ prefix). If invalid → return
-   `{ ok: false, error: 'password_hash_malformed' }`.
-   The Server Action in PR 2c bcrypts the plaintext
-   before this RPC; defense in depth.
-5. Validate `p_company_name` length, `p_contact_email`
-   format, `p_contact_phone` length per the same
-   patterns as PR 2c's stub bootstrap.
-6. INSERT into `operators` with `auth_email=p_email,
-   contact_email=p_contact_email, signup_status='pending',
-   password_hash=p_password_hash,
-   password_set_at=NOW()`. `auth_email` is the
-   immutable login identifier (the email the operator
-   types into the login form); `contact_email` is the
-   operational contact submitted alongside
-   `company_name` + `contact_phone` per the §0
-   objective. They can match if the operator reused
-   the login email at signup, but they are seeded
-   from separate RPC parameters and live in separate
-   columns from row 1. `auth_email` stays immutable;
-   `contact_email` can be edited via
-   `/operator/profile` (Codex round-4 P1 #1 fix:
-   prior wording set both to `p_email`, silently
-   discarding `p_contact_email` even though step 5
-   validated it). Return
-   `{ ok: true, operator_id, signup_status:'pending' }`.
-7. INSERT into `operator_signup_attempts` with
-   `result='success'`.
+- Card label: "بريد العملاء (Resend)"
+- Status maps: `healthy` → emerald, `config_missing` → amber,
+  `send_failed` → rose (same tone map as operator channels).
+- Failure context only renders when status !== 'healthy'
+  (PR #50 UX hotfix discipline carries over).
 
-The function does NOT send a notification email — the
-admin gets a Resend alert via a separate notification
-module (PR 2d) that observes the `operators` audit row
-the trigger writes.
+A new founder probe (Probe 4-canary) asserts the visibility:
+unset `CLIENT_PASSWORD_RESET_TOKEN_SECRET` in Vercel staging,
+trigger forgot-password, refresh canary → confirm the new
+card flips to amber "إعدادات ناقصة" with the verbatim env
+name in the failure reason text. Restore the env var, refresh
+again → card returns to emerald without stale failure context.
 
-#### `operator_login_lookup` + `operator_login_create_session` (TWO-STEP, Codex round-1 P1 #2 fix)
+This closes the "write-only alert table" gap that would
+otherwise leave founder blind to client-side Resend / reset-
+token-secret misconfigurations.
 
-**Round-1 P1 #2 background.** The earlier draft had a
-single `operator_login` RPC that received the
-freshly-bcrypted plaintext password hash and compared
-it byte-by-byte to `operators.password_hash`. That is
-broken: bcrypt embeds a random salt in every output, so
-hashing the same plaintext twice produces two different
-hashes. Equality compare fails on every login. The
-correct shape is to verify plaintext against the stored
-hash in **Node** (`bcrypt.compare(plaintext, storedHash)`)
-and only call SQL once auth has succeeded. The RPC
-must NEVER receive a plaintext password OR a freshly-
-hashed proof — the SQL boundary works on the verified
-`operator_id`, not on credential material.
+**Middleware extension:**
+- `middleware.ts` — extend matcher to `/me/:path*` + add
+  `x-pathname` injection (mirrors Phase 8 PR 2c) for the
+  must-change-password redirect (Phase 9.x; not used yet).
 
-The login flow is therefore SPLIT into two RPCs +
-Node-side bcrypt comparison in between.
+**Cron routes (3 files — PR 1 owns ONLY client cleanups):**
+- `app/api/cron/client/sessions/route.ts`
+- `app/api/cron/client/reset-tokens/route.ts`
+- `app/api/cron/client/signup-attempts/route.ts`
 
-##### Step 1 — `operator_login_lookup(p_email)`
+The `redispatch-stale` cron route + its vercel.json entry
+are PR 4's responsibility, NOT PR 1's (Codex round 1 P1 #2
+fix). Shipping the entry in PR 1 before the route lands
+would create production 404s for the entire PR 1 → PR 4
+interval and pollute the canary tick history with phantom
+failures.
 
-1. Look up the operator by normalized `auth_email`
-   (Codex round-2 P1 #1: NOT `contact_email`, which is
-   profile-mutable). If not found → return
-   `{ ok: false, error: 'invalid_credentials' }`
-   (do NOT distinguish unknown-email from wrong-password
-   — leaking that lets a spammer enumerate signups).
-2. If `signup_status != 'approved'` → return the
-   appropriate structured error: `'pending'` →
-   `signup_pending`, `'rejected'` → `signup_rejected`,
-   `'suspended'` → `account_suspended`.
-3. Return `{ ok: true, operator_id, password_hash,
-   password_must_change }`. The Server Action receives
-   the stored bcrypt hash (60-char string) and runs
-   `bcrypt.compare(plaintext, storedHash)` in Node.
+**vercel.json:** add 3 PR-1 cron entries:
+- `/api/cron/client/sessions` — every 6h
+- `/api/cron/client/reset-tokens` — every 6h
+- `/api/cron/client/signup-attempts` — every 6h
 
-Note: returning the stored hash to the Server Action is
-NOT a leak — the Server Action runs server-side under
-service-role; the hash never reaches the browser. The
-plaintext password the user submitted is also Node-only;
-it is never sent to SQL.
+**i18n:** new `clientsAr` module
+(`lib/i18n/clients-ar.ts`) with ~80 strings: nav, auth
+forms, error translations, profile, alert banner.
 
-##### Step 2 — Server Action runs bcrypt.compare(plaintext, storedHash) in Node
+**Validators:** new `lib/validators/clients.ts` — Zod
+schemas for signup/login/reset/profile/change-password.
 
-If the comparison returns `false`, the Server Action
-returns `{ ok: false, error: 'invalid_credentials' }`
-with the same opaque shape as a missing-email response.
-The caller cannot distinguish wrong-password from
-unknown-email.
+**Tests:** Jest tsx pattern, 3 suites:
+- `lib/clients/__tests__/password-reset-token.test.ts` —
+  HMAC mint/verify/expiry/tamper.
+- `lib/clients/__tests__/auth-session.test.ts` — session
+  token mint, hash, cookie roundtrip.
+- `lib/clients/__tests__/email-normalize.test.ts` — Arabic
+  case-insensitive + IDN edge cases.
 
-If the comparison returns `true`, the Server Action
-proceeds to step 3.
+**database.ts updates:** `ClientRow`, `ClientStatus`,
+`ClientSessionRow`, `ClientPasswordResetTokenRow`,
+`ClientSignupAttemptRow`, `ClientNotificationAlertStatusRow`
++ all related Insert/Update + table mappings. **NO Functions
+map entries** for the new RPCs (avoid Phase 8 PR 2e #48
+collapse pattern).
 
-##### Step 3 — `operator_login_create_session(p_operator_id, p_session_token_hash, p_remember_me, p_ip, p_user_agent)`
+**Env vars:**
+- `CLIENT_SESSION_TOKEN_SECRET` (HMAC for session tokens)
+- `CLIENT_PASSWORD_RESET_TOKEN_SECRET` (HMAC for reset tokens)
+- `ENABLE_CLIENT_PORTAL=true` (kill-switch)
 
-1. Lock the operator row. Re-validate
-   `signup_status='approved'` (defense in depth: the
-   operator may have been suspended in the few
-   milliseconds between step 1 and step 3).
-2. INSERT into `operator_sessions` with the hash + the
-   computed `expires_at` (7 days default; 30 days if
-   `p_remember_me=true`) + IP + user agent.
-3. UPDATE `operators.last_login_at = NOW()`.
-4. Return `{ ok: true, session_token_hash, expires_at,
-   password_must_change }`.
+### PR 2 — Authenticated charter form (1 RPC, 2 Server
+Actions, 1 page + 1 component, ~250 lines)
 
-The Server Action mints the raw session token
-(`randomBytes(32).toString('base64url')`), hashes it
-with sha256 to produce `p_session_token_hash`, and sets
-the `aeris_operator` cookie to the raw token. The DB
-only ever sees the hash.
+**Migration:**
+- `20260521000027_phase_9_pr_2_create_authenticated_trip_request.sql`
+  — §4.2 RPC.
 
-#### `operator_session_validate`
+**Route:**
+- `/(client)/me/charter/page.tsx` — server component +
+  client form.
 
-1. SELECT FROM `operator_sessions` WHERE
-   `token_hash = p_token_hash` AND `revoked_at IS NULL`
-   AND `expires_at > NOW()`.
-2. If no row → return `{ ok: false, error: 'invalid_session' }`.
-3. SELECT the operator + `signup_status`. If
-   `signup_status != 'approved'` → return
-   `{ ok: false, error: 'account_not_approved' }` (an
-   operator approved-then-suspended sees this).
-4. Return `{ ok: true, operator_id, expires_at,
-   password_must_change }`.
+**Server Actions (`app/actions/clients-trip-requests.ts`):**
+- `createAuthenticatedTripRequest` — wraps
+  `create_authenticated_trip_request` RPC. Conditionally
+  fires the auto-dispatch trigger ONLY when
+  `process.env.ENABLE_TRIP_AUTO_DISTRIBUTION === 'true'`
+  (Codex round 1 P1 #3 alignment — default off; trip lands
+  `pending` for manual admin dispatch until the founder
+  flips the flag after Probes 16 + 17). When enabled, fires
+  fire-and-forget POST to
+  `/api/trip-distribution/internal/dispatch` (PR 4 endpoint;
+  PR 2 lands the call-site guarded by the flag so PR 4's
+  endpoint switches on with zero PR 2 code change).
+- `cancelMyTripRequest` — flips `status='cancelled'` for a
+  trip the client owns. The Server Action makes a single
+  conditional UPDATE that asserts BOTH ownership AND
+  status guard inside the SQL WHERE clause (Codex round 4
+  P1 #1 fix + round 5 P2 #2 simplification). A
+  `status='booked'` trip MUST NOT be cancellable from this
+  Server Action; the booking-cancellation flow lives
+  separately in admin (Phase 10 client-side scope).
 
-The Server Action calls this on every protected request.
-For high-traffic surfaces (the legs list page) the
-session is revalidated only on cold render; client-side
-prefetched paths re-use the cookie.
+  ```sql
+  UPDATE trip_requests
+     SET status = 'cancelled',
+         updated_at = NOW()
+   WHERE id = :trip_id
+     AND client_id = :session_client_id
+     AND status IN ('pending', 'distributed', 'offered')
+  RETURNING id, status;
+  ```
 
-#### `admin_approve_operator`
+  **Single result shape (Codex round 5 P2 #2 fix).** Zero
+  rows returned → `{ok:false, error:'cancel_not_allowed'}`,
+  opaquely. The earlier `already_cancelled` branch was
+  unreachable under this UPDATE (a cancelled row also fails
+  the WHERE predicate, so it returns zero rows
+  indistinguishably from booked / cross-owner / not-found).
+  The opaque single-error model matches Phase 8's
+  `leg_not_found` discipline (Phase 8 §4 operator-empty-
+  legs-authed.ts) — never leak which guard tripped. If a
+  future requirement needs to differentiate already-
+  cancelled (e.g. for idempotent retry UI), the Server
+  Action would need a separate pre-SELECT step BEFORE the
+  UPDATE; that is intentionally NOT specified here.
 
-1. Lock the row. Reject `signup_status != 'pending'`
-   → `not_pending`.
-2. UPDATE `signup_status='approved', approved_at=NOW(),
-   approved_by_admin_at=NOW(),
-   welcome_token_hash=<from caller>,
-   welcome_token_expires_at=NOW() + INTERVAL '7 days'`.
-3. Return `{ ok: true, operator_id }`.
+**Components:**
+- `components/clients/charter-form.tsx` — form with origin/
+  destination IATA + freeform, dates, passengers, aircraft
+  preference, special requests.
 
-The welcome token is minted by the admin Server Action
-(separate HMAC secret — same shape as Phase 7's
-operator-session-token, different secret). The Server
-Action then triggers a Resend email containing the
-welcome URL.
+**Validators:** extend `clients.ts` with
+`createTripRequestSchema` + `cancelTripRequestSchema`.
 
-#### `admin_reject_operator`
+**Tests:** 1 suite for the validator + zod refinements
+(round-trip date validation, IATA shape, passengers cap).
 
-1. Lock the row. Reject `signup_status != 'pending'`
-   → `not_pending`.
-2. UPDATE `signup_status='rejected', rejected_at=NOW(),
-   rejection_reason=p_reason`.
-3. Return `{ ok: true, operator_id }`.
+### PR 3 — Client portal (3 Server Actions, 4 pages, ~10
+components, ~600 lines)
 
-The Server Action sends a Resend rejection email with the
-reason.
+**No migration** (reuses existing tables).
 
-#### `admin_suspend_operator`
+**Routes:**
+- `/(client)/me/requests/page.tsx` — list my trip requests
+  with status chips, filter by status (`all|pending|
+  distributed|offered|booked|cancelled`).
+- `/(client)/me/requests/[id]/page.tsx` — detail page with:
+  - trip metadata (origin/destination/dates/passengers)
+  - status timeline
+  - all submitted offers via reused `UnifiedOfferCard`
+  - accept / decline buttons (per offer)
+  - cancel-trip button (when status='pending'|'distributed')
+- `/(client)/me/bookings/page.tsx` — read-only list of
+  client's confirmed bookings (status='booked' trips).
+- `/(client)/me/bookings/[id]/page.tsx` — booking detail
+  (operator snapshot, route, add-ons).
 
-1. Lock the row. Reject `signup_status NOT IN ('approved')`
-   → `not_approved`.
-2. UPDATE `signup_status='suspended', suspended_at=NOW(),
-   suspension_reason=p_reason`.
-3. SET every active `operator_sessions` row's `revoked_at
-   = NOW()`. The operator is forced out of the portal.
-4. Return `{ ok: true, operator_id, sessions_revoked }`.
+**Server Actions (`app/actions/clients-trip-requests.ts`
+extended):**
+- `clientAcceptOffer` — pre-SELECT ownership +
+  `accept_offer` RPC + revalidate.
+- `clientDeclineOffer` — UPDATE on
+  `phase4_operator_offers` OR `phase5_operator_offers` to
+  `status='rejected'`, with three independent guards
+  enforced at the SQL boundary in a single
+  conditional UPDATE (Codex round 4 P1 #2 fix):
 
-#### `admin_unsuspend_operator`
+  1. **Trip ownership** — the offer's parent
+     `trip_request_id.client_id` MUST equal
+     `session.client_id`.
+  2. **Offer status** — the offer row's current `status`
+     MUST be `'pending'`. Already-`'accepted'`,
+     `'expired'`, or `'rejected'` offers MUST NOT be
+     mutated (idempotency + race guard).
+  3. **Trip status** — the parent trip's `status` MUST be
+     `'distributed'` OR `'offered'` (NOT `'booked'` or
+     `'cancelled'`). A booked trip's offers are frozen;
+     declining one would corrupt the booking-acceptance
+     audit chain.
 
-1. Lock the row. Reject `signup_status != 'suspended'` →
-   `not_suspended`.
-2. UPDATE `signup_status='approved', suspended_at=NULL,
-   suspension_reason=NULL`.
-3. Active sessions stay revoked (the operator must
-   re-login). Return `{ ok: true, operator_id }`.
+  All three checks live inside a single
+  `UPDATE … WHERE … RETURNING id` with the three predicates
+  ANDed. Zero rows returned → `{ok:false,
+  error:'decline_not_allowed'}` opaquely. The Server Action
+  picks the correct table (`phase4_operator_offers` vs
+  `phase5_operator_offers`) from the `source` discriminator
+  the UI passes (mirrors the existing `accept_offer` RPC's
+  source dispatch). The opaque error keeps the failure mode
+  same regardless of which guard tripped.
+- `cancelMyTripRequest` already in PR 2; add UI button.
 
-#### `admin_set_operator_documents`
+**Components:**
+- Move `components/admin/dispatch/UnifiedOfferCard.tsx` to
+  `components/shared/unified-offer-card.tsx` (no behavior
+  change; admin import path updated).
+- `components/clients/trip-request-row.tsx`
+- `components/clients/trip-request-status-chip.tsx`
+- `components/clients/trip-request-timeline.tsx`
+- `components/clients/booking-row.tsx`
 
-1. Lock the row. Reject `signup_status NOT IN
-   ('pending','approved')` → `not_writable`.
-2. UPDATE `commercial_registration, gaca_license,
-   license_expiry` from the parameters. NULL parameters
-   leave the existing column value (so admin can update
-   one document at a time).
-3. Return `{ ok: true, operator_id }`.
+**Lib:**
+- `lib/clients/portal-queries.ts` — `listMyTripRequests`,
+  `getMyTripRequestById`, `listMyBookings`,
+  `getMyBookingById`. All scoped by
+  `client_id = session.client_id`.
 
-The function does NOT touch `operator_documents` rows —
-those are managed by a separate Server Action that
-moves files in/out of Supabase Storage. This RPC just
-sets the regulatory text fields.
+**Tests:** 1 suite for ownership-check shape + offer status
+filter logic.
 
-#### `admin_reset_operator_password`
+### PR 4 — Auto-distribution engine (2 RPCs, 2 Server
+Actions, 1 internal API route, 1 cron route, 1 admin canary
+extension, ~800 lines)
 
-1. Lock the row. Reject `signup_status NOT IN ('approved','suspended')`
-   → `not_resettable`.
-2. UPDATE `password_hash = p_new_password_hash,
-   password_set_at = NOW(), password_must_change = TRUE`.
-3. Revoke every active session (forces re-login).
-4. Return `{ ok: true, operator_id }`.
+**Migration:**
+- `20260522000028_phase_9_pr_4_distribution.sql` — §3.8
+  table + §4.3 RPCs + §4.4 redispatch RPC body.
 
-#### `mint_operator_password_reset_token`
+**Lib (the heart):**
+- `lib/automation/trip-distribution.ts` — pure scoring
+  function:
+  ```ts
+  export interface OperatorScoreInput { … }
+  export interface OperatorScoreResult { operator_id, score, rank, breakdown }
+  export function scoreOperators(inputs: OperatorScoreInput[], topN = 5): OperatorScoreResult[]
+  ```
+  Score weights (locked decision §6):
+  - rating       40 (operator avg rating, 0–5 normalized)
+  - response_time 30 (median minutes-to-offer, lower = better)
+  - price        20 (relative price band; placeholder until
+    Phase 10 pricing engine)
+  - location     10 (operator base airport vs trip origin
+    distance bucket)
+- `lib/automation/__tests__/trip-distribution.test.ts` —
+  20+ cases covering edge inputs, tie-breaking, top-N
+  truncation, missing data fallback.
 
-1. Look up the operator by normalized `auth_email`
-   (Codex round-2 P1 #1: NOT `contact_email`). If not
-   found → return `{ ok: true, no_op: true }` (do NOT
-   leak that the email isn't registered — same posture
-   as `operator_login`).
-2. INSERT into `operator_password_reset_tokens` with the
-   hash, expires_at = NOW() + INTERVAL '30 minutes',
-   ip_address from the caller.
-3. Return `{ ok: true, token_id }`.
+**Internal API route:**
+- `app/api/trip-distribution/internal/dispatch/route.ts` —
+  POST `{ trip_request_id }`, calls
+  `auto_dispatch_trip_request` RPC. Auth: shared with
+  match-trigger via `INTERNAL_DISPATCH_SECRET` env.
 
-The Server Action sends the email AFTER this RPC
-returns; the email body contains the raw token in the
-URL. The DB never sees the raw token.
+**Cron route:**
+- `app/api/cron/operator/redispatch-stale/route.ts` —
+  invokes `redispatch_stale_trip_requests()` cleanup RPC,
+  records to `operator_cron_tick_history`.
 
-#### `verify_operator_password_reset`
+**Admin canary extension:**
+- Extend `/admin/operators/canary` (Phase 8 PR 2e) with a
+  5th card: **Auto-distribution health** — 24h dispatched
+  count + median time-to-first-offer + redispatch-stale
+  count.
 
-1. Look up the token by hash. Reject `used_at IS NOT
-   NULL` → `token_already_used`. Reject `expires_at <=
-   NOW()` → `token_expired`.
-2. UPDATE `operators.password_hash = p_new_password_hash,
-   password_set_at = NOW(), password_must_change = FALSE`.
-3. UPDATE `operator_password_reset_tokens.used_at =
-   NOW()`.
-4. Revoke every active session for the operator.
-5. Return `{ ok: true, operator_id }`.
+**Server Actions:**
+- `app/actions/admin-trip-distribution.ts`:
+  - `adminPreviewTripScore(trip_request_id)` — runs
+    `score_operators_for_trip` for a trip without
+    dispatching. UI affordance for admins to "see what
+    auto-dispatch WOULD pick" before flipping the env flag.
+  - `adminForceAutoDispatch(trip_request_id)` — manual
+    re-fire of `auto_dispatch_trip_request` (escape valve
+    when auto-dispatch failed silently).
 
-#### `mint_operator_otp` + `verify_operator_otp`
+**Env vars (Codex round 2 P1 #2 fix — defaults align with
+§2 #11 + Acceptance §7 flip-after-probes discipline):**
+- `ENABLE_TRIP_AUTO_DISTRIBUTION=false` — **DEPLOY VALUE**.
+  Stays `false` until Probes 16 + 17 confirm scoring +
+  Phase 5 token issuance + wa.me delivery on production.
+  Founder flips to `true` explicitly post-probe via Vercel
+  env edit + redeploy. Until then, every client trip lands
+  `pending` for manual admin dispatch via
+  `DispatchPanelV2`.
+- `INTERNAL_DISPATCH_SECRET` (HMAC for the internal route)
+- `TRIP_REDISPATCH_STALE_HOURS=4` (default 4h, configurable)
+- `PHASE_9_MIN_DISPATCH_FANOUT=2` (default 2; minimum unique
+  operators after phone-dedupe required to open a dispatch
+  round — Codex round 4 P2 #2 fix). Below the floor,
+  `auto_dispatch_trip_request` returns
+  `insufficient_unique_operators` and trip stays `pending`
+  for admin review.
 
-The OTP RPCs mirror the password-reset shape but with a
-6-digit code instead of a long token, a 10-min TTL, and
-an attempt-count limit (`>= 5` → reject).
+**vercel.json:** add 1 PR-4 cron entry (Codex round 1 P1 #2
+fix — moved out of PR 1 so the route exists when the entry
+ships):
+- `/api/cron/operator/redispatch-stale` — every 30 min
 
-#### `consume_operator_welcome_token`
-
-The welcome token is special: it bypasses password
-verification and creates a fresh session for the
-operator. Used once on first login.
-
-1. Look up `operators` by `welcome_token_hash =
-   p_token_hash`.
-2. Reject `welcome_token_used_at IS NOT NULL` →
-   `already_used`. Reject `welcome_token_expires_at <=
-   NOW()` → `expired`.
-3. Reject `signup_status != 'approved'` →
-   `account_not_approved`.
-4. INSERT a fresh `operator_sessions` row (the Server
-   Action mints the session token; same flow as
-   `operator_login`).
-5. UPDATE `welcome_token_used_at = NOW(),
-   last_login_at = NOW(),
-   password_must_change = (password_hash IS NULL)`.
-   The `password_must_change` heuristic is: if the
-   operator never set a password during signup (rare
-   path — admin-created accounts), they MUST set one on
-   first login.
-6. Return `{ ok: true, operator_id, session_token_hash,
-   expires_at, password_must_change }`.
-
-#### `convert_phase7_stub_to_operator`
-
-1. Lock both rows: stub + operator.
-2. Reject if either doesn't exist (`stub_not_found` /
-   `operator_not_found`).
-3. Reject if `phase7_operator_stubs.status = 'archived'`
-   → `stub_already_archived`.
-4. Reject if the operator's
-   `signup_status NOT IN ('approved','suspended')` →
-   `operator_not_writable`.
-5. UPDATE every `empty_legs` row WHERE `operator_stub_id
-   = p_stub_id`: SET `operator_id = p_operator_id,
-   operator_stub_id = NULL`.
-6. UPDATE the stub: SET `status = 'archived'`.
-7. Return `{ ok: true, stub_id, operator_id, legs_reassigned }`.
-
-### Files in PR 2a
-
-- **Add:** `supabase/migrations/20260513000021_phase_8_operator_rpcs.sql`
-- **Edit:** `types/database.ts` — Args + Result types for
-  **all 17 publics** enumerated in §4.1 (Codex round-3
-  P2 #1 fix: count updated from 15 to 17 after the
-  round-2 login split + welcome-token reclassification).
-  Each function gets its `Args*` + `Result*` exports +
-  one entry in `Database['public']['Functions']`. Both
-  helpers (`_normalize_operator_email`,
-  `_is_sha256_hex` — the latter added in PR 2a Codex
-  round-3 P2 #1 fix) are intentionally NOT exposed in
-  the Functions map (REVOKEd from every role; callable
-  only from inside the publics).
-- **Edit:** `lib/empty-legs/types.ts` — re-export the
-  Phase-8-scoped surface (17 Args/Result type pairs;
-  helpers not exposed; mirrors PR 2a discipline).
-
-### Founder probes after PR 2a (4 probes)
-
-5. **RPC grants** (Codex round-2 P1 #2 fix: count
-   updated to 17 publics + 1 helper after the login
-   split + the welcome-token reclassification; PR 2a
-   Codex round-4 P2 fix: count updated to 17 publics
-   + **2 helpers** after round-3 added `_is_sha256_hex`;
-   PR 2a Codex round-5 P2 fix: probe split because
-   `_is_sha256_hex` lacks `operator` in its name; PR 2a
-   Codex round-6 P2 fix: switched to exact `proname
-   IN (...)` allowlist because the `*operator*` wildcard
-   ALSO matched older functions outside the PR 2a surface;
-   PR 2a Codex round-7 P2 fix: tightened the ACL semantics
-   — `proacl IS NULL` means DEFAULT privileges, and the
-   function default is EXECUTE granted to PUBLIC, so a
-   helper whose REVOKE silently failed would still look
-   "clean" while being callable by anyone. The probe now
-   uses `aclexplode(coalesce(proacl, acldefault('f',
-   proowner)))` to materialize the EFFECTIVE grants and
-   filter out the owner's implicit EXECUTE).
-
-   Single catalog query that asserts the EXACT PR 2a
-   surface + grants in one pass:
-
-   ```sql
-   SELECT
-     p.proname,
-     CASE
-       WHEN p.proname LIKE '\_%' ESCAPE '\' THEN 'helper'
-       ELSE 'public'
-     END AS kind,
-     (
-       SELECT STRING_AGG(
-         CASE WHEN a.grantee = 0 THEN 'PUBLIC'
-              ELSE r.rolname
-         END || ':' || a.privilege_type,
-         ', ' ORDER BY 1
-       )
-       FROM aclexplode(
-         COALESCE(p.proacl, acldefault('f', p.proowner))
-       ) AS a
-       LEFT JOIN pg_roles r ON r.oid = a.grantee
-       WHERE a.grantee <> p.proowner
-     ) AS non_owner_grants
-   FROM pg_proc p
-   JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public'
-     AND p.proname IN (
-       -- 17 PR 2a publics
-       'operator_signup',
-       'operator_login_lookup',
-       'operator_login_create_session',
-       'operator_logout',
-       'operator_session_validate',
-       'admin_approve_operator',
-       'admin_reject_operator',
-       'admin_suspend_operator',
-       'admin_unsuspend_operator',
-       'admin_set_operator_documents',
-       'admin_reset_operator_password',
-       'mint_operator_password_reset_token',
-       'verify_operator_password_reset',
-       'mint_operator_otp',
-       'verify_operator_otp',
-       'convert_phase7_stub_to_operator',
-       'consume_operator_welcome_token',
-       -- 2 PR 2a helpers
-       '_normalize_operator_email',
-       '_is_sha256_hex'
-     )
-   ORDER BY kind, p.proname;
-   ```
-
-   **Expect EXACTLY 19 rows with the following invariants:**
-
-   - **17 `public` rows:** `non_owner_grants =
-     'service_role:EXECUTE'` EXACTLY. NO `'PUBLIC:EXECUTE'`,
-     NO `'anon:EXECUTE'`, NO `'authenticated:EXECUTE'`.
-   - **2 `helper` rows** (`_normalize_operator_email`,
-     `_is_sha256_hex`): `non_owner_grants IS NULL` EXACTLY.
-     NO `'PUBLIC'`, NO `'anon'`, NO `'authenticated'`,
-     NO `'service_role'` (only the owner's implicit
-     EXECUTE remains, which is filtered out by the
-     `WHERE a.grantee <> p.proowner` clause).
-
-   A row count `<19` means a function is missing
-   (migration regression); `>19` is impossible because
-   the IN list is closed. Any `'PUBLIC'` / `'anon'` /
-   `'authenticated'` string in `non_owner_grants` on ANY
-   row means a REVOKE silently failed AND the function
-   is callable by anyone — **fix the migration before
-   opening Phase 8 to traffic.**
-6. **Approve smoke** — admin RPC dry-run: INSERT a
-   pending operator row with **all required fixture
-   columns** (Codex round-3 P1 #1 fix: `auth_email` is
-   NOT NULL):
-   ```sql
-   INSERT INTO operators
-     (auth_email, contact_email, contact_phone,
-      company_name, signup_status,
-      password_hash, password_set_at)
-   VALUES
-     ('probe6@aeris.test', 'probe6@aeris.test',
-      '+966500000006', 'Probe 6 Aviation Co',
-      'pending',
-      '$2a$12$abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopq',
-      NOW())
-   RETURNING id;
-   ```
-   Then call `admin_approve_operator(<id>,
-   <welcome_token_hash>, NOW() + INTERVAL '7 days')`.
-   Assert `signup_status='approved'`, `approved_at`
-   non-NULL, `welcome_token_hash` matches the input.
-   The placeholder `password_hash` above is a
-   syntactically-valid bcrypt string (60 chars, $2a$12$
-   prefix); Probe 6 doesn't actually log in, so the
-   hash plaintext doesn't matter.
-7. **Login smoke** (Codex round-2 P1 #2 + round-3 P1 #1
-   fixes — probe updated for the 2-step login flow with
-   explicit fixture seeding):
-   1. INSERT a fresh operator row with `auth_email`,
-      `contact_email`, `password_hash` (bcrypted from a
-      known plaintext, e.g. `Probe7TestPass!`),
-      `signup_status='approved'`. The bcrypt hash MUST
-      be generated by Node's `bcryptjs.hashSync('Probe7TestPass!', 12)`
-      — NOT a placeholder, because step 3 below
-      verifies against this stored hash.
-      ```sql
-      INSERT INTO operators
-        (auth_email, contact_email, contact_phone,
-         company_name, signup_status,
-         password_hash, password_set_at,
-         approved_at, approved_by_admin_at)
-      VALUES
-        ('probe7@aeris.test', 'probe7@aeris.test',
-         '+966500000007', 'Probe 7 Aviation Co',
-         'approved',
-         '<bcrypt-of-Probe7TestPass-from-Node>', NOW(),
-         NOW(), NOW())
-      RETURNING id;
-      ```
-   2. Call `operator_login_lookup('probe7@aeris.test')` →
-      assert `{ ok: true, operator_id, password_hash, password_must_change }`.
-   3. In Node, run
-      `bcryptjs.compareSync('Probe7TestPass!', password_hash)`
-      → assert `true`.
-   4. Call `operator_login_create_session(operator_id,
-      <sha256(raw_session_token)>, false, '127.0.0.1', 'probe')`
-      → assert a session row appears in
-      `operator_sessions` with the right `expires_at`
-      (NOW + 7 days for `remember_me=false`).
-   5. Call `operator_session_validate(<sha256(raw_session_token)>)` →
-      returns `{ ok: true, operator_id }`.
-8. **Stub conversion smoke** — INSERT a synthetic stub +
-   operator + 2 empty_legs rows linked to the stub.
-   Call `convert_phase7_stub_to_operator(stub_id,
-   operator_id)`. Assert: stub.status='archived', both
-   legs have `operator_id=...` and `operator_stub_id=NULL`.
+**i18n:** extend `clientsAr` + admin i18n with auto-dist
+canary labels.
 
 ---
 
-## 5. PR 2b — Admin surfaces
+## 6. Founder probes
 
-UI + 9 admin Server Actions. Mirrors the Phase 7 PR 2b
-admin-shell + admin-protected route discipline.
+22 probes for Phase 9 (Codex round 4 P2 #1 count
+correction):
+  - **PR 1 (9 probes):** 1, 2, 3, 3-shape, 4, 4-canary, 5, 6, 7
+  - **PR 2 (3 probes):** 8, 9, 10
+  - **PR 3 (4 probes):** 11, 12, 13, 14
+  - **PR 4 (6 probes):** 15, 16, 17, 18, 19, 20
 
-### Files (Add)
+Each is run on production after the relevant PR ships.
 
-- `app/(admin)/admin/(protected)/operators/page.tsx` —
-  list + status filter chips (default: pending +
-  approved). Filter chips: pending (count), approved
-  (count), suspended (count), rejected (count), all.
-- `app/(admin)/admin/(protected)/operators/[id]/page.tsx`
-  — operator detail with 4-case admin gate:
-    - **Case 1 — pending:** approve form + reject form.
-    - **Case 2 — approved:** suspend form + reset-
-      password form + mint-otp form + edit-documents
-      form + convert-stub form (lists active stubs).
-    - **Case 3 — suspended:** unsuspend button +
-      reset-password form + suspension reason readonly.
-    - **Case 4 — rejected:** rejection reason readonly +
-      "re-open as pending" button (admin override).
-- `app/(admin)/admin/(protected)/operators/[id]/documents/page.tsx`
-  — upload UI (Supabase Storage bucket
-  `operator-documents`) + list of uploaded files (read-
-  only metadata + signed URL preview).
-- `app/(admin)/admin/(protected)/empty-legs/operators/[stub_id]/convert/page.tsx`
-  — stub conversion form (Decision §4): pick or create
-  target operator + preview the legs that will be
-  reassigned + confirm button.
-- `components/admin/operators/list-filters.tsx`
-- `components/admin/operators/operator-row.tsx`
-- `components/admin/operators/operator-detail-pending.tsx`
-- `components/admin/operators/operator-detail-approved.tsx`
-- `components/admin/operators/operator-detail-suspended.tsx`
-- `components/admin/operators/operator-detail-rejected.tsx`
-- `components/admin/operators/document-upload-form.tsx`
-- `components/admin/operators/document-list.tsx`
-- `components/admin/operators/stub-convert-form.tsx`
-- `components/admin/operators/status-badge.tsx`
-- `app/actions/operators.ts` — 9 admin Server Actions:
-  `adminApproveOperator`, `adminRejectOperator`,
-  `adminSuspendOperator`, `adminUnsuspendOperator`,
-  `adminSetOperatorDocuments`, `adminResetOperatorPassword`,
-  `adminMintOperatorOtp`, `adminUploadOperatorDocument`
-  (Supabase Storage upload), `adminConvertPhase7Stub`.
-- `lib/admin/operators/queries.ts` — read queries:
-  `listOperators`, `countOperatorsByStatus`,
-  `getOperatorById`, `listOperatorDocuments`,
-  `listActiveStubsForConversion`.
-- `lib/operators/welcome-token.ts` — HMAC mint +
-  verify for the admin-approval welcome link. 7-day
-  TTL. Separate secret `OPERATOR_WELCOME_TOKEN_SECRET`.
-- `lib/i18n/operators-ar.ts` — every Arabic-RTL string
-  per the Phase 7 i18n discipline.
-- `lib/validators/operators.ts` — Zod schemas for the 9
-  admin actions.
+### PR 1 probes (1–7 + 3-shape + 4-canary):
 
-### Files (Edit)
+1. **Schema state** — 5 new tables exist, 1 new ENUM,
+   audit trigger active.
+2. **RPC GRANTs (Codex round 3 P2 #1 alignment)** — query
+   `pg_proc` × `aclexplode` for the **10 PR-1 publics** +
+   the **1 PR-1 helper** + the **reused Phase 8 helper**
+   `_is_sha256_hex(TEXT)` together in a single SQL roundtrip:
+   - The 10 PR-1 publics (`client_signup`,
+     `client_login_lookup`, `client_login_create_session`,
+     `client_logout`, `client_session_validate`,
+     `client_mint_password_reset_token`,
+     `client_verify_password_reset`,
+     `cleanup_expired_client_sessions`,
+     `cleanup_expired_client_password_reset_tokens`,
+     `cleanup_old_client_signup_attempts`) MUST list
+     exactly `{postgres, service_role}` as grantees.
+   - The PR-1 helper `_normalize_client_email(TEXT)` MUST
+     list exactly `{postgres}` (function-owner only;
+     no GRANT to anon/authenticated/service_role).
+   - The reused Phase 8 helper `_is_sha256_hex(TEXT)` MUST
+     STILL list exactly `{postgres}` after PR 1 deploys —
+     PR 1's migration cites it as a dependency but does
+     NOT touch its ACL. Any drift here means an
+     accidental GRANT relaxation slipped in.
+3. **Signup → login chain** — POST signup form with founder's
+   personal email; verify session cookie set; verify clients
+   row created with bcrypt hash.
+3-shape. **sha256-hex shape validator (Codex round 3 P2 #1
+   fix)** — call `client_session_validate` directly via
+   `client.rpc()` with a 65-char hex string AND a 63-char
+   hex string AND a 64-char string containing a non-hex
+   character (e.g. `'g' * 64`). All three calls MUST return
+   the structured shape `{ ok: false, error:
+   'invalid_token_hash' }` with HTTP 200, NOT a raw
+   PostgreSQL CHECK violation or HTTP 500. Repeat for
+   `client_logout`, `client_mint_password_reset_token`, and
+   `client_verify_password_reset` (sample 1 malformed input
+   per RPC). Closes the same DB-boundary weakness Phase 8
+   PR 2a fixed for operator RPCs.
+4. **Reset link delivery** — POST forgot-password form;
+   verify Resend delivery; verify token rejected after 30
+   min.
+4-canary. **Client channel visibility (Codex round 1 P2 #1
+   fix)** — unset `CLIENT_PASSWORD_RESET_TOKEN_SECRET` in
+   Vercel staging; trigger forgot-password; refresh
+   `/admin/operators/canary` → confirm the 4th
+   ChannelHealth card flips amber "إعدادات ناقصة" with the
+   verbatim env name in the failure reason text. Restore
+   the env var; trigger another reset; refresh canary →
+   card returns emerald with no stale failure footer (PR #50
+   UX hotfix discipline). Closes the write-only-alert-table
+   gap.
+5. **Session expiry** — manually update `expires_at` to past;
+   verify `session_validate` RPC returns `expired`; verify
+   `requireClientSession()` redirects to `/login`.
+6. **Cron auth** — curl `/api/cron/client/sessions` without
+   `CRON_SECRET` → 401; with → 200 + `deleted_count`.
+7. **Audit trail** — INSERT a fake suspended client; verify
+   `audit_logs` row appears with `signup_status_changed`
+   action.
 
-- `components/admin/admin-shell.tsx` — add "المشغّلون"
-  nav entry (gated by a new
-  `ENABLE_OPERATOR_PORTAL_ADMIN` flag, default `true`).
-  Place AFTER "الرحلات الفارغة" + "قائمة المراسلات" +
-  "سجلّات المشغّلين" entries; the Phase 7 stub-bootstrap
-  page stays accessible for backward compatibility (and
-  it's the entry to the convert flow).
-- `.env.example` — add `OPERATOR_WELCOME_TOKEN_SECRET`,
-  `OPERATOR_PASSWORD_RESET_TOKEN_SECRET`,
-  `OPERATOR_OTP_SECRET`, `OPERATOR_SESSION_SECRET` (the
-  HMAC secret for the cookie value),
-  `ENABLE_OPERATOR_PORTAL_ADMIN`,
-  `ENABLE_OPERATOR_LEGACY_TOKEN`.
+### PR 2 probes (8–10):
 
-### Founder probes after PR 2b (5 probes)
+8. **Charter form submit** — login as Probe 14C client;
+   submit one-way Riyadh → Jeddah for 4 pax; verify
+   `trip_requests` row appears with `client_id` set,
+   `request_number = AER-…`, `status='pending'`.
+9. **Cancel my trip** — flip status to cancelled from
+   `/me/requests/[id]`; verify DB row + UI chip update.
+10. **Guest flow unchanged** — submit `/(public)/request`
+    as guest (no session cookie); verify writes to
+    `lead_inquiries` (NOT `trip_requests`).
 
-9. **Admin operators list** — visit
-   `/admin/operators`; verify zero rows; each filter
-   chip count is `0`.
-10. **Approve flow** — call the signup RPC manually for
-    a synthetic operator (the signup form lives in PR
-    2c, not 2b — for this probe the founder INSERTs a
-    `operators` row directly via psql with
-    `signup_status='pending'`). Visit the row's
-    `/admin/operators/[id]` page; click "approve". Verify
-    `signup_status='approved'` + a welcome token hash
-    appears in the row.
-11. **Reject flow** — same posture: INSERT another
-    `pending` row; reject with reason. Verify
-    `signup_status='rejected'` + `rejection_reason`
-    matches.
-12. **Document upload** — upload a 1-page PDF to the
-    Supabase Storage bucket via the admin UI. Verify a
-    row appears in `operator_documents` AND the file is
-    accessible via signed URL.
-13. **Stub conversion** — INSERT a synthetic stub +
-    operator + 1 leg linked to the stub via `operator_stub_id`.
-    Use the admin UI to convert. Verify the leg's
-    `operator_id` is now set, `operator_stub_id=NULL`,
-    stub `status='archived'`.
+### PR 3 probes (11–14):
 
----
+11. **My requests list** — login + visit `/me/requests`;
+    verify the trip from probe 8 appears.
+12. **Offer comparison view** — admin (separately) opens
+    a Phase 5 dispatch round to 2 operators for the trip,
+    operator A submits an offer; client visits
+    `/me/requests/[id]` and sees the offer in
+    `UnifiedOfferCard`.
+13. **Self-accept** — client clicks Accept on the offer;
+    verify `bookings` row created with
+    `client_id = session.client_id`,
+    `trip_requests.status='booked'`,
+    `phase5_operator_offers.status='accepted'`.
+14. **Wrong-client guard** — login as a SECOND client;
+    visit `/me/requests/[id]` of probe 8's trip URL
+    directly; verify 404 (ownership check fires).
 
-## 6. PR 2c — Operator portal (full)
+### PR 4 probes (15–20):
 
-The new front door for every operator. Replaces the
-Phase 7 token-URL shape with cookie + session auth.
-
-### Files (Add)
-
-- `app/operator/signup/page.tsx` — public hybrid signup
-  (email + password + company_name + contact_email +
-  contact_phone + notes textarea). Renders the
-  rate-limit warning when the IP is over the threshold.
-- `app/operator/login/page.tsx` — email + password +
-  "تذكّرني" toggle.
-- `app/operator/login/otp/page.tsx` — WhatsApp OTP path
-  for recovery (the operator types the 6-digit code that
-  admin minted from `/admin/operators/[id]`).
-- `app/operator/forgot-password/page.tsx` — email-only
-  form to request a reset link.
-- `app/operator/reset-password/[token]/page.tsx` —
-  token-bound reset form (single-use, 30-min TTL).
-- `app/operator/welcome/[token]/page.tsx` — first-login
-  welcome page after admin approval. Verifies the
-  welcome token + creates a session + redirects to
-  `/operator/dashboard`.
-- `app/operator/(authed)/layout.tsx` — protected layout.
-  Reads the `aeris_operator` cookie, validates via
-  `operator_session_validate`, redirects to
-  `/operator/login` on failure.
-- `app/operator/(authed)/dashboard/page.tsx` — overview
-  (active legs count + pending bookings count + recent
-  activity).
-- `app/operator/(authed)/empty-legs/page.tsx` —
-  legs-list page (re-uses Phase 7's
-  `EmptyLegsTable` with `getLegHref` set to
-  `/operator/empty-legs/<id>`; no token in URL).
-- `app/operator/(authed)/empty-legs/new/page.tsx` —
-  publish form (re-uses
-  `OperatorPublishForm` from Phase 7; the Server Action
-  passes the session's `operator_id` instead of the
-  Phase 7 `operator_stub_id`).
-- `app/operator/(authed)/empty-legs/[id]/page.tsx` —
-  detail / edit / cancel (operator-scoped; re-uses
-  Phase 7 components).
-- `app/operator/(authed)/bookings/page.tsx` —
-  read-only confirmed bookings list (Decision §10).
-- `app/operator/(authed)/bookings/[id]/page.tsx` — read-
-  only booking detail.
-- `app/operator/(authed)/profile/page.tsx` — view +
-  edit basic info (company_name, contact_email,
-  contact_phone). Notes textarea.
-- `app/operator/(authed)/profile/documents/page.tsx` —
-  read-only document list (commercial_registration,
-  gaca_license dates + signed URLs to view PDFs).
-- `app/operator/(authed)/profile/password/page.tsx` —
-  change password form (current + new + confirm). Hides
-  the current-password field when
-  `password_must_change=true` (the magic-link first-
-  login path).
-- `app/operator/(authed)/earnings/page.tsx` — mock data
-  + "قريباً" placeholder (Decision §9).
-- `app/operator/logout/route.ts` — POST handler that
-  revokes the session row + clears the cookie.
-- `app/actions/operators-public.ts` — 8 anon-callable
-  Server Actions: `operatorSignup`, `operatorLogin`,
-  `operatorLogout`, `operatorRequestPasswordReset`,
-  `operatorVerifyPasswordReset`, `operatorVerifyOtp`,
-  `operatorChangePassword` (authed),
-  `operatorUpdateProfile` (authed).
-- `lib/operators/auth.ts` — cookie mint + verify
-  (mirrors `lib/admin/auth.ts` shape; separate secret
-  + cookie name).
-- `lib/operators/password.ts` — bcrypt wrappers (cost =
-  12). Uses **`bcryptjs`** (pure JS, no native binding;
-  Vercel serverless-friendly — Codex round-2 P1 #3
-  fix). PR 2c file fence MUST include the
-  `package.json` + `package-lock.json` edits adding
-  `"bcryptjs": "^2.4.3"` and `"@types/bcryptjs": "^2.4.6"`
-  (devDep). The choice of `bcryptjs` over `bcrypt` is
-  intentional: `bcrypt` ships native bindings that
-  occasionally fail on Vercel cold starts (different
-  glibc versions). `bcryptjs` is ~30% slower at
-  cost=12 (still <500ms per hash) — acceptable for
-  login latency.
-- `lib/operators/password-reset-token.ts` — HMAC mint +
-  verify; separate secret `OPERATOR_PASSWORD_RESET_TOKEN_SECRET`.
-- `lib/operators/session-store.ts` — DB-side helpers
-  (insert + lookup-by-hash + revoke + list-active).
-- `components/operator/portal-shell.tsx` — auth'd
-  layout chrome (logo + nav: dashboard, legs, bookings,
-  profile, earnings + logout).
-- `components/operator/signup-form.tsx`
-- `components/operator/login-form.tsx`
-- `components/operator/forgot-password-form.tsx`
-- `components/operator/reset-password-form.tsx`
-- `components/operator/welcome-handoff.tsx`
-- `components/operator/dashboard-cards.tsx`
-- `components/operator/booking-row.tsx`
-- `components/operator/profile-edit-form.tsx`
-- `components/operator/password-change-form.tsx`
-- `components/operator/otp-form.tsx`
-- `components/operator/earnings-placeholder.tsx`
-
-### Files (Edit)
-
-- `components/admin/empty-legs/leg-row.tsx` — already
-  takes `getLegHref` (added in Phase 7); no further
-  changes.
-- `lib/i18n/operators-ar.ts` (created in PR 2b; PR 2c
-  adds portal strings).
-- `lib/validators/operators.ts` — add the 8 public
-  Server Action schemas.
-- `package.json` — Codex round-2 P1 #3 fix. Add
-  `"bcryptjs": "^2.4.3"` to `dependencies` and
-  `"@types/bcryptjs": "^2.4.6"` to `devDependencies`.
-  Without this, `lib/operators/password.ts` does not
-  compile — `bcryptjs` is not in the current
-  package.json (verified against the `6468dfb` main
-  state).
-- `package-lock.json` — committed alongside `package.json`
-  to lock the resolved version tree (mirrors Phase 6.2
-  / Phase 7's discipline of committing the lockfile in
-  the same PR as the dependency add).
-- `app/actions/operator-empty-legs.ts` (Phase 7 file) —
-  conditional: if the Phase 7 token-URL flow is on
-  (`ENABLE_OPERATOR_LEGACY_TOKEN=true`), the existing
-  Server Actions stay accessible. PR 2c does NOT delete
-  them. The new `/operator/(authed)/...` Server Actions
-  are added in `app/actions/operators-empty-legs-authed.ts`
-  with the same RPC bindings but session-based instead
-  of token-based.
-- `.env.example` — already has the secrets from PR 2b.
-
-### Founder probes after PR 2c (6 probes)
-
-14. **Self-signup** — submit the public signup form with
-    valid data. Verify a `pending` operator row appears.
-15. **Rate limit** — submit the form 4 times from the
-    same IP within 24h with different emails. Verify the
-    4th submission is rejected with `rate_limited`. (For
-    smoke, the 24h window can be reduced via a hidden
-    test override, or the founder can verify the cap
-    logic via a SQL query against
-    `operator_signup_attempts`.)
-16. **Login + dashboard** — admin approves the operator;
-    operator clicks the welcome link in email; lands on
-    dashboard. Cookie is set. Refresh page → still
-    authenticated.
-17. **Legs publish via session** — operator publishes a
-    leg via `/operator/(authed)/empty-legs/new`. Verify
-    `empty_legs.operator_id` is the session's operator
-    (not `operator_stub_id`).
-18. **Forgot password** — operator opens
-    `/operator/forgot-password`, types email, gets reset
-    link via Resend. Click link → land on reset form.
-    Set new password. Verify old session is revoked +
-    new password works.
-19. **WhatsApp OTP** — admin mints OTP from
-    `/admin/operators/[id]`, copies the 6-digit code (the
-    admin UI displays the plaintext once). Operator
-    types it at `/operator/login/otp` → lands on
-    dashboard.
+15. **Scoring + eligibility (Codex round 3 P1 #1
+    alignment)** — admin clicks "Preview score" on a
+    pending trip; verify ranked list of 5 operators with
+    score breakdown. Then INSERT a synthetic operator with
+    `signup_status='pending'` AND high default rating, OR
+    set an existing approved operator's `contact_phone` to
+    NULL. Re-run Preview → verify the synthetic/NULL-phone
+    operator does NOT appear in the ranked output (filter
+    enforced inside `score_operators_for_trip`).
+16. **Auto-dispatch fires + eligibility + phone dedupe
+    (Codex round 3 P1 #1 + round 4 P2 #2 alignment)** —
+    submit a fresh charter form; verify
+    `auto_dispatch_trip_request` ran (3+ rows in
+    `trip_distribution_log`) + dispatch round opened with
+    same operators. Verify NO `trip_distribution_log` row
+    references the synthetic pending/NULL-phone operator
+    from Probe 15. **Then INSERT two synthetic approved
+    operators with IDENTICAL `contact_phone` values** (e.g.
+    `+966500000099`); re-fire auto-dispatch via
+    `adminForceAutoDispatch`; verify EXACTLY ONE of the two
+    duplicates appears in `trip_distribution_log` (the
+    higher-ranked one) and the Phase 5 `trip_dispatch_targets`
+    INSERT did NOT fail with a unique-violation. This
+    confirms the dedupe step runs BEFORE the target INSERT
+    pipeline.
+17. **Operators receive WhatsApp link** — confirm the
+    Phase 5 dispatch flow fires + each top-N operator
+    gets a wa.me link (manual visual probe in Vercel
+    Functions logs OR the existing operator outreach
+    queue). Each `trip_distribution_log` row's
+    `dispatch_target_id` MUST resolve via the wa.me URL to
+    the operator-side `/operator/offer/[token]` form
+    without 404.
+18. **Redispatch-stale (Codex round 3 P2 #2 alignment)** —
+    set `TRIP_REDISPATCH_STALE_HOURS=0.01` (≈ 36 sec) for
+    a test trip; submit; wait 1 min; verify ALL of the
+    following after the cron tick:
+    - `trip_dispatch_targets` rows for the stale round:
+      every `status='pending'` row flipped to `'cancelled'`
+      (already-`'submitted'` rows untouched).
+    - `trip_dispatch_rounds` row for the stale round:
+      `status='closed'`, `closed_reason='stale_timeout'`,
+      `closed_at` set.
+    - `trip_requests.current_dispatch_round_id` = NULL for
+      the stale trip.
+    - Founder batch alert fired (Resend log shows the
+      delivery).
+19. **Auto-dispatch disabled** — flip
+    `ENABLE_TRIP_AUTO_DISTRIBUTION=false`; submit a
+    charter form; verify trip lands `pending` with NO
+    `trip_distribution_log` rows; admin manually opens a
+    dispatch round.
+20. **Canary readout** — `/admin/operators/canary` shows
+    the new 5th card with non-zero "24h dispatched count"
+    + median time-to-first-offer.
 
 ---
 
-## 7. PR 2d — Recovery flow notifications (Resend + WhatsApp)
+## 7. Acceptance criteria
 
-PR 2d wires the email + WhatsApp messaging that PR 2b/2c
-trigger. Mirrors Phase 7 PR 2e's
-`lib/empty-legs/notifications.ts` discipline.
+Phase 9 is closed when:
 
-### Files (Add)
-
-- `lib/operators/notifications.ts` — single entrypoint
-  with 5 functions: `sendOperatorWelcomeEmail`,
-  `sendOperatorRejectionEmail`,
-  `sendOperatorSuspensionEmail`,
-  `sendOperatorPasswordResetEmail`,
-  `sendOperatorOtpWhatsAppMessage`.
-- `lib/operators/notification-templates/operator-welcome-email.ts`
-  — Resend HTML, branded (re-uses
-  `lib/notifications/lead-email.ts` brand template).
-  Body includes the welcome magic link + "go to portal"
-  button.
-- `lib/operators/notification-templates/operator-rejection-email.ts`
-- `lib/operators/notification-templates/operator-suspension-email.ts`
-- `lib/operators/notification-templates/operator-password-reset-email.ts`
-- `lib/operators/notification-templates/operator-otp-whatsapp.ts`
-  — text-only template for wa.me prefilled message
-  (admin copy-pastes from
-  `/admin/operators/[id]`'s OTP-display section).
-
-### Files (Edit)
-
-- `app/actions/operators.ts` (PR 2b) — every admin
-  action that triggers an email now imports the
-  notification entrypoint after the RPC succeeds. Same
-  fail-tolerant posture: notification failure does NOT
-  roll back the RPC.
-- `app/actions/operators-public.ts` (PR 2c) —
-  `operatorRequestPasswordReset` triggers the email.
-
-### Visible degraded state
-
-Same shape as Phase 7 §founder-batch-email: a singleton
-table `operator_notification_alert_status` (id=1) is
-UPDATEd on every send attempt with `status ∈ ('healthy',
-'config_missing', 'send_failed')`. The
-`/admin/operators` list page surfaces a red banner when
-status `<> 'healthy'`. PR 2b adds the banner; PR 2d
-ensures the singleton is INSERTed by the migration in
-PR 1 (mirrors the
-`empty_leg_outreach_alert_status` pattern).
-
-### Founder probes after PR 2d (3 probes)
-
-20. **Welcome email delivery** — admin approves an
-    operator. Verify a Resend email lands in the
-    operator's inbox within 1 minute. Click the magic
-    link → operator is logged in.
-21. **Password-reset email delivery** — operator
-    requests reset. Verify Resend email lands. Click
-    link → land on reset form.
-22. **Visible degraded state** — break the Resend
-    config (set `RESEND_API_KEY=`, redeploy). Approve
-    another operator. Verify the admin banner shows
-    `status='config_missing'`. Restore the key, redeploy
-    → banner disappears on next approval.
+- [ ] All 4 PRs merged to main, each cleared Codex 100/100.
+- [ ] All 3 migrations applied to production (PR 1 + PR 2
+      + PR 4; PR 3 is no-migration per §9 — Codex round 1
+      P2 #2 fix).
+- [ ] All 22 probes pass (or are explicitly deferred with
+      written rationale, mirrored from Phase 7 closure
+      pattern).
+- [ ] `ENABLE_CLIENT_PORTAL=true` set in Vercel
+      Production.
+- [ ] `ENABLE_TRIP_AUTO_DISTRIBUTION=true` set after Probe
+      16 + 17 confirm the engine works.
+- [ ] Closure work-log entry appended to
+      `docs/CLAUDE-WORK-LOG.md`.
 
 ---
 
-## 8. PR 2e — Stub conversion + cron + retire-legacy flag
+## 8. Operational risks
 
-PR 2e is the final application PR. It ships the
-operational tooling that retires the Phase 7 token-URL
-flow once the canary window confirms the new portal is
-production-ready.
+Surfaced for Codex review:
 
-### Files (Add)
-
-- `app/api/cron/operators/cleanup-expired-sessions/route.ts`
-  — hourly cron. DELETEs `operator_sessions` rows where
-  `revoked_at IS NULL AND expires_at < NOW() - INTERVAL '7 days'`.
-  Bounded batch limit (500). Same Bearer
-  CRON_SECRET auth as Phase 7.
-- `app/api/cron/operators/cleanup-expired-tokens/route.ts`
-  — daily cron. DELETEs `operator_password_reset_tokens`
-  + `operator_otp_codes` rows where `used_at IS NOT NULL
-  OR expires_at < NOW() - INTERVAL '30 days'`. Keeps the
-  audit footprint manageable.
-- `app/(admin)/admin/(protected)/operators/canary-status/page.tsx`
-  — admin readout of the canary state: count of stubs
-  pending conversion, count of legacy URL-token
-  operators (zero after retirement), per-operator portal
-  activity (last login, sessions count). Updates on
-  every render (no cache).
-- `lib/operators/__tests__/auth.test.ts` — Layer-1 unit
-  test for the cookie mint + verify helpers
-  (signature/payload tamper, expiry, missing secret
-  guards). Mirrors the Phase 7 token-test pattern.
-- `lib/operators/__tests__/password.test.ts` — bcrypt
-  wrappers smoke (cost 12, hash uniqueness, verify
-  contract).
-
-### Files (Edit)
-
-- `vercel.json` — add the 2 new cron entries
-  (`*/60 * * * *` for sessions cleanup, `0 4 * * *` for
-  tokens cleanup, both UTC).
-- `package.json` — add `test:operator-auth` +
-  `test:operator-password` script entries.
-- `.github/workflows/ci.yml` — add the 2 new test
-  steps.
-- `lib/admin/empty-legs/queries.ts` (Phase 7 file) —
-  `listActiveStubsForConversion` is added by PR 2b but
-  PR 2e tightens: stubs become candidates for
-  archival-without-conversion if NO `empty_legs` row
-  references them AND `created_at < NOW() - INTERVAL '30 days'`.
-  The admin canary page shows that count + a "archive
-  abandoned stubs" admin action.
-
-### Retire-legacy plan (operational, not code)
-
-Once the founder is satisfied:
-
-1. Manual smoke: every active operator logs into the new
-   portal at least once.
-2. Run the canary readout query:
-   `SELECT COUNT(*) FROM operator_empty_leg_sessions
-   WHERE expires_at > NOW() AND revoked_at IS NULL`.
-   Wait for it to drop to zero (operators stop using the
-   token URLs).
-3. Flip `ENABLE_OPERATOR_LEGACY_TOKEN=false` on
-   production.
-4. Verify the Phase 7 `/operator/empty-legs/<token>`
-   path returns 404 (or 410 Gone if Codex prefers).
-5. Optionally: purge `operator_empty_leg_sessions` rows
-   in a follow-up migration (Phase 8.1 territory; not
-   shipped here).
-
-### Founder probes after PR 2e (4 probes)
-
-23. **Cron auth** — both new cron routes return 401
-    without `$CRON_SECRET`, 200 with.
-24. **Session cleanup smoke** — INSERT a synthetic
-    expired session row. Wait for the cron tick (or
-    manually trigger). Verify the row is DELETEd.
-25. **Token cleanup smoke** — same shape for
-    `operator_password_reset_tokens`.
-26. **Canary readout accuracy** — visit
-    `/admin/operators/canary-status`. Verify the counts
-    match SQL queries the founder runs side-by-side.
+- **Email-only client recovery is single point of failure.**
+  If Resend is down, locked-out clients have no
+  alternative path. Mitigation: Phase 9.x adds wasender
+  WhatsApp parallel send (mirror of Phase 8.1 operator
+  flow).
+- **Auto-dispatch with no trained scoring data.** Operator
+  rating + response-time history are placeholder values
+  from initial schema; the algorithm uses defaults
+  (rating=4.0, response_time=median across all operators)
+  until real history accrues. Document the warm-up
+  period.
+- **Database growth on `trip_distribution_log`.** Each
+  trip writes 5 rows. At 100 trips/day = 500 rows/day =
+  ~180k rows/year. Add to the cleanup cron suite in
+  Phase 9.x with a 90-day retention policy.
+- **Branch protection on `main` is now active.** Phase 9
+  PRs MUST pass CI before merge — type-check + lint must
+  stay clean across all 4 PRs. This is a behavioral
+  shift from the Phase 8 era where CI failures could
+  slip through.
 
 ---
 
-## 9. Out of scope (explicit)
+## 9. Files added / modified summary (all 4 PRs)
 
-Phase 8 does NOT ship any of:
+| Phase 9 PR | Migrations | Routes | Server Actions | Lib | Components | i18n | Tests |
+|---|---|---|---|---|---|---|---|
+| PR 1 | 1 | 4 public + 3 client + 3 cron | 8 | 6 | ~12 | 1 module | 3 suites |
+| PR 2 | 1 | 1 | 2 | 0 | 1 | extend | 1 suite |
+| PR 3 | 0 | 4 | 3 | 1 | ~6 | extend | 1 suite |
+| PR 4 | 1 | 1 internal API + 1 cron | 2 admin | 2 (engine + tests-only) | 0 | extend | 1 suite (~20 cases) |
+| **Total** | **3** | **17** | **15** | **9** | **~19** | **2 modules + extensions** | **6 suites** |
 
-- **Real earnings calculation** — Phase 11 territory.
-  Earnings page is a "قريباً" placeholder.
-- **Booking actions for operators** — operators see
-  bookings read-only. Cancel / accept / reschedule are
-  admin-only, period.
-- **Multi-tenant ops** — one operator account = one
-  organization. Sub-users / role-based access inside an
-  operator account are Phase 9+ if they ever ship.
-- **Native mobile app** — the portal is responsive web
-  only. PWA install prompts are out of scope.
-- **OAuth / SSO** — custom + bcrypt only. Google /
-  Apple / Microsoft sign-in are Phase 9+ if they ever
-  ship.
-- **2FA TOTP** — WhatsApp OTP is the only second
-  factor. Authenticator-app TOTP is Phase 9+.
-- **Document expiry alerts** — when `gaca_license`'s
-  `license_expiry` approaches, no automatic email is
-  sent. Admin watches manually. Phase 8.1 territory.
-- **Operator-side support tickets** — `/operator/support`
-  is NOT shipped. Operators contact admin via WhatsApp.
-- **Stripe / Hyperpay onboarding** for operators —
-  payout configuration is Phase 11 alongside the wider
-  payment infrastructure.
-- **Operator account deletion** — admin can `suspend`
-  but not `delete`. Hard delete + GDPR-compliant data
-  purge is Phase 9+ (PDPL has the same posture).
-- **Audit log surface** — the `audit_logs` table is
-  populated but there is no admin UI to browse it.
-  Phase 8.1 / 9.
+Inventory cross-reference (Codex round 1 P1 #1 alignment):
+**PR 1 = 10 publics + 1 helper RPC + 8 Server Actions +
+3 client cleanup cron routes**. PR 1 owns ONLY client cron
+routes; PR 4 owns the 1 redispatch cron route + its
+vercel.json entry (Codex round 1 P1 #2 alignment).
 
----
-
-## 10. Acceptance criteria
-
-Phase 8 is acceptable only if every numbered item below is
-demonstrably true on production immediately after PR 2e
-merges.
-
-### Schema (PR 1)
-
-1. `operators.user_id` is nullable.
-2. `operators.commercial_registration`, `gaca_license`,
-   `license_expiry` are all nullable.
-3. `operators` has the 12 new columns from §3.3
-   (including the round-2 `auth_email` column with
-   the round-3 NOT NULL invariant). The pre-existing
-   `approved_at` and `rejection_reason` columns
-   remain in place untouched (Codex round-6
-   implementation reality fix: rounds 0-5 said "14
-   new columns"; the migration discovers they
-   already exist in the initial schema and reuses
-   them).
-4. `operators.signup_status` exists (renamed from
-   `status`), typed `operator_status` ENUM. The ENUM
-   contains the 4 values
-   `(pending, approved, suspended, rejected)` —
-   verify with `SELECT enum_range(NULL::operator_status);`.
-   Codex round-6 implementation reality fix: rounds
-   0-5 said "4-value CHECK" but the production schema
-   uses the ENUM type per
-   `20260422000001_initial_schema.sql:19`; Phase 8
-   extends the ENUM rather than converting to TEXT.
-5. The 6 new tables (`operator_sessions`,
-   `operator_password_reset_tokens`, `operator_otp_codes`,
-   `operator_documents`, `operator_signup_attempts`,
-   `operator_notification_alert_status`) all exist with
-   their indexes + RLS-enabled. The
-   `operator_notification_alert_status` singleton row
-   (`id=1, status='healthy'`) is seeded by the migration
-   (Codex round-1 P1 #3 fix).
-6. The audit trigger `operators_audit_trigger` fires
-   on `signup_status` change AND on `password_hash`
-   change.
-
-### RPCs (PR 2a)
-
-7. **17 public functions + 2 helpers** exist; all are
-   SECURITY DEFINER (Codex round-2 P1 #2 fix: count
-   updated after login split + welcome-token
-   reclassification; PR 2a Codex round-4 P2 fix: helper
-   count updated 1 → 2 after round-3 added
-   `_is_sha256_hex`).
-8. Each public has `EXECUTE` granted to `service_role`
-   ONLY.
-9. **Both** helpers (`_normalize_operator_email`,
-   `_is_sha256_hex`) have zero grantees.
-10. `operator_signup` rejects duplicate emails AND
-    rate-limited IPs (≥3 successful signups in 24h).
-11. The login flow rejects unknown email + wrong
-    password with the same opaque error
-    (`invalid_credentials`). The 2-step contract
-    (Codex round-2 P1 #2 fix): `operator_login_lookup`
-    returns `invalid_credentials` for unknown email AND
-    the Server Action returns the same error after a
-    failed `bcrypt.compare()`. The two paths are
-    indistinguishable to the caller.
-12. `operator_session_validate` rejects expired
-    sessions, revoked sessions, and sessions whose
-    operator was suspended after the session was minted.
-13. `admin_approve_operator` flips status + mints a
-    welcome token + emits the audit-log row.
-14. `admin_suspend_operator` flips status + revokes
-    every active session in one transaction.
-15. `convert_phase7_stub_to_operator` reassigns every
-    leg AND archives the stub atomically.
-
-### Admin surfaces (PR 2b)
-
-16. `/admin/operators` lists all operators with
-    status-filter chips.
-17. `/admin/operators/[id]` shows the right Case (1-4)
-    based on `signup_status`.
-18. Admin can approve / reject / suspend / unsuspend
-    from the detail page.
-19. Admin can upload PDF/JPG documents (≤10 MB) to
-    Supabase Storage; the file appears in
-    `operator_documents` AND signed URLs render.
-20. Admin can mint a 6-digit OTP from
-    `/admin/operators/[id]`; the plaintext displays
-    once.
-21. Admin can convert a Phase 7 stub from
-    `/admin/empty-legs/operators/[stub_id]/convert`;
-    the stub flips to archived AND every leg's
-    `operator_id` is set.
-
-### Operator portal (PR 2c)
-
-22. `/operator/signup` accepts valid signups.
-23. `/operator/login` rejects unapproved /
-    rejected / suspended operators with distinct
-    structured errors.
-24. `/operator/dashboard` is reachable only with a
-    valid session cookie.
-25. `/operator/empty-legs/new` publishes a leg whose
-    `operator_id` is the session's operator (NOT a
-    `operator_stub_id`).
-26. `/operator/forgot-password` accepts an email
-    (returns success even if the email isn't
-    registered).
-27. `/operator/reset-password/[token]` rejects expired
-    or used tokens.
-28. `/operator/welcome/[token]` creates a session +
-    redirects to dashboard.
-29. The "تذكّرني" toggle on login extends session
-    expiry to 30 days (verified by inspecting the
-    session row).
-
-### Recovery flow (PR 2d)
-
-30. Welcome email lands in the operator's inbox within
-    1 minute of admin approval.
-31. Password-reset email contains the raw token in the
-    URL; the DB only stores the hash.
-32. The admin OTP-mint page displays the plaintext
-    code once; the DB only stores the hash.
-33. WhatsApp OTP message is rendered via wa.me link
-    (admin copies the URL, sends via WhatsApp Business).
-34. The `operator_notification_alert_status` singleton
-    is UPDATEd on every email send attempt.
-
-### Cleanup + canary (PR 2e)
-
-35. Both cron routes register on Vercel + execute on
-    schedule.
-36. Expired session rows are DELETEd within 1 hour of
-    expiry-plus-7-days.
-37. Used password-reset / OTP rows are DELETEd within
-    24 hours.
-38. The canary status page accurately reflects the
-    state of the Phase 7→Phase 8 migration.
-
----
-
-## 11. Founder probes (consolidated)
-
-27 individual probe checks across the 5 PRs. The spec
-defines probes 1-26 (Phase 7 numbering convention) plus
-**probe 4a** (alert-status singleton seed, added in
-round 1 per P1 #3 + P2 #1 fixes). The earlier round-0
-draft listed 26 individual probes; round 1 added one
-(4a) bringing the total to 27 individual checks.
-
-(Full probe text lives in §3-§8 above; this is the
-index.)
-
-| # | Probe | After PR |
-|:-:|---|---|
-| 1 | Schema state — operators columns | 1 |
-| 2 | 6 new tables + RLS | 1 |
-| 3 | Audit trigger smoke | 1 |
-| 4 | (Round-0 draft had a "Document storage policy" entry here. Codex round-1 P2 #1 retargeted it: storage-bucket creation is operational, not migration-bound; this slot is now retired. The audit-trigger smoke is probe 3.) | — |
-| 4a | Alert-status singleton seed (Codex round-1 P1 #3 + P2 #1 fix) | 1 |
-| 5 | RPC grants | 2a |
-| 6 | Approve smoke | 2a |
-| 7 | Login smoke | 2a |
-| 8 | Stub conversion smoke | 2a |
-| 9 | Admin operators list | 2b |
-| 10 | Approve flow | 2b |
-| 11 | Reject flow | 2b |
-| 12 | Document upload | 2b |
-| 13 | Stub conversion (UI) | 2b |
-| 14 | Self-signup | 2c |
-| 15 | Rate limit | 2c |
-| 16 | Login + dashboard | 2c |
-| 17 | Legs publish via session | 2c |
-| 18 | Forgot password | 2c |
-| 19 | WhatsApp OTP | 2c |
-| 20 | Welcome email delivery | 2d |
-| 21 | Password-reset email delivery | 2d |
-| 22 | Visible degraded state | 2d |
-| 23 | Cron auth | 2e |
-| 24 | Session cleanup smoke | 2e |
-| 25 | Token cleanup smoke | 2e |
-| 26 | Canary readout accuracy | 2e |
-
----
-
-## 12. Risks + mitigations
-
-| # | Risk | Likelihood | Impact | Mitigation |
-|:-:|---|---|---|---|
-| R1 | Operator signup spam — bots create thousands of pending rows | Medium | Medium (admin queue noise) | Per-IP rate limit (Decision §12). Failed attempts also INSERT into `operator_signup_attempts` so the founder can audit IPs. |
-| R2 | Bcrypt cost too high → slow login | Low | Low | Cost = 12 (industry standard). Login latency stays <500ms on typical Vercel cold starts. |
-| R3 | Welcome token leaks in logs / email forwarding | Low | High (account takeover) | Token is single-use — `welcome_token_used_at IS NOT NULL` guard. Token expires 7 days. |
-| R4 | Session token exfil → impersonation | Low | High | Cookie is HttpOnly + Secure + SameSite=Lax. Token hash stored DB-side; even DB dump can't reverse to raw cookie. Admin can revoke from `/admin/operators/[id]` (suspend revokes all sessions). |
-| R5 | Stub conversion data loss — legs lose their stub linkage and gain an invalid operator_id | Medium | High | Conversion RPC is single-transaction. Lock both rows. Reject if either doesn't exist. Validate target operator's `signup_status NOT IN ('rejected')` before reassigning. |
-| R6 | Document upload abuse — 10 MB × 1000 ops = 10 GB Supabase Storage | Low | Low (cost) | Per-operator-document unique index limits to one doc per type (3 max). Total worst-case: 3 × 10 MB × N operators. Phase 1 Aeris targets 50 operators in year 1; storage cost negligible. |
-| R7 | RLS misconfiguration leaks operator emails to anon | Low | High (privacy) | Every new table has RLS enabled + zero policies (service-role only). Founder probe verifies. |
-| R8 | Phase 7 legacy token URLs continue working forever (forgotten) | Medium | Low (surface clutter) | The retire-legacy plan in §8 is documented + the canary readout page shows the legacy session count. |
-| R9 | Admin reset password leaks new password in logs | Low | High | Admin reset endpoint logs the operator id only, never the password. The new password is shown to admin once on the success page (so admin can communicate it via wa.me) AND included in the email to the operator. Admin must change it on next login (`password_must_change=true`). |
-| R10 | OTP brute force — attacker tries all 1M codes | Low | Medium | `attempt_count >= 5` rejects + the row is locked. The combinatorial difficulty is 1/200 000 per attempt with the 5-attempt cap. |
-| R11 | Audit trigger writes to a wrong audit_logs shape and breaks INSERTs | Low | Medium | The trigger uses `entity_type, entity_id, action, old_value, new_value` — the verified Phase 6.2 shape. Smoke probe 3 covers. |
-| R12 | Hybrid signup means an operator can claim "approved" via tampering | Very low | High | The signup RPC server-sets `signup_status='pending'`. Even if the Server Action ships extra fields, the RPC ignores them. |
-
----
-
-## 13. Open questions (to be resolved before PR 1 ships)
-
-1. **Welcome email magic link vs plain "click here to set
-   password"** — currently §0 step 2 says the welcome
-   email contains a magic link. Codex may push back: a
-   magic link replaces password entirely on first login,
-   which is convenient but means an attacker who
-   intercepts the email gets a session. Alternative:
-   the email contains a "set your password" URL that
-   forces the operator to type a password, then logs in.
-   Default: ship the magic link as designed. If Codex
-   pushes back, we ship the set-password variant
-   (one-line change in the welcome page).
-
-2. **Bcrypt vs Argon2id** — bcrypt is the industry
-   default for backend session auth in 2024. Argon2id
-   is the OWASP modern recommendation. The migration
-   path bcrypt → Argon2id is non-trivial (re-hash on
-   every login). Default: ship bcrypt cost=12. Argon2id
-   migration is a Phase 8.x or Phase 9 question.
-
-3. **Per-IP rate limit on login (not just signup)** —
-   §12 only rate-limits signup. Login can be brute-
-   forced if the attacker has a valid email. Default:
-   Phase 8 ships login as-is (bcrypt cost=12 makes
-   brute force economically uninteresting at low
-   volume). A per-IP login rate limit is a Phase 8.1
-   add-on.
-
-4. **Email change flow** — RESOLVED in round 2 per Codex
-   round-2 P1 #1, with prose corrected in round 5 per
-   Codex round-5 P2: `auth_email` is a real column in
-   PR 1 §3.3 (added in round 2, NOT NULL in round 3).
-   The signup form passes `auth_email` and
-   `contact_email` as separate parameters to
-   `operator_signup` and MAY seed them with different
-   values: `auth_email` is the immutable login
-   identity, `contact_email` is the mutable
-   operational contact. Profile edits change
-   `contact_email` only; `auth_email` is immutable
-   post-signup (admin can override via the admin
-   reset flow if a real email-change request lands).
-   Login + password-reset look up by `auth_email`;
-   the duplicate-email check in `operator_signup` is
-   also against `auth_email`.
-
----
-
-## 14. Implementation order
-
-1. **PR 1 — Schema** (no application code; column adds +
-   table creates + audit trigger). Founder runs
-   migration on production; verifies probes 1, 2, 3,
-   4, and 4a (Codex round-4 P2 #2 fix: probe 4a was
-   added in round 1 to cover the alert-status
-   singleton seed but the handoff checklist still
-   said 1-4).
-2. **PR 2a — RPC layer** (**17 publics + 2 helpers**, all
-   SECURITY DEFINER — Codex round-3 P2 #2 fix: count
-   updated from 15 to 17 publics to match §4.1 inventory
-   after the round-2 login split + welcome-token
-   reclassification; PR 2a Codex round-4 P2 fix: helper
-   count updated 1 → 2 after round-3 added
-   `_is_sha256_hex`). Founder runs migration; verifies
-   probes 5-8.
-3. **PR 2b — Admin surfaces**. Founder verifies probes
-   9-13.
-4. **PR 2c — Operator portal**. Founder verifies probes
-   14-19.
-5. **PR 2d — Notifications** (Resend + WhatsApp wiring).
-   Founder verifies probes 20-22.
-6. **PR 2e — Cron + canary readout**. Founder verifies
-   probes 23-26. Phase 8 is closed.
-
-After Phase 8 closure, the canary window begins. The
-retire-legacy plan in §8 is operational, not Phase-8
-PR-bound.
-
----
-
-**End of Phase 8 spec.** Codex reviews this document
-before any code is written. Iteration history below.
-
----
-
-## Codex iteration 1 — findings (resolved in iteration 2)
-
-| # | Finding | Resolution |
-|:-:|---|---|
-| P1 #1 | "Spec reverses the agreed auth provider — we settled on Supabase Auth" | Recorded as a Codex-vs-founder mismatch: the founder's confirmed pre-spec choice is **Custom + bcrypt** (option ج in the 3-way decision thread). §1 row 1 reworded to call out the founder confirmation explicitly + the Codex round-1 audit annotation. No architecture change. |
-| P1 #2 | "Bcrypt login flow cannot work by hashing plaintext again" | Real bug. `operator_login` was redesigned as a 2-step flow: `operator_login_lookup(email)` returns the stored hash + status; the Server Action runs `bcrypt.compare(plaintext, storedHash)` in Node; on success it calls `operator_login_create_session(operator_id, session_token_hash, ...)`. The RPC boundary now never touches plaintext OR a freshly-hashed proof. §4.1 inventory row 2 updated; §4.2 body rewritten with the round-1 P1 #2 background block. |
-| P1 #3 | "Notification alert-status table has no PR1 owner" | Real gap. PR 1 §3.10 added `operator_notification_alert_status` singleton table + seed row + RLS posture. Probe count for PR 1 grew from 4 to 5 (added probe 4a). §5 sanity-check query updated to include the new table + a singleton seed verification. §10 acceptance #5 reworded to mention 6 tables + the seed row. §11 probe index gained probe 4a. |
-| P2 #1 | "PR 1 says five new tables but probes reference document storage policy" | Probe slot 4 in the round-0 draft was titled "Document storage policy" but PR 1's body never created the Supabase Storage bucket. Resolution: the storage bucket is operational (admin creates it via Supabase Dashboard before the first document upload — covered in PR 2b's pre-deploy operational checklist), not migration-bound. Probe slot 4 is retired in §11; probe 4a (alert-status seed) replaces the slot's intent. |
-
-## Codex iteration 2 — findings (resolved in iteration 3)
-
-| # | Finding | Resolution |
-|:-:|---|---|
-| P1 #1 | "Auth email is promised but not owned by schema/login flow" | Real gap — round 1's resolution to open-question §13.4 promised an `auth_email TEXT NOT NULL UNIQUE` column without actually adding it. Round 2 added the column to PR 1 §3.3 (nullable + unique partial index on `LOWER(auth_email)`), updated `operator_signup` to seed both `auth_email` AND `contact_email` at signup, and rewrote `operator_login_lookup` + `mint_operator_password_reset_token` to look up by `auth_email`. Open question §13.4 marked RESOLVED. |
-| P1 #2 | "Login split leaves function counts and probes stale" | Real cascade. Round 1's `operator_login` → 2-step split was applied to §4.2 but not to §4.1 inventory count, §10 acceptance #7 + #11, or §11 Founder Probe 5/7. Round 2 reworked §4.1 to enumerate each function on its own row (16 publics + the previously-mislabeled `consume_operator_welcome_token` reclassified from "stub" to public #17 = **17 publics + 1 helper**), §10 acceptance #7 + #11 updated, §11 Probe 5 enumerates all 17 by name, §11 Probe 7 walks the 2-step contract step-by-step. |
-| P1 #3 | "Bcrypt dependency has no PR owner" | Real gap. Round 1's `lib/operators/password.ts` reference assumed `bcryptjs` was available but the current `package.json` (verified against `6468dfb` main) has no bcrypt-family dependency. Round 2 added `package.json` + `package-lock.json` to PR 2c's "Files (Edit)" with `"bcryptjs": "^2.4.3"` + `"@types/bcryptjs": "^2.4.6"`. The choice of `bcryptjs` over `bcrypt` is intentional (pure JS, Vercel cold-start safe). |
-| P2 #1 | "PR 1 types bullet still says five tables" | After round 1's P1 #3 added `operator_notification_alert_status`, the types-extend bullet still mentioned 5 tables. Round 2 reworded to enumerate all 6 tables explicitly + the 14 new `operators` columns (including `auth_email` from P1 #1). |
-
-## Codex iteration 3 — findings (resolved in iteration 4)
-
-| # | Finding | Resolution |
-|:-:|---|---|
-| P1 #1 | "Auth-email invariant is still not enforced" | Round 2 added `auth_email` as a nullable column with a partial unique index, leaving the invariant unenforced. Round 3 closes it: §3.3 migration now does ADD COLUMN → UPDATE backfill from `contact_email` → `ALTER COLUMN SET NOT NULL`, and the unique index drops the WHERE clause. Probe 4 (audit-trigger smoke), Probe 6 (approve), and Probe 7 (login) fixtures now seed `auth_email` explicitly so the NOT NULL constraint never blocks a probe. Probe 7 also tightens the `password_hash` requirement: it MUST be a real bcrypt-of-known-plaintext (not a placeholder) because step 3 verifies against it. |
-| P2 #1 | "PR 2a file fence still says 15 publics" | The §4.1 inventory + §11 Probe 5 already said 17 publics after round 2. The PR 2a Files (Edit) bullet still said 15 — round 3 updated it to 17 + cross-references the §4.1 inventory by name. |
-| P2 #2 | "Implementation order still says 15-public RPC layer" | §14 step 2 said "15 publics + 1 helper". Round 3 updated to 17 + the round-3 P2 #2 audit annotation. The handoff checklist + §11 Probe 5 + §10 acceptance #7 are now all consistent at 17. |
-
-## Codex iteration 4 — findings (resolved in iteration 5)
-
-| # | Finding | Resolution |
-|:-:|---|---|
-| P1 #1 | "Signup validates but ignores contact_email" | Real bug. `operator_signup` validated `p_contact_email` in step 5 but the INSERT in step 6 set `contact_email=p_email`, silently discarding the explicitly-submitted operational contact email even when the operator entered a different value. The §0 objective says signup submits `company_name + contact_email + contact_phone`, so the contact email is a first-class parameter and must be persisted. Round 4 changed the INSERT to `contact_email=p_contact_email` and rewrote the narrative to clarify `auth_email` is the immutable login identifier (entered into the login form) while `contact_email` is the operational contact submitted alongside `company_name` — they can match if the operator reused the login email but they are seeded from separate RPC parameters. |
-| P2 #1 | "Probe 1 still says 13 new columns" | After round 2 added `auth_email` (taking §3.3 from 13 to 14 columns) and round 3 enforced NOT NULL, Probe 1 still said 13 columns and did not assert the NOT NULL invariant. Round 4 updated Probe 1 to "14 new columns" + added an explicit `auth_email NOT NULL` check based on the `\d+ operators` modifier column. §10 acceptance #3 (Schema, PR 1) was carrying the same stale "13 new columns" wording and was updated 13→14 in the same pass to keep all column-count references consistent across the spec. |
-| P2 #2 | "Implementation order omits Probe 4a" | §14 step 1 said the founder "verifies probes 1-4" but PR 1 actually ships 5 probes after round 1 added 4a for the alert-status singleton seed. Round 4 changed the wording to "probes 1, 2, 3, 4, and 4a" so the handoff checklist matches §3 founder probes. |
-
-## Codex iteration 5 — findings (resolved in iteration 6)
-
-| # | Finding | Resolution |
-|:-:|---|---|
-| P2 #1 | "Auth/contact email prose still says same value" | Round 4 fixed the operative `operator_signup` body to persist `contact_email=p_contact_email`, but two prose locations still asserted that the signup form writes the same email to both columns: (a) §3.3 schema prose immediately after the `auth_email` migration block, and (b) §13.4 RESOLVED email-change-flow note. Both contradicted the round-4 RPC contract. Round 5 reworded both spots per Codex's prescription: signup may seed `auth_email` and `contact_email` with different values; `auth_email` is the immutable login identity, `contact_email` is the mutable operational contact. The round-5 note in §13.4 chains forward to the round-2 + round-3 audit annotations so the resolution history stays traceable. |
-
-## Codex iteration 6 — implementation reality patches (PR 1)
-
-Codex round 6 (post-100/100 acceptance) discovered during PR 1
-implementation that §2 "Schema reality" misdescribed three
-columns of the production `operators` table. The findings below
-were caught while writing the migration; PR 1 ships **both** the
-migration AND these spec patches in a single commit so Codex's
-re-review of PR 1 sees an internally consistent spec + code pair.
-
-| # | Discovery | Resolution |
-|:-:|---|---|
-| P0 (would have failed at deploy) | "operators.status is the operator_status PostgreSQL ENUM, not TEXT + CHECK" | Verified against `20260422000001_initial_schema.sql:19,161`. The spec §3.4 DROP/ADD CONSTRAINT pattern would have been a no-op (no CHECK existed to drop) AND would have added a CHECK that PostgreSQL accepts but cannot enforce on an ENUM column, AND `'rejected'` would never have been admissible because the ENUM type itself only had 3 values. Round-6 patch: §3.4 rewritten to use `ALTER TYPE operator_status ADD VALUE IF NOT EXISTS 'rejected'` followed by `RENAME COLUMN status TO signup_status`. The ENUM is preserved (NOT converted to TEXT) — type-safety of a real ENUM beats spec-text uniformity, and the migration is simpler. §3.12 sanity check #4 + §3 founder Probe 1 + §10 acceptance #4 all updated to assert ENUM range rather than CHECK constraint. |
-| P1 (silent column duplication) | "approved_at and rejection_reason already exist in initial schema" | Verified at `20260422000001_initial_schema.sql:162,164`. The spec §3.3 listed both as part of "14 new columns" but `ADD COLUMN IF NOT EXISTS` would have silently no-op'd them while leaving the column count rhetoric in §3.3 / §10 / §3 founder probes saying "14". Round-6 patch: §3.3 trimmed from 14 to 12 columns + the two pre-existing columns documented as "REUSED, no add". PR 2a's admin-approve / admin-reject RPCs (specced in §4.2) write to the existing `approved_at` and `rejection_reason` rather than creating new fresh columns — preserves any Phase 1-era data and avoids duplicate-column ambiguity. §3 founder Probe 1 + §10 acceptance #3 + Files-in-PR-1 entry all updated to "12 new + 2 reused". |
-| P2 (cosmetic spec drift) | "commercial_registration / gaca_license are VARCHAR, not TEXT" | Verified at `20260422000001_initial_schema.sql:146,148`. Both columns were described in §2 as `TEXT NOT NULL`; production has `VARCHAR(50)` and `VARCHAR(100)` respectively. The §3.2 `DROP NOT NULL` works identically on either type, so this is purely a documentation accuracy fix, not a code change. Round-6 patch: §2 schema-reality block now lists the actual VARCHAR types + the other ~10 columns the rounds 0-5 §2 block omitted (`vat_number`, `bank_iban`, `documents_urls`, `commission_rate`, `rating`, `total_trips`, `response_time_avg`, `base_airport`, `operating_airports`, `company_name_ar`, `approved_by`). This makes the §2 block match `\d+ operators` in production. |
-
-## Codex round 1 on PR 1 — findings (resolved in round 2)
-
-| # | Finding | Resolution |
-|:-:|---|---|
-| P1 #1 | "Column rename is not replayable" | The migration header in §3 promises every statement is replayable, but `ALTER TABLE operators RENAME COLUMN status TO signup_status` was unconditional. After the first successful run a re-apply (staging restore, disaster recovery, snapshot replay) would raise `column "status" does not exist`. Round 2 wraps the RENAME in a `DO $$ ... $$` block that checks `information_schema.columns` for both `status` (must exist) AND `signup_status` (must NOT exist) before renaming. The block is a no-op on every subsequent re-apply. Same idempotency posture as the rest of the migration's `IF NOT EXISTS` / `IF EXISTS` guards. §3.4 spec block + the migration file both updated in lockstep. |
-| P2 #1 | "Index rename comment is inaccurate" | The §3.4 prose (and a comment in the migration file) claimed PostgreSQL "automatically renames `idx_operators_status` to `idx_operators_signup_status`" when the column is renamed. This is wrong: PostgreSQL updates the index's stored definition + catalog dependencies so it keeps indexing the renamed column, but the index object itself retains its old name. Round 2 corrects the wording AND adds an explicit `ALTER INDEX ... RENAME TO ...` inside a guarded `DO` block (same idempotency pattern as the column rename) so the catalog name matches the column name post-migration. §3.4 spec block + the migration file both updated. |
+Estimated: ~3,500 net-new lines + ~800 modified lines
+across 4 PRs. Within range of Phase 8 (~5,000 net-new).
