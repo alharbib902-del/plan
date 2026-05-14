@@ -45,6 +45,10 @@
     {
       "path": "/api/cron/client/signup-attempts",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/client/redispatch-stale",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

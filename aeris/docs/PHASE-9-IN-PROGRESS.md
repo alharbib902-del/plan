@@ -8,22 +8,23 @@
 
 ---
 
-## 📍 Current state (last updated: PR 3 round 0 — initial commit ready for review)
+## 📍 Current state (last updated: PR 3 merged → PR 4 starting)
 
 | Field | Value |
 |---|---|
-| **Active PR** | [#57 — Phase 9 PR 3 Client portal](https://github.com/alharbib902-del/plan/pull/57) |
-| **Branch** | `feature/phase-9-pr-3-client-portal` |
-| **Code HEAD** | `d87f435` (Codex round 1 P2 fix — UUID guard on detail-page query helpers) |
-| **Status** | ⏳ Awaiting Codex round 2 review |
-| **Last action** | Round 1 fix pushed: `isUuid` short-circuit in `getTripRequestForClient` + `getBookingForClient` |
-| **Next action** | Codex round 2 review → iterate or merge |
+| **Active PR** | [#58 — Phase 9 PR 4 Auto-distribution engine](https://github.com/alharbib902-del/plan/pull/58) |
+| **Branch** | `feature/phase-9-pr-4-auto-distribution` |
+| **Code HEAD** | `ace150a` (Codex round 3 fixes — 1 P1 + 2 P2) |
+| **Status** | ⏳ Awaiting Codex round 4 review |
+| **Last action** | Round 3 fixes pushed: dropped Phase B log-row exclusion (was re-stranding) + endpoint honours flag too + contract comment updated to NUMERIC |
+| **Next action** | Codex round 4 review → iterate or merge |
 
-### PR 1 + PR 2 production activation (founder, can run in parallel with PR 3 dev)
+### PR 1 + 2 + 3 production activation (founder, can run in parallel with PR 4 dev)
 
 1. Apply migrations in order in Supabase:
    - `20260520000026_phase_9_pr_1_client_auth.sql`
    - `20260521000027_phase_9_pr_2_create_authenticated_trip_request.sql`
+   - (PR 3 ships no migration)
 2. Set Vercel env vars (Production + Preview):
    - `ENABLE_CLIENT_PORTAL=true`
    - `CLIENT_PASSWORD_RESET_TOKEN_SECRET=<openssl rand -hex 32>`
@@ -31,6 +32,7 @@
 4. Run probes per Phase 9 spec §6:
    - 9 PR 1 probes (1, 2, 3, 3-shape, 4, 4-canary, 5, 6, 7)
    - 3 PR 2 probes (8, 9, 10)
+   - 4 PR 3 probes (11, 12, 13, 14)
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -58,8 +60,8 @@
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
-| **PR 3** | [#57](https://github.com/alharbib902-del/plan/pull/57) | 🟡 OPEN | `d87f435` | Client portal — 20 files, 20 new tests, 5 components |
-| PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
+| PR 3 | [#57](https://github.com/alharbib902-del/plan/pull/57) | ✅ MERGED | `05f5713` | Client portal — 2 Codex rounds, 1 P2 closed (fastest in Phase 9) |
+| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `ace150a` | Auto-distribution — 7 files, 7 tests, 3 RPCs + endpoint + 2-phase cron |
 
 ---
 
@@ -264,73 +266,201 @@ rounds that MUST be applied:
     pass). Collapse malformed inputs into `null` at the
     helper boundary so the page's existing not-found UX
     handles the case.
+20. **Cron RPCs use `record_operator_cron_tick`, NEVER a
+    direct INSERT against `operator_cron_tick_history`**
+    (Codex round 1 PR #58 P1 #1). The table is append-only
+    with `ran_at`/`deleted_count`/`success`/`error_label`
+    and has NO UNIQUE constraint on `job_name`, so a
+    direct INSERT with `last_tick_at` + `ON CONFLICT
+    (job_name)` (the wrong shape) fails the very first
+    cron tick AND rolls back any work the RPC did before
+    that line. Always go through the helper.
+21. **CHECK extensions on shared constraints MUST restate
+    the EXACT existing list** (Codex round 1 PR #58 P1
+    #2). Each PR that touches `operator_cron_tick_history_job_name_check`
+    drops + re-adds the constraint with the full allowed
+    set. Restating from memory is dangerous — any drift
+    (`_otp_tokens` vs the real `_otp_codes`,
+    `cleanup_old_operator_signup_attempts` vs
+    `cleanup_old_signup_attempts`) either fails on
+    production rows or silently breaks future cron writes.
+    Pull the exact list from the most-recent prior PR
+    before adding.
+22. **Fire-and-forget call sites MUST have a paired
+    cron-drain replay path** (Codex round 1 PR #58 P1 #3).
+    PR 2's `fireAndForgetTripDispatch` will silently fail
+    on POST timeout / non-2xx / missing CRON_SECRET, so
+    PR 4's redispatch cron grew a "Phase B" scan that
+    drains trips with `status='pending'` AND
+    `current_dispatch_round_id IS NULL` AND `created_at <
+    NOW() - INTERVAL '<stale_hours> hours'` AND no
+    existing log row. Pattern: any time you ship a
+    fire-and-forget call, ship the matching drain in the
+    same PR or document it as an open item.
+23. **Cron thresholds MUST be RPC arguments, not
+    hard-coded `INTERVAL '… hours'` literals** (Codex
+    round 1 PR #58 P2 #4). Probes that lower the threshold
+    for a fast production smoke + future tuning both need
+    a knob. Pattern: `RPC(p_threshold_hours NUMERIC
+    DEFAULT N)` + cron route reads `*_HOURS` env (default N,
+    parsed as `parseFloat` not `parseInt` so fractional
+    values like `0.01` survive — Codex round 2 PR #58 P2 #4
+    fix) + passes through. SQL cutoff via
+    `(value::TEXT || ' hours')::INTERVAL` so fractional
+    NUMERIC flows correctly. Document the env in
+    `.env.example` with the probe rationale.
+24. **Kill-switch flags MUST cover EVERY entry point, not
+    just the originating Server Action** (Codex round 2
+    PR #58 P1 #1). PR 4's `ENABLE_TRIP_AUTO_DISTRIBUTION`
+    initially gated only the create-trip fire-and-forget
+    POST; the redispatch cron called the dispatcher
+    unconditionally so trips left pending while the flag
+    was intentionally off would still get auto-dispatched
+    after the stale threshold. Audit every code path that
+    can reach the gated function: Server Actions, cron
+    routes, internal endpoints, admin force-actions. When
+    the flag is off, cron routes record a
+    `success=true / error_label='skipped:flag_disabled'`
+    tick and exit without touching state — never silently
+    skip the tick recording (the canary needs to see the
+    cron is alive even when intentionally off).
+25. **Fire-and-forget drains MUST scope by the originating
+    surface, not "every old row that looks pending"**
+    (Codex round 2 PR #58 P1 #2). PR 4's Phase B
+    initially scanned every `status='pending'` trip with
+    no log row, sweeping legacy guest leads + admin
+    manual queue items into the auto-dispatcher. The fix
+    is two ANDed filters: `client_id IS NOT NULL`
+    (excludes Phase 4 lead-promoted trips) AND
+    `customer_source = 'client_portal'` (the precise PR 2
+    RPC write signature; lead-promoted trips are
+    `customer_source='lead'`, admin direct inserts default
+    to either). Pattern: any drain pickling rows by status
+    alone needs an explicit "this row was created via the
+    surface I'm draining" filter — usually the same
+    `customer_source` / origin discriminator the original
+    write used.
+26. **State-cleanup transactions that fence in a retry
+    MUST roll back to a re-pickable state on retry
+    failure** (Codex round 2 PR #58 P1 #3). PR 4 Phase A
+    closed the stale round + NULLed
+    `current_dispatch_round_id` BEFORE retrying
+    auto-dispatch. If the retry returned
+    `insufficient_unique_operators` /
+    `no_eligible_operators` / `open_round_failed`, the
+    trip stayed in `'distributed'/'offered'` with no
+    active round — outside both Phase A (no open round to
+    match) and Phase B (status filter excludes it) — and
+    was lost forever. Fix: on any non-ok retry result OR
+    exception, `UPDATE trip_requests SET status='pending'`
+    so the next cron tick re-picks it via Phase B AND
+    admin DispatchPanelV2 surfaces it. The state-cleanup
+    writes remain correct (the old round was genuinely
+    closed); restoring `pending` just keeps the trip in
+    play.
+27. **"Defensive against future code paths" filters can
+    create the very stranding bug they were meant to
+    prevent** (Codex round 3 PR #58 P1 #1). PR 4 Phase B
+    initially excluded any trip with an existing
+    `trip_distribution_log` row, "in case" some future
+    code path wrote logs out-of-order vs. the trip status
+    flip. But every Phase A failure-recovery row HAS a
+    prior log row by construction, so the defensive
+    filter silently re-stranded exactly the trips the
+    recovery was trying to save. Lesson: when adding a
+    "defensive" filter, model the actual call paths that
+    can flip a row INTO the queue you're scanning —
+    including recovery paths that just landed in a prior
+    convention. If the defensive filter would exclude a
+    legitimate recovered row, it is a stranding bug
+    waiting to happen, not defence.
 
 ---
 
 ## ▶️ Resume instructions
 
-### If you're resuming PR 3 mid-flight
+### If you're resuming PR 4 mid-flight
 
-1. `git checkout feature/phase-9-pr-3-client-portal`
-2. Read Phase 9 spec §5 PR 3 inventory (below) plus the
-   spec round 4 P1 #2 single-conditional-UPDATE pattern for
-   `clientDeclineOffer`.
+1. `git checkout feature/phase-9-pr-4-auto-distribution`
+2. Read Phase 9 spec §3.8 (`trip_distribution_log`),
+   §3.9 (CHECK extension), §4.3 (RPCs), §5 PR 4 (full
+   inventory). Critical guards documented in conventions
+   #14–#19 above.
 3. Continue from the open todo (`git status` to see what's
    staged); validate (type-check + lint + new test) before
    each push.
 
-### PR 3 inventory (Phase 9 spec §5)
+### PR 4 inventory (Phase 9 spec §5 — the largest PR)
 
-- **No migration** (reuses existing tables — `trip_requests`,
-  `phase4_operator_offers`, `phase5_operator_offers`,
-  `bookings`, `accept_offer` RPC).
-- **4 pages** under `app/(client)/me/`:
-  - `requests/page.tsx` — list with status chips +
-    `?status=` filter (`all|pending|distributed|offered|
-    booked|cancelled`)
-  - `requests/[id]/page.tsx` — detail (metadata + status
-    timeline + offers via `UnifiedOfferCard` + accept /
-    decline / cancel-trip buttons)
-  - `bookings/page.tsx` — read-only list (status='booked'
-    trips)
-  - `bookings/[id]/page.tsx` — booking detail (operator
-    snapshot, route, add-ons)
-- **2 NEW Server Actions** (extend
-  `app/actions/clients-trip-requests.ts`):
-  - `clientAcceptOffer` — pre-SELECT trip ownership +
-    `accept_offer(source, offer_id)` RPC + revalidate
-  - `clientDeclineOffer` — single conditional UPDATE on
-    `phase4_operator_offers` OR `phase5_operator_offers`
-    with three guards ANDed in the WHERE clause (Codex
-    round 4 P1 #2 fix on spec): trip ownership, offer
-    `status='pending'`, parent trip `status IN
-    ('distributed','offered')`. Zero rows → opaque
-    `decline_not_allowed`.
-- **`cancelMyTripRequest`** already shipped in PR 2 — PR 3
-  just adds the UI button on the request detail page.
-- **Components** (~10):
-  - reuse `UnifiedOfferCard` (existing) for offer rendering
-  - new `requests-table.tsx`, `request-detail.tsx`,
-    `bookings-table.tsx`, `booking-detail.tsx`,
-    `accept-offer-button.tsx`, `decline-offer-button.tsx`,
-    `cancel-trip-button.tsx`
-- **Validators** extended in `lib/validators/clients.ts`:
-  `acceptOfferSchema` (offer_id UUID + source enum),
-  `declineOfferSchema` (same)
-- **i18n** entries added to `clientsAr`: status chip labels,
-  table headers, action labels, `decline_not_allowed` /
-  `accept_failed` error contracts
-- **1 test suite** for the new validators
+- **1 migration**
+  `20260522000028_phase_9_pr_4_auto_distribution.sql`:
+  - **§3.8** `trip_distribution_log` table (one row per
+    `(trip × round × operator)` triple; uniqueness via
+    `dispatch_target_id` per Codex round 3 P1 #2 fix)
+  - **§3.9** extend
+    `operator_cron_tick_history_job_name_check` with the
+    4th client-cleanup name `redispatch_stale_trip_requests`
+  - **§4.3** two SECURITY DEFINER RPCs
+    (`score_operators_for_trip`, `auto_dispatch_trip_request`)
+    + cleanup RPC (`redispatch_stale_trip_requests`)
+- **`score_operators_for_trip(p_trip_request_id) → JSON`**:
+  pure read; returns top-5 `[{operator_id, score, rank,
+  contact_phone, …}]`. **Eligibility filter** (Codex round 3
+  P1 #1): `WHERE signup_status = 'approved' AND
+  contact_phone IS NOT NULL AND TRIM(contact_phone) <> ''`.
+  Score formula: rating 40 / response time 30 / price 20 /
+  location 10 (per CLAUDE.md "Trip Distribution Engine").
+- **`auto_dispatch_trip_request(p_trip_request_id) → JSON`**:
+  scoring → **phone dedupe** (Codex round 4 P2 #2: normalise
+  + group by phone; keep highest-ranked; re-rank 1..N) →
+  open Phase 5 dispatch round (existing
+  `open_phase5_dispatch_round` reused) → INSERT
+  `trip_distribution_log` rows → set
+  `trip_requests.current_dispatch_round_id` → returns
+  `{ok, dispatched_count, round_id, targets:[…]}`. Min
+  fanout `PHASE_9_MIN_DISPATCH_FANOUT=2` (env, default 2);
+  below → `{ok:false, error:'insufficient_unique_operators',
+  dispatched_count:0}` + `console.error` only (no parallel
+  audit table per Codex round 6 P2 #1).
+- **`redispatch_stale_trip_requests`**: cron RPC scanning
+  for trips that landed in `pending` more than N hours ago
+  with no current_dispatch_round_id; calls
+  `auto_dispatch_trip_request` for each. Records tick in
+  `operator_cron_tick_history`.
+- **`/api/trip-distribution/internal/dispatch` endpoint**
+  (`app/api/trip-distribution/internal/dispatch/route.ts`):
+  POST receiver for the PR 2 fire-and-forget helper. Auth
+  via `Authorization: Bearer ${CRON_SECRET}`. Body
+  `{trip_request_id, event}`. Calls
+  `auto_dispatch_trip_request` synchronously; success
+  logs structured row.
+- **Cron route**
+  `app/api/cron/client/redispatch-stale/route.ts` (every
+  6h via vercel.json). Wraps the cron RPC.
+- **Admin canary extension**: 5th `<ChannelHealth>` card
+  for the trip-distribution channel (Phase 8 PR 2e
+  pattern).
+- **Tests**: 1+ test suite (likely Jest tsx for the
+  scoring formula in TS mirror — pure function easy to
+  pin).
+- **6 founder probes (15–20)** per Phase 9 spec §6:
+  - 15: scoring excludes unapproved operators
+  - 16: dispatch fan-out happy path
+  - 17: phone dedupe collapses correctly
+  - 18: insufficient_unique_operators decline
+  - 19: redispatch cron idempotency
+  - 20: trip_distribution_log uniqueness on
+    `dispatch_target_id`
 
-### When PR 3 reaches Codex 100/100
+### When PR 4 reaches Codex 100/100
 
-1. Merge PR 3 (squash + delete branch)
+1. Merge PR 4 (squash + delete branch)
 2. Sync main locally
-3. Update this file: PR 3 row → ✅ MERGED + merge sha
-4. Set Active PR row to PR 4
-5. Begin PR 4 (auto-distribution engine — `score_operators_for_trip`,
-   `auto_dispatch_trip_request`, `/api/trip-distribution/internal/dispatch`,
-   PR 4 cron drains, per Phase 9 spec §5)
+3. Update this file: PR 4 row → ✅ MERGED + merge sha
+4. Phase 9 is then **CODE COMPLETE**. Founder runs final
+   activation (apply PR 4 migration + flip
+   `ENABLE_TRIP_AUTO_DISTRIBUTION=true` after probes 16+17
+   pass) + 22-probe sweep, then closes Phase 9.
 
 ---
 
@@ -397,15 +527,14 @@ Open items:
 - **PR 1 production activation pending** — see "PR 1
   production activation" panel at the top. Founder action
   out of band; doesn't block PR 2 review.
-- **PR 1 + PR 2 production activation pending** — see
+- **PR 1 + 2 + 3 production activation pending** — see
   panel at the top of this doc. Founder action out of band;
-  doesn't block PR 3 review.
-- **PR 3 — Code HEAD `d87f435` after Codex round 1
-  (1 P2 closed)**. Awaiting Codex round 2. Validation green:
-  TS clean, ESLint 0, 68 tests pass (10 reset-token +
-  6 auth-session + 10 email-normalize + 16 trip-request-
-  validators + 6 datetime-local + 10 offer-action-validators
-  + 10 uuid).
+  doesn't block PR 4 development.
+- **PR 4 — IN ACTIVE DEVELOPMENT**, branch
+  `feature/phase-9-pr-4-auto-distribution`. No code
+  committed yet at this update. The largest PR in Phase 9
+  (~800 lines spread across migration + 2 RPCs + endpoint +
+  cron + canary).
 - **Follow-up cleanup migration (lighter scope after PR 2
   round 3)**: post-Phase 9 activation, run `ALTER TABLE …
   VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
