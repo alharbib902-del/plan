@@ -24,8 +24,14 @@ import { resolveSiteUrl } from '@/lib/checkout/site-url';
  *
  * On missing `CRON_SECRET`, the helper logs a structured
  * warning + returns without firing, matching the empty-legs
- * pattern. PR 4 will own the cron drain that replays missed
- * trips when this fires path is degraded.
+ * pattern. PR 4's `redispatch_stale_trip_requests` cron
+ * now owns the replay path for missed initial dispatches —
+ * its Phase B scan drains trips with `status='pending'` +
+ * no `current_dispatch_round_id` whose `created_at` is
+ * older than `TRIP_REDISPATCH_STALE_HOURS` (default 4h).
+ * So a single failed POST here is recovered by the next
+ * cron tick rather than stranding the trip forever (Codex
+ * round 1 PR #58 P1 #3 fix).
  */
 
 export function fireAndForgetTripDispatch(tripRequestId: string): void {

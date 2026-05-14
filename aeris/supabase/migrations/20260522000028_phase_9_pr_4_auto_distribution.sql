@@ -127,6 +127,17 @@ COMMENT ON TABLE trip_distribution_log IS
 -- PR 1 §3.9 already added the 3 client-cleanup names. PR 4
 -- adds the 4th: redispatch_stale_trip_requests.
 
+-- Codex round 1 PR #58 P1 #2 fix — restate the FULL allowed
+-- list using the EXACT existing names from Phase 8 PR 2e
+-- §3.10 (`cleanup_expired_otp_codes`, `cleanup_old_signup_attempts`
+-- — NOT `_otp_tokens` / `cleanup_old_operator_signup_attempts`)
+-- + the 3 client-side names PR 1 added, then APPEND the new
+-- PR 4 entry. A drift here either (a) fails on production
+-- rows that already use the real Phase 8 names, or (b) lands
+-- successfully on an empty table and silently breaks every
+-- subsequent Phase 8 cron tick. Each PR restates the full
+-- list so a partial DR replay self-contains.
+
 ALTER TABLE operator_cron_tick_history
   DROP CONSTRAINT IF EXISTS operator_cron_tick_history_job_name_check;
 
@@ -134,11 +145,11 @@ ALTER TABLE operator_cron_tick_history
   ADD CONSTRAINT operator_cron_tick_history_job_name_check
   CHECK (job_name IN (
     -- Phase 8 PR 2e jobs (existing on production)
-    'cleanup_expired_otp_tokens',
-    'cleanup_expired_password_reset_tokens',
     'cleanup_expired_operator_sessions',
-    'cleanup_old_operator_signup_attempts',
-    -- Phase 9 PR 1 (already on production after PR 1 activation)
+    'cleanup_expired_password_reset_tokens',
+    'cleanup_expired_otp_codes',
+    'cleanup_old_signup_attempts',
+    -- Phase 9 PR 1 jobs (extended in PR 1 §3.9)
     'cleanup_expired_client_sessions',
     'cleanup_expired_client_password_reset_tokens',
     'cleanup_old_client_signup_attempts',
@@ -475,27 +486,64 @@ $$;
 -- §6 — redispatch_stale_trip_requests
 -- ============================================================
 --
--- Cron-driven. Finds trips dispatched > 4 hours ago whose
--- current dispatch round received zero offers, runs the full
--- state-cleanup contract per Codex spec round 3 P2 #2:
---   1. cancel still-pending targets in the stale round
---   2. close the stale round with closed_reason='stale_timeout'
---   3. NULL trip_requests.current_dispatch_round_id so the
---      trip is re-pickable
--- Then re-attempts auto_dispatch_trip_request for each.
+-- Cron-driven. Two scan phases (Codex round 1 PR #58 P1 #3
+-- fix — pending-trip drain) covering both failure modes of
+-- the auto-dispatch pipeline:
+--
+--   Phase A — STALE-ROUND CLEANUP (existing behaviour).
+--     Trips with status IN ('distributed','offered') whose
+--     current dispatch round has been open > p_stale_hours
+--     and received zero phase5_operator_offers. Runs the
+--     full state-cleanup contract per Codex spec round 3
+--     P2 #2:
+--       1. cancel still-pending targets in the stale round
+--       2. close the stale round with
+--          closed_reason='stale_timeout'
+--       3. NULL trip_requests.current_dispatch_round_id so
+--          the trip is re-pickable.
+--     Then re-attempts auto_dispatch_trip_request.
+--
+--   Phase B — PENDING-TRIP DRAIN (NEW).
+--     Trips with status='pending' AND
+--     current_dispatch_round_id IS NULL AND created_at <
+--     NOW() - p_stale_hours. These are trips whose initial
+--     fire-and-forget POST from the createAuthenticatedTripRequest
+--     Server Action either timed out, returned non-2xx, or
+--     was skipped because CRON_SECRET was missing on that
+--     deploy. Without this drain a single failed initial
+--     POST stranded the trip in 'pending' forever. Phase B
+--     skips the state-cleanup block (no round to close)
+--     and goes straight to auto_dispatch_trip_request.
+--
+-- Both phases share the same retry / dedupe-decline / error
+-- accounting + write a SINGLE history row at the end via
+-- record_operator_cron_tick (Codex round 1 PR #58 P1 #1
+-- fix — operator_cron_tick_history is append-only with
+-- ran_at/deleted_count/success/error_label; the prior code
+-- attempted a non-existent ON CONFLICT (job_name) and would
+-- have rolled back the entire cleanup work on the first
+-- run).
+--
+-- Stale-hours threshold is a parameter (Codex round 1 PR
+-- #58 P2 #4 fix). Default 4 mirrors the prior hardcode; the
+-- cron route reads TRIP_REDISPATCH_STALE_HOURS from env and
+-- passes it through, so probe 18 can lower it for a fast
+-- production smoke without a migration.
 --
 -- Contract:
---   IN  (none)
+--   IN  p_stale_hours INT (default 4)
 --   OUT JSON:
---       { ok: true, scanned, redispatched, declined, errors }
+--       { ok: true, scanned, redispatched, declined, errors,
+--         stale_hours, scanned_stale, scanned_pending }
 --
--- "scanned" = trips matching the staleness predicate.
--- "redispatched" = successful auto_dispatch_trip_request.
--- "declined" = insufficient_unique_operators.
--- "errors" = trip_not_found / open_round_failed / etc.
+-- "scanned" is the union (Phase A + Phase B). The
+-- per-phase counts are returned for observability so the
+-- canary can distinguish "stale-round backlog" from
+-- "missed-initial-dispatch backlog".
 
-CREATE OR REPLACE FUNCTION redispatch_stale_trip_requests()
-  RETURNS JSON
+CREATE OR REPLACE FUNCTION redispatch_stale_trip_requests(
+  p_stale_hours INT DEFAULT 4
+) RETURNS JSON
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = public, pg_temp
@@ -504,11 +552,20 @@ DECLARE
   v_now            TIMESTAMPTZ := NOW();
   v_trip           RECORD;
   v_dispatch_res   JSON;
-  v_scanned        INT := 0;
+  v_stale_hours    INT;
+  v_cutoff         TIMESTAMPTZ;
+  v_scanned_stale  INT := 0;
+  v_scanned_pend   INT := 0;
   v_redispatched   INT := 0;
   v_declined       INT := 0;
   v_errors         INT := 0;
+  v_record_res     JSON;
 BEGIN
+  v_stale_hours := COALESCE(p_stale_hours, 4);
+  IF v_stale_hours < 1 THEN v_stale_hours := 1; END IF;
+  v_cutoff := v_now - make_interval(hours => v_stale_hours);
+
+  -- ===== Phase A: stale-round cleanup =====
   FOR v_trip IN
     SELECT t.id AS trip_id, t.current_dispatch_round_id AS round_id
       FROM trip_requests t
@@ -526,12 +583,12 @@ BEGIN
          SELECT 1 FROM trip_dispatch_rounds r
           WHERE r.id = t.current_dispatch_round_id
             AND r.status = 'open'
-            AND r.opened_at < v_now - INTERVAL '4 hours'
+            AND r.opened_at < v_cutoff
        )
   LOOP
-    v_scanned := v_scanned + 1;
+    v_scanned_stale := v_scanned_stale + 1;
 
-    -- State cleanup (Codex spec round 3 P2 #2):
+    -- State cleanup (Codex spec round 3 P2 #2).
     UPDATE trip_dispatch_targets
        SET status = 'cancelled'
      WHERE dispatch_round_id = v_trip.round_id
@@ -548,7 +605,6 @@ BEGIN
        SET current_dispatch_round_id = NULL
      WHERE id = v_trip.trip_id;
 
-    -- Re-attempt dispatch.
     BEGIN
       v_dispatch_res := auto_dispatch_trip_request(v_trip.trip_id);
       IF (v_dispatch_res->>'ok')::BOOLEAN THEN
@@ -563,23 +619,62 @@ BEGIN
     END;
   END LOOP;
 
-  -- Record the tick for the canary.
-  INSERT INTO operator_cron_tick_history (job_name, last_tick_at, error_label)
-    VALUES ('redispatch_stale_trip_requests', v_now,
-            CASE WHEN v_errors > 0
-                 THEN format('errors=%s scanned=%s', v_errors, v_scanned)
-                 ELSE NULL
-            END)
-    ON CONFLICT (job_name)
-    DO UPDATE SET last_tick_at = EXCLUDED.last_tick_at,
-                  error_label  = EXCLUDED.error_label;
+  -- ===== Phase B: pending-trip drain (Codex round 1 PR
+  -- #58 P1 #3 fix). Catches missed initial-dispatch POSTs.
+  FOR v_trip IN
+    SELECT t.id AS trip_id
+      FROM trip_requests t
+     WHERE t.status = 'pending'
+       AND t.current_dispatch_round_id IS NULL
+       AND t.created_at < v_cutoff
+       -- Never drain a trip that already has any
+       -- distribution-log row (defensive against any future
+       -- code path that writes log rows out-of-order vs. the
+       -- trip status flip).
+       AND NOT EXISTS (
+         SELECT 1 FROM trip_distribution_log l
+          WHERE l.trip_request_id = t.id
+       )
+  LOOP
+    v_scanned_pend := v_scanned_pend + 1;
+
+    BEGIN
+      v_dispatch_res := auto_dispatch_trip_request(v_trip.trip_id);
+      IF (v_dispatch_res->>'ok')::BOOLEAN THEN
+        v_redispatched := v_redispatched + 1;
+      ELSIF v_dispatch_res->>'error' = 'insufficient_unique_operators' THEN
+        v_declined := v_declined + 1;
+      ELSE
+        v_errors := v_errors + 1;
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      v_errors := v_errors + 1;
+    END;
+  END LOOP;
+
+  -- Record a single tick (Codex round 1 PR #58 P1 #1 fix —
+  -- use the existing record_operator_cron_tick helper, not
+  -- a direct INSERT against non-existent columns).
+  v_record_res := record_operator_cron_tick(
+    'redispatch_stale_trip_requests',
+    v_redispatched,
+    (v_errors = 0),
+    CASE WHEN v_errors > 0
+         THEN format('errors=%s scanned_stale=%s scanned_pending=%s',
+                     v_errors, v_scanned_stale, v_scanned_pend)
+         ELSE NULL
+    END
+  );
 
   RETURN json_build_object(
-    'ok', true,
-    'scanned',      v_scanned,
-    'redispatched', v_redispatched,
-    'declined',     v_declined,
-    'errors',       v_errors
+    'ok',              true,
+    'scanned',         v_scanned_stale + v_scanned_pend,
+    'scanned_stale',   v_scanned_stale,
+    'scanned_pending', v_scanned_pend,
+    'redispatched',    v_redispatched,
+    'declined',        v_declined,
+    'errors',          v_errors,
+    'stale_hours',     v_stale_hours
   );
 END;
 $$;
@@ -597,13 +692,13 @@ REVOKE ALL ON FUNCTION auto_dispatch_trip_request(UUID, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION auto_dispatch_trip_request(UUID, INT) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION auto_dispatch_trip_request(UUID, INT) TO service_role;
 
-REVOKE ALL ON FUNCTION redispatch_stale_trip_requests() FROM PUBLIC;
-REVOKE ALL ON FUNCTION redispatch_stale_trip_requests() FROM anon, authenticated;
-GRANT EXECUTE ON FUNCTION redispatch_stale_trip_requests() TO service_role;
+REVOKE ALL ON FUNCTION redispatch_stale_trip_requests(INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION redispatch_stale_trip_requests(INT) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION redispatch_stale_trip_requests(INT) TO service_role;
 
 COMMENT ON FUNCTION score_operators_for_trip(UUID) IS
   'Phase 9 PR 4 §4.3: pure read; top-5 eligible operators for a trip; service_role only.';
 COMMENT ON FUNCTION auto_dispatch_trip_request(UUID, INT) IS
   'Phase 9 PR 4 §4.3: scoring → dedupe → Phase 5 round + log writes; service_role only.';
-COMMENT ON FUNCTION redispatch_stale_trip_requests() IS
-  'Phase 9 PR 4 §4.4: cron RPC; rescues stale 4h+ trips with no offers + records tick.';
+COMMENT ON FUNCTION redispatch_stale_trip_requests(INT) IS
+  'Phase 9 PR 4 §4.4: cron RPC; two phases (stale-round cleanup + pending-trip drain); rescues trips older than p_stale_hours; records tick via record_operator_cron_tick.';
