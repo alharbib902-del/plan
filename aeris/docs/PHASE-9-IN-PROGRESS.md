@@ -14,10 +14,10 @@
 |---|---|
 | **Active PR** | [#57 — Phase 9 PR 3 Client portal](https://github.com/alharbib902-del/plan/pull/57) |
 | **Branch** | `feature/phase-9-pr-3-client-portal` |
-| **Code HEAD** | `62fe8ce` (PR 3 initial — 4 pages + 2 Server Actions + 5 components + 10 tests) |
-| **Status** | ⏳ Awaiting Codex round 1 review |
-| **Last action** | PR #57 opened against `main` |
-| **Next action** | Codex round 1 review → iterate or merge |
+| **Code HEAD** | `d87f435` (Codex round 1 P2 fix — UUID guard on detail-page query helpers) |
+| **Status** | ⏳ Awaiting Codex round 2 review |
+| **Last action** | Round 1 fix pushed: `isUuid` short-circuit in `getTripRequestForClient` + `getBookingForClient` |
+| **Next action** | Codex round 2 review → iterate or merge |
 
 ### PR 1 + PR 2 production activation (founder, can run in parallel with PR 3 dev)
 
@@ -58,7 +58,7 @@
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
-| **PR 3** | [#57](https://github.com/alharbib902-del/plan/pull/57) | 🟡 OPEN | `62fe8ce` | Client portal — 18 files, 10 new tests, 5 components |
+| **PR 3** | [#57](https://github.com/alharbib902-del/plan/pull/57) | 🟡 OPEN | `d87f435` | Client portal — 20 files, 20 new tests, 5 components |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
 ---
@@ -252,6 +252,18 @@ rounds that MUST be applied:
     4. Defer `VALIDATE CONSTRAINT` to cleanup migration.
     The UPDATEs are idempotent (orphan filter no longer
     matches once NULLed) so DR replay is safe.
+19. **Every route param that flows into a Postgres UUID
+    comparison MUST be UUID-shape-checked first** (Codex
+    round 1 PR #57 P2 #1). Without the guard, PostgREST
+    rejects the comparison with 22P02
+    invalid_text_representation, the calling helper throws,
+    and the page renders a 500 instead of the intended
+    not-found / opaque state. The shared helper is
+    `lib/utils/uuid.ts` (`isUuid()` — version-agnostic
+    so both `uuid_generate_v4` and `uuid_generate_v7`
+    pass). Collapse malformed inputs into `null` at the
+    helper boundary so the page's existing not-found UX
+    handles the case.
 
 ---
 
@@ -388,12 +400,12 @@ Open items:
 - **PR 1 + PR 2 production activation pending** — see
   panel at the top of this doc. Founder action out of band;
   doesn't block PR 3 review.
-- **PR 3 — code committed at `62fe8ce`, branch pushed,
-  awaiting `gh pr create` + Codex round 1.** Validation
-  green locally (TS clean, ESLint 0, 58 client tests pass:
-  10 reset-token + 6 auth-session + 10 email-normalize +
-  16 trip-request-validators + 6 datetime-local + 10 offer-
-  action-validators).
+- **PR 3 — Code HEAD `d87f435` after Codex round 1
+  (1 P2 closed)**. Awaiting Codex round 2. Validation green:
+  TS clean, ESLint 0, 68 tests pass (10 reset-token +
+  6 auth-session + 10 email-normalize + 16 trip-request-
+  validators + 6 datetime-local + 10 offer-action-validators
+  + 10 uuid).
 - **Follow-up cleanup migration (lighter scope after PR 2
   round 3)**: post-Phase 9 activation, run `ALTER TABLE …
   VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
