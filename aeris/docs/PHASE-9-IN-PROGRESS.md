@@ -8,16 +8,16 @@
 
 ---
 
-## 📍 Current state (last updated: PR 2 round 3 fix)
+## 📍 Current state (last updated: PR 2 round 4 fix)
 
 | Field | Value |
 |---|---|
 | **Active PR** | [#56 — Phase 9 PR 2 Charter form](https://github.com/alharbib902-del/plan/pull/56) |
 | **Branch** | `feature/phase-9-pr-2-charter-form` |
-| **Code HEAD** | `4e8130a` (Codex round 3 P1 fix — inline backfill before new FKs) |
-| **Status** | ⏳ Awaiting Codex round 4 review |
-| **Last action** | Round 3 fix pushed: inline-backfill orphaned client_id pointers (snapshot from `users` → placeholder → NULL) before adding the new NOT VALID FKs |
-| **Next action** | Codex round 4 review → iterate or merge |
+| **Code HEAD** | `45bced7` (Codex round 4 P1 fix — `LEFT(users.full_name, 120)` truncation in backfill) |
+| **Status** | ⏳ Awaiting Codex round 5 review |
+| **Last action** | Round 4 fix pushed: width-safe backfill (`LEFT(120)` for full_name + `BTRIM`/empty-fallback for phone) on both trip_requests + bookings UPDATEs |
+| **Next action** | Codex round 5 review → iterate or merge |
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
-| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `4e8130a` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
+| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `45bced7` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
@@ -218,7 +218,17 @@ rounds that MUST be applied:
           (`customer_name`/`customer_phone` on
           trip_requests; `customer_name_snapshot`/
           `customer_phone_snapshot` on bookings — yes the
-          column names DIFFER between tables);
+          column names DIFFER between tables). **ALWAYS
+          width-truncate the source via `LEFT(src, n)`** if
+          the source column is wider than the target
+          (`users.full_name` is `VARCHAR(200)` and the
+          snapshots are `VARCHAR(120)` — Codex round 4 PR
+          #56 P1 #1: a 120+ char legitimate name otherwise
+          aborts the migration with `value too long for
+          type character varying(120)`). Pipe phone-like
+          source values through `NULLIF(BTRIM(src), '')` so
+          empty-string rows fall through to the placeholder
+          rather than overwriting the snapshot with a blank;
        b. placeholder-fill (e.g. `'Legacy customer'` /
           `'unknown'`) for orphans whose legacy row is also
           gone, so any identity_check passes after NULL;
@@ -341,11 +351,11 @@ Open items:
 - **PR 1 production activation pending** — see "PR 1
   production activation" panel at the top. Founder action
   out of band; doesn't block PR 2 review.
-- **PR 2 — Code HEAD `4e8130a` after Codex round 3
-  (1 P1 closed)**. Awaiting Codex round 4. Validation green:
+- **PR 2 — Code HEAD `45bced7` after Codex round 4
+  (1 P1 closed)**. Awaiting Codex round 5. Validation green:
   TS clean, ESLint 0, 48 tests pass. Cumulative PR #56:
-  3 rounds, 5 findings closed (2 P1 + 1 P2 in round 1,
-  1 P1 in round 2, 1 P1 in round 3).
+  4 rounds, 6 findings closed (2 P1 + 1 P2 in round 1,
+  1 P1 in round 2, 1 P1 in round 3, 1 P1 in round 4).
 - **Follow-up cleanup migration (lighter scope after round
   3)**: post-Phase 9 activation, run `ALTER TABLE …
   VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
