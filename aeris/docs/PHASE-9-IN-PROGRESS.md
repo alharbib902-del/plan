@@ -14,10 +14,10 @@
 |---|---|
 | **Active PR** | [#58 — Phase 9 PR 4 Auto-distribution engine](https://github.com/alharbib902-del/plan/pull/58) |
 | **Branch** | `feature/phase-9-pr-4-auto-distribution` |
-| **Code HEAD** | `11bf92b` (PR 4 initial — 1 migration + endpoint + cron + 7 tests) |
-| **Status** | ⏳ Awaiting Codex round 1 review |
-| **Last action** | PR #58 opened against `main` |
-| **Next action** | Codex round 1 review → iterate or merge |
+| **Code HEAD** | `83ee2fe` (Codex round 1 fixes — 3 P1 + 1 P2) |
+| **Status** | ⏳ Awaiting Codex round 2 review |
+| **Last action** | Round 1 fixes pushed: cron-history INSERT switched to record_operator_cron_tick + CHECK list restated with exact existing names + redispatch RPC now drains pending trips (Phase B) + p_stale_hours parameterised |
+| **Next action** | Codex round 2 review → iterate or merge |
 
 ### PR 1 + 2 + 3 production activation (founder, can run in parallel with PR 4 dev)
 
@@ -61,7 +61,7 @@
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
 | PR 3 | [#57](https://github.com/alharbib902-del/plan/pull/57) | ✅ MERGED | `05f5713` | Client portal — 2 Codex rounds, 1 P2 closed (fastest in Phase 9) |
-| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `11bf92b` | Auto-distribution — 7 files, 7 new tests, 3 RPCs + endpoint + cron |
+| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `83ee2fe` | Auto-distribution — 7 files, 7 tests, 3 RPCs + endpoint + 2-phase cron |
 
 ---
 
@@ -266,6 +266,45 @@ rounds that MUST be applied:
     pass). Collapse malformed inputs into `null` at the
     helper boundary so the page's existing not-found UX
     handles the case.
+20. **Cron RPCs use `record_operator_cron_tick`, NEVER a
+    direct INSERT against `operator_cron_tick_history`**
+    (Codex round 1 PR #58 P1 #1). The table is append-only
+    with `ran_at`/`deleted_count`/`success`/`error_label`
+    and has NO UNIQUE constraint on `job_name`, so a
+    direct INSERT with `last_tick_at` + `ON CONFLICT
+    (job_name)` (the wrong shape) fails the very first
+    cron tick AND rolls back any work the RPC did before
+    that line. Always go through the helper.
+21. **CHECK extensions on shared constraints MUST restate
+    the EXACT existing list** (Codex round 1 PR #58 P1
+    #2). Each PR that touches `operator_cron_tick_history_job_name_check`
+    drops + re-adds the constraint with the full allowed
+    set. Restating from memory is dangerous — any drift
+    (`_otp_tokens` vs the real `_otp_codes`,
+    `cleanup_old_operator_signup_attempts` vs
+    `cleanup_old_signup_attempts`) either fails on
+    production rows or silently breaks future cron writes.
+    Pull the exact list from the most-recent prior PR
+    before adding.
+22. **Fire-and-forget call sites MUST have a paired
+    cron-drain replay path** (Codex round 1 PR #58 P1 #3).
+    PR 2's `fireAndForgetTripDispatch` will silently fail
+    on POST timeout / non-2xx / missing CRON_SECRET, so
+    PR 4's redispatch cron grew a "Phase B" scan that
+    drains trips with `status='pending'` AND
+    `current_dispatch_round_id IS NULL` AND `created_at <
+    NOW() - INTERVAL '<stale_hours> hours'` AND no
+    existing log row. Pattern: any time you ship a
+    fire-and-forget call, ship the matching drain in the
+    same PR or document it as an open item.
+23. **Cron thresholds MUST be RPC arguments, not
+    hard-coded `INTERVAL '… hours'` literals** (Codex
+    round 1 PR #58 P2 #4). Probes that lower the threshold
+    for a fast production smoke + future tuning both need
+    a knob. Pattern: `RPC(p_threshold_hours INT DEFAULT N)`
+    + cron route reads `*_HOURS` env (default N) + passes
+    through. Document the env in `.env.example` with the
+    probe rationale.
 
 ---
 
