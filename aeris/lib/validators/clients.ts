@@ -257,3 +257,36 @@ export const cancelTripRequestSchema = z.object({
 export type CancelTripRequestInput = z.infer<
   typeof cancelTripRequestSchema
 >;
+
+// ============================================================
+// 9. clientAcceptOffer (Phase 9 PR 3)
+// ============================================================
+//
+// Mirrors the Phase 5/6 unified `accept_offer(p_source, p_offer_id)`
+// RPC contract. The Server Action layer adds an ownership pre-check
+// (the offer's parent trip must be owned by the calling client) on
+// top of this validator.
+
+export const offerSourceSchema = z.enum(['phase4', 'phase5']);
+
+export const acceptOfferSchema = z.object({
+  offer_id: z.string().uuid({
+    message: 'معرّف العرض غير صالح',
+  }),
+  source: offerSourceSchema,
+});
+
+export type AcceptOfferInput = z.infer<typeof acceptOfferSchema>;
+
+// ============================================================
+// 10. clientDeclineOffer (Phase 9 PR 3)
+// ============================================================
+
+export const declineOfferSchema = z.object({
+  offer_id: z.string().uuid({
+    message: 'معرّف العرض غير صالح',
+  }),
+  source: offerSourceSchema,
+});
+
+export type DeclineOfferInput = z.infer<typeof declineOfferSchema>;

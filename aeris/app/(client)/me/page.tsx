@@ -37,6 +37,18 @@ export default function ClientMeLandingPage() {
             {clientsAr.charterTitle}
           </Link>
           <Link
+            href="/me/requests"
+            className="font-ar inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/25"
+          >
+            {clientsAr.meRequestsTitle}
+          </Link>
+          <Link
+            href="/me/bookings"
+            className="font-ar inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/25"
+          >
+            {clientsAr.meBookingsTitle}
+          </Link>
+          <Link
             href="/me/profile"
             className="font-ar inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/25"
           >

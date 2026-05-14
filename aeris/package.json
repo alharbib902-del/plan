@@ -25,7 +25,9 @@
     "test:clients-auth-session": "tsx lib/clients/__tests__/auth-session.test.ts",
     "test:clients-email-normalize": "tsx lib/clients/__tests__/email-normalize.test.ts",
     "test:clients-trip-request-validators": "tsx lib/clients/__tests__/trip-request-validators.test.ts",
+    "test:clients-offer-action-validators": "tsx lib/clients/__tests__/offer-action-validators.test.ts",
     "test:utils-datetime-local": "tsx lib/utils/__tests__/datetime-local.test.ts",
+    "test:utils-uuid": "tsx lib/utils/__tests__/uuid.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"
