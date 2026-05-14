@@ -8,16 +8,16 @@
 
 ---
 
-## 📍 Current state (last updated: PR 2 merged → PR 3 starting)
+## 📍 Current state (last updated: PR 3 round 0 — initial commit ready for review)
 
 | Field | Value |
 |---|---|
-| **Active PR** | PR 3 — Client portal (branch open, not yet pushed) |
+| **Active PR** | PR 3 — Client portal (branch pushed, awaiting PR open) |
 | **Branch** | `feature/phase-9-pr-3-client-portal` |
-| **Code HEAD** | `25f6c52` on `main` (squash-merge of PR #56) |
-| **Status** | 🚧 PR 3 in active development (Server Actions phase next) |
-| **Last action** | PR #56 merged at `25f6c52` after Codex round 5 accepted 100/100 (0 findings) |
-| **Next action** | Build PR 3 per Phase 9 spec §5 (4 pages + 2 new Server Actions, no migration); founder can run PR 1 + PR 2 activation in parallel |
+| **Code HEAD** | `62fe8ce` (PR 3 initial — 4 pages + 2 Server Actions + 5 components + 10 tests) |
+| **Status** | ⏳ Ready to open PR; awaiting Codex round 1 review |
+| **Last action** | PR 3 code commit pushed at `62fe8ce` (18 files, +1773/-8) |
+| **Next action** | Open PR via `gh pr create` → run CI → invite Codex review |
 
 ### PR 1 + PR 2 production activation (founder, can run in parallel with PR 3 dev)
 
@@ -58,7 +58,7 @@
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
-| **PR 3** | — | 🚧 IN DEV | — | Client portal (~600 lines) |
+| **PR 3** | (about to open) | ⏳ READY FOR REVIEW | `62fe8ce` | Client portal — 18 files, 10 new tests, 5 components |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
 ---
@@ -387,10 +387,13 @@ Open items:
   out of band; doesn't block PR 2 review.
 - **PR 1 + PR 2 production activation pending** — see
   panel at the top of this doc. Founder action out of band;
-  doesn't block PR 3 development.
-- **PR 3 — IN ACTIVE DEVELOPMENT**, branch
-  `feature/phase-9-pr-3-client-portal`. No code committed
-  yet at this update.
+  doesn't block PR 3 review.
+- **PR 3 — code committed at `62fe8ce`, branch pushed,
+  awaiting `gh pr create` + Codex round 1.** Validation
+  green locally (TS clean, ESLint 0, 58 client tests pass:
+  10 reset-token + 6 auth-session + 10 email-normalize +
+  16 trip-request-validators + 6 datetime-local + 10 offer-
+  action-validators).
 - **Follow-up cleanup migration (lighter scope after PR 2
   round 3)**: post-Phase 9 activation, run `ALTER TABLE …
   VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
