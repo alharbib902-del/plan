@@ -8,31 +8,42 @@
 
 ---
 
-## 📍 Current state (last updated: PR 3 merged → PR 4 starting)
+## 📍 Current state (last updated: Phase 9 CODE COMPLETE 🎉)
 
 | Field | Value |
 |---|---|
-| **Active PR** | [#58 — Phase 9 PR 4 Auto-distribution engine](https://github.com/alharbib902-del/plan/pull/58) |
-| **Branch** | `feature/phase-9-pr-4-auto-distribution` |
-| **Code HEAD** | `ace150a` (Codex round 3 fixes — 1 P1 + 2 P2) |
-| **Status** | ⏳ Awaiting Codex round 4 review |
-| **Last action** | Round 3 fixes pushed: dropped Phase B log-row exclusion (was re-stranding) + endpoint honours flag too + contract comment updated to NUMERIC |
-| **Next action** | Codex round 4 review → iterate or merge |
+| **Active PR** | — (none; Phase 9 code is fully merged) |
+| **Branch** | `main` (all 4 Phase 9 PRs merged) |
+| **Code HEAD** | `deb449b` on `main` (squash-merge of PR #58) |
+| **Status** | ✅ Phase 9 CODE COMPLETE; awaiting founder activation + 22-probe sweep |
+| **Last action** | PR #58 merged at `deb449b` after Codex round 4 accepted 100/100 (4 rounds, 11 findings closed: 7 P1 + 4 P2 — the largest PR in Phase 9) |
+| **Next action** | Founder runs final activation (apply 3 migrations + set env vars + flip `ENABLE_TRIP_AUTO_DISTRIBUTION=true` after probes 16 + 17 pass) + 22-probe sweep, then closes Phase 9 |
 
-### PR 1 + 2 + 3 production activation (founder, can run in parallel with PR 4 dev)
+### Final production activation (founder)
 
-1. Apply migrations in order in Supabase:
+1. **Apply 3 migrations** in Supabase (in order):
    - `20260520000026_phase_9_pr_1_client_auth.sql`
    - `20260521000027_phase_9_pr_2_create_authenticated_trip_request.sql`
+   - `20260522000028_phase_9_pr_4_auto_distribution.sql`
    - (PR 3 ships no migration)
-2. Set Vercel env vars (Production + Preview):
+2. **Set Vercel env vars** (Production + Preview):
    - `ENABLE_CLIENT_PORTAL=true`
    - `CLIENT_PASSWORD_RESET_TOKEN_SECRET=<openssl rand -hex 32>`
-3. Redeploy
-4. Run probes per Phase 9 spec §6:
+   - `PHASE_9_MIN_DISPATCH_FANOUT=2` (default; raise after live tuning)
+   - `TRIP_REDISPATCH_STALE_HOURS=4` (default; lower to `0.01` ONLY for probe 18 smoke)
+   - `ENABLE_TRIP_AUTO_DISTRIBUTION=false` (start OFF; flip to `true` only after probes 16 + 17 pass)
+3. **Redeploy**
+4. **Run 22 probes** per Phase 9 spec §6:
    - 9 PR 1 probes (1, 2, 3, 3-shape, 4, 4-canary, 5, 6, 7)
    - 3 PR 2 probes (8, 9, 10)
    - 4 PR 3 probes (11, 12, 13, 14)
+   - 6 PR 4 probes (15, 16, 17, 18, 19, 20)
+5. **Flip auto-dispatch** after probes 16 + 17 pass:
+   - Set `ENABLE_TRIP_AUTO_DISTRIBUTION=true` in Vercel
+   - Redeploy
+6. **Close Phase 9** by archiving this doc to
+   `aeris/docs/archive/PHASE-9-CLOSURE.md` and adding a
+   summary section to `aeris/docs/CLAUDE-WORK-LOG.md`.
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -61,7 +72,7 @@
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
 | PR 3 | [#57](https://github.com/alharbib902-del/plan/pull/57) | ✅ MERGED | `05f5713` | Client portal — 2 Codex rounds, 1 P2 closed (fastest in Phase 9) |
-| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `ace150a` | Auto-distribution — 7 files, 7 tests, 3 RPCs + endpoint + 2-phase cron |
+| PR 4 | [#58](https://github.com/alharbib902-del/plan/pull/58) | ✅ MERGED | `deb449b` | Auto-distribution — 4 Codex rounds, 11 findings closed (7 P1 + 4 P2 — the largest PR) |
 
 ---
 
@@ -379,7 +390,24 @@ rounds that MUST be applied:
 
 ## ▶️ Resume instructions
 
-### If you're resuming PR 4 mid-flight
+### If you're picking this up post-CODE-COMPLETE
+
+Phase 9 is fully merged. The remaining work is:
+
+1. **Founder activation** — see the "Final production
+   activation" panel at the top of this doc. Apply 3
+   migrations + set 5 env vars + redeploy + run 22 probes
+   + flip `ENABLE_TRIP_AUTO_DISTRIBUTION=true` after probes
+   16 + 17 pass.
+2. **Follow-up cleanup migration** (post-activation):
+   `VALIDATE CONSTRAINT` on `trip_requests_client_id_clients_fkey`
+   + `bookings_client_id_clients_fkey` (deferred from PR 2
+   round 2 — see "Open risks / unresolved" below for why).
+3. **Phase 9 closure**: archive this file to
+   `aeris/docs/archive/PHASE-9-CLOSURE.md` + add summary
+   section to `aeris/docs/CLAUDE-WORK-LOG.md`.
+
+### If you're resuming PR 4 mid-flight (historical)
 
 1. `git checkout feature/phase-9-pr-4-auto-distribution`
 2. Read Phase 9 spec §3.8 (`trip_distribution_log`),
@@ -527,20 +555,18 @@ Open items:
 - **PR 1 production activation pending** — see "PR 1
   production activation" panel at the top. Founder action
   out of band; doesn't block PR 2 review.
-- **PR 1 + 2 + 3 production activation pending** — see
-  panel at the top of this doc. Founder action out of band;
-  doesn't block PR 4 development.
-- **PR 4 — IN ACTIVE DEVELOPMENT**, branch
-  `feature/phase-9-pr-4-auto-distribution`. No code
-  committed yet at this update. The largest PR in Phase 9
-  (~800 lines spread across migration + 2 RPCs + endpoint +
-  cron + canary).
+- **All Phase 9 code merged.** Founder activation pending —
+  see "Final production activation" panel at the top of this
+  doc. The 5 env vars + 3 migrations + 22-probe sweep are
+  the only remaining items before Phase 9 can be formally
+  closed.
 - **Follow-up cleanup migration (lighter scope after PR 2
   round 3)**: post-Phase 9 activation, run `ALTER TABLE …
   VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
   PR 2 round 3's inline backfill already cleared every legacy
   orphan; the deferred VALIDATE is now just a
-  belt-and-braces safety net.
+  belt-and-braces safety net. Owner: founder, after probes
+  pass.
 
 ---
 
