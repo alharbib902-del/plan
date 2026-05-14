@@ -24,6 +24,17 @@ import { isUuid } from '@/lib/utils/uuid';
  * ${CRON_SECRET}` so this and the cron drain share one
  * boundary.
  *
+ * Auto-dispatch kill switch (Codex round 3 PR #58 P2 #2 fix +
+ * convention #24 — "every entry point"): the
+ * `ENABLE_TRIP_AUTO_DISTRIBUTION` flag also gates this
+ * endpoint, not just the cron drain. When the flag is off
+ * the route returns `{ ok: true, skipped: 'flag_disabled' }`
+ * (200, so the fire-and-forget caller stays idempotent)
+ * without touching any trip. The probe 19 default-off rollout
+ * contract survives intact even if a stray caller already
+ * has the CRON_SECRET — there is no longer a back door
+ * around the rollout flag.
+ *
  * Body: `{ trip_request_id: string, event: 'created' | 'redispatch' }`.
  *
  * Min fanout: read from `PHASE_9_MIN_DISPATCH_FANOUT` env
@@ -43,10 +54,25 @@ function readMinFanout(): number {
   return parsed;
 }
 
+function isAutoDistributionEnabled(): boolean {
+  return process.env.ENABLE_TRIP_AUTO_DISTRIBUTION === 'true';
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
   const auth = verifyCronAuth(req.headers);
   if (!auth.ok) {
     return unauthorizedJsonResponse();
+  }
+
+  // Codex round 3 PR #58 P2 #2 fix — kill-switch covers
+  // every entry point (convention #24). Even with a valid
+  // CRON_SECRET, the dispatcher does NOT run while the
+  // rollout flag is off.
+  if (!isAutoDistributionEnabled()) {
+    return NextResponse.json(
+      { ok: true, skipped: 'flag_disabled' },
+      { status: 200 }
+    );
   }
 
   let body: unknown;

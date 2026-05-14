@@ -524,14 +524,15 @@ $$;
 -- have rolled back the entire cleanup work on the first
 -- run).
 --
--- Stale-hours threshold is a parameter (Codex round 1 PR
--- #58 P2 #4 fix). Default 4 mirrors the prior hardcode; the
--- cron route reads TRIP_REDISPATCH_STALE_HOURS from env and
--- passes it through, so probe 18 can lower it for a fast
--- production smoke without a migration.
+-- Stale-hours threshold is a parameter (Codex PR #58 round
+-- 1 P2 #4 + round 2 P2 #4 fix). Default 4 mirrors the prior
+-- hardcode; the cron route reads TRIP_REDISPATCH_STALE_HOURS
+-- from env and passes it through. NUMERIC (not INT) so probe
+-- 18 can lower it to 0.01 (~36 seconds) for a fast production
+-- smoke without a migration.
 --
 -- Contract:
---   IN  p_stale_hours INT (default 4)
+--   IN  p_stale_hours NUMERIC (default 4, fractional supported)
 --   OUT JSON:
 --       { ok: true, scanned, redispatched, declined, errors,
 --         stale_hours, scanned_stale, scanned_pending }
@@ -659,6 +660,22 @@ BEGIN
   -- precise PR 2 signature (PR 2 RPC writes both); Phase 4
   -- lead-promoted trips are `customer_source='lead'`,
   -- admin direct inserts default to either.
+  --
+  -- Codex PR #58 round 3 P1 #1 fix — the prior "no
+  -- existing log row" filter created a re-stranding bug:
+  -- a Phase A failure recovery (status flipped back to
+  -- pending after a failed retry) ALWAYS has at least one
+  -- prior log row from the original dispatch round, so
+  -- the trip would be filtered out of every future Phase
+  -- B sweep — defeating the whole purpose of the recovery.
+  -- Fix: drop the NOT EXISTS check. Phase B now picks up
+  -- every PR 2 trip that's pending past the cutoff with
+  -- no current round, regardless of historical log rows.
+  -- Re-trying a chronically-failing trip every 6h is
+  -- bounded behaviour (auto_dispatch_trip_request returns
+  -- the same insufficient_unique_operators reliably) and
+  -- the canary "scanned_pending" counter surfaces the
+  -- accumulation for admin triage.
   FOR v_trip IN
     SELECT t.id AS trip_id
       FROM trip_requests t
@@ -667,14 +684,6 @@ BEGIN
        AND t.created_at < v_cutoff
        AND t.client_id IS NOT NULL
        AND t.customer_source = 'client_portal'
-       -- Never drain a trip that already has any
-       -- distribution-log row (defensive against any future
-       -- code path that writes log rows out-of-order vs.
-       -- the trip status flip).
-       AND NOT EXISTS (
-         SELECT 1 FROM trip_distribution_log l
-          WHERE l.trip_request_id = t.id
-       )
   LOOP
     v_scanned_pend := v_scanned_pend + 1;
 
