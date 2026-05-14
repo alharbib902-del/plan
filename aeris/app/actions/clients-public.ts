@@ -64,8 +64,17 @@ export type ClientPublicActionFailure = {
   field_errors?: Record<string, string>;
 };
 
+// Codex round 1 PR #55 P2 #2 fix: fail-closed flag.
+// Previously this returned true ONLY when the env was the
+// literal string 'false', so a deploy that forgot to set
+// ENABLE_CLIENT_PORTAL would expose /login, /signup, and
+// the Server Actions immediately. The Phase 9 activation
+// checklist requires the founder to flip the flag on
+// EXPLICITLY after the migration applies and reset-token
+// secret is provisioned, so the flag must default to
+// disabled when unset.
 function isPortalDisabled(): boolean {
-  return process.env.ENABLE_CLIENT_PORTAL === 'false';
+  return process.env.ENABLE_CLIENT_PORTAL !== 'true';
 }
 
 function siteUrl(): string {
@@ -382,36 +391,39 @@ export async function clientRequestPasswordReset(input: {
     return { ok: false, error: 'rpc_failed' };
   }
 
+  // Codex round 1 PR #55 P1 #2 fix: read the contact fields
+  // directly from the RPC's return value instead of re-
+  // resolving by email. The previous ILIKE-based follow-up
+  // query treated `_` and `%` as wildcards (both valid in
+  // RFC 5321 email local parts) so a request for
+  // `attacker_admin@aeris.sa` could route the reset link
+  // to a different account whose email matched the wildcard
+  // pattern. The RPC already ran the exact normalised
+  // lookup; trust its output.
   const result = data as unknown as
-    | { ok: true; token_id: string }
+    | {
+        ok: true;
+        token_id: string;
+        client_id: string;
+        full_name: string;
+        contact_email: string;
+      }
     | { ok: true; no_op: true }
     | { ok: false; error: string };
 
   if (result.ok && 'token_id' in result) {
-    // Look up the client's contact info for the email body
-    const { data: clientRow } = await adminClient
-      .from('clients')
-      .select('auth_email, full_name')
-      .ilike('auth_email', parsed.data.email.trim())
-      .maybeSingle();
-    if (clientRow) {
-      const row = clientRow as unknown as {
-        auth_email: string;
-        full_name: string;
-      };
-      const resetUrl = `${siteUrl()}/reset-password/${minted.raw_token}`;
-      const sendResult = await sendClientPasswordResetLinkEmail({
-        to: row.auth_email,
-        full_name: row.full_name,
-        reset_url: resetUrl,
-        expires_in_minutes: 30,
-      });
-      await recordClientEmailAlertStatus(
-        adminClient,
-        sendResult,
-        'clientRequestPasswordReset'
-      );
-    }
+    const resetUrl = `${siteUrl()}/reset-password/${minted.raw_token}`;
+    const sendResult = await sendClientPasswordResetLinkEmail({
+      to: result.contact_email,
+      full_name: result.full_name,
+      reset_url: resetUrl,
+      expires_in_minutes: 30,
+    });
+    await recordClientEmailAlertStatus(
+      adminClient,
+      sendResult,
+      'clientRequestPasswordReset'
+    );
   }
 
   // Always opaque ok to prevent enumeration

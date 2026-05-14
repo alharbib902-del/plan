@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 };
 
 export default function ClientForgotPasswordPage() {
-  if (process.env.ENABLE_CLIENT_PORTAL === 'false') notFound();
+  if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
   return (
     <ClientPublicShell
       title={clientsAr.forgotTitle}

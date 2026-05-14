@@ -253,6 +253,23 @@ REVOKE ALL ON FUNCTION _normalize_client_email(TEXT) FROM anon, authenticated, s
 -- Rate-limit: rejects when the IP has 3+ success attempts in
 -- the last 24h. Other result values (duplicate_email,
 -- validation_failed) do NOT count against the cap.
+--
+-- Codex round 1 PR #55 P1 #1 fix — concurrent-signup race:
+-- the previous implementation did an EXISTS pre-check then
+-- INSERT, which let two concurrent signups for the same
+-- normalized email both pass the EXISTS gate and surface a
+-- raw unique_violation on the loser. Mirror Phase 8's
+-- operator_signup discipline (PR 2a Codex round-1 P1 #2):
+--   1. Take a per-normalized-email advisory transaction lock
+--      so concurrent signups for the same email serialize at
+--      the lock layer (NOT at the unique-index layer).
+--   2. SELECT … FOR UPDATE on LOWER(auth_email) — gap-lock
+--      against the unique index for any rows that already
+--      exist; matches the Phase 8 pattern.
+--   3. INSERT inside an exception handler that converts a
+--      stray unique_violation (e.g. another role bypassing
+--      the advisory lock — impossible today, defense in
+--      depth) into the structured duplicate_email contract.
 
 CREATE OR REPLACE FUNCTION client_signup(
   p_email                TEXT,
@@ -267,9 +284,10 @@ CREATE OR REPLACE FUNCTION client_signup(
   SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_normalized   TEXT;
-  v_client_id    UUID;
-  v_recent_count INT;
+  v_normalized    TEXT;
+  v_client_id     UUID;
+  v_existing_id   UUID;
+  v_recent_count  INT;
 BEGIN
   -- Validation: required fields present, basic shape
   IF NULLIF(TRIM(p_email), '') IS NULL
@@ -297,22 +315,49 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'rate_limited');
   END IF;
 
-  -- Duplicate email check (case-insensitive via LOWER index)
-  IF EXISTS (
-    SELECT 1 FROM clients WHERE LOWER(auth_email) = v_normalized
-  ) THEN
+  -- Per-email advisory transaction lock. The bigint key is
+  -- derived from the first 16 hex chars of md5(normalized)
+  -- interpreted as bit(64) → bigint. Collisions across
+  -- distinct emails are harmless (worst case: brief
+  -- serialization on different emails that hash-collide);
+  -- real concurrent signups for the SAME email serialize
+  -- correctly. Matches the Phase 8 PR 2a pattern.
+  PERFORM pg_advisory_xact_lock(
+    ('x' || substr(md5(v_normalized), 1, 16))::bit(64)::bigint
+  );
+
+  -- Duplicate-email gap-lock check via FOR UPDATE on the
+  -- LOWER(auth_email) unique index expression.
+  SELECT id INTO v_existing_id
+    FROM clients
+   WHERE LOWER(auth_email) = v_normalized
+   FOR UPDATE;
+
+  IF v_existing_id IS NOT NULL THEN
     INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
       VALUES (p_ip, NOW(), v_normalized, 'duplicate_email');
     RETURN json_build_object('ok', false, 'error', 'duplicate_email');
   END IF;
 
-  INSERT INTO clients (
-    auth_email, full_name, contact_phone, password_hash,
-    marketing_opt_in, signup_status
-  ) VALUES (
-    TRIM(p_email), TRIM(p_full_name), TRIM(p_phone), p_password_hash,
-    COALESCE(p_marketing_opt_in, FALSE), 'active'
-  ) RETURNING id INTO v_client_id;
+  -- INSERT with defense-in-depth EXCEPTION handler. Should
+  -- never trigger under normal conditions (the advisory lock
+  -- + FOR UPDATE above already serialize), but a unique_
+  -- violation here would otherwise surface as a raw
+  -- PostgreSQL error. Convert to the structured
+  -- duplicate_email contract.
+  BEGIN
+    INSERT INTO clients (
+      auth_email, full_name, contact_phone, password_hash,
+      marketing_opt_in, signup_status
+    ) VALUES (
+      TRIM(p_email), TRIM(p_full_name), TRIM(p_phone), p_password_hash,
+      COALESCE(p_marketing_opt_in, FALSE), 'active'
+    ) RETURNING id INTO v_client_id;
+  EXCEPTION WHEN unique_violation THEN
+    INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
+      VALUES (p_ip, NOW(), v_normalized, 'duplicate_email');
+    RETURN json_build_object('ok', false, 'error', 'duplicate_email');
+  END;
 
   INSERT INTO client_signup_attempts (ip_address, attempted_at, email_attempted, result)
     VALUES (p_ip, NOW(), v_normalized, 'success');
@@ -523,6 +568,20 @@ GRANT EXECUTE ON FUNCTION client_session_validate(TEXT) TO service_role;
 -- Returns ok:true with no_op:true when the email is not
 -- registered (so the calling Server Action can return the
 -- same opaque success to the browser regardless).
+--
+-- Codex round 1 PR #55 P2 #1 fix: bound the expiry upper
+-- limit at the SQL boundary. The Phase 9 contract says
+-- 30 minutes; allow a small slack buffer (31 min) so a
+-- TS↔SQL clock-skew doesn't reject a contract-correct
+-- caller. Anything beyond that is a bug or an attempted
+-- abuse and earns a structured invalid_expiry.
+--
+-- Codex round 1 PR #55 P1 #2 fix: return contact_email +
+-- full_name on success so the Server Action never has to
+-- re-resolve the client by email (which previously used
+-- ILIKE — the wildcard-injection vector). The RPC already
+-- ran the exact normalised lookup; the Server Action just
+-- uses what the RPC returned.
 
 CREATE OR REPLACE FUNCTION client_mint_password_reset_token(
   p_email          TEXT,
@@ -535,14 +594,24 @@ CREATE OR REPLACE FUNCTION client_mint_password_reset_token(
   SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_normalized TEXT;
-  v_client_id  UUID;
-  v_token_id   UUID;
+  v_normalized   TEXT;
+  v_client_id    UUID;
+  v_full_name    TEXT;
+  v_contact_email TEXT;
+  v_token_id     UUID;
 BEGIN
   IF NOT _is_sha256_hex(p_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'invalid_token_hash');
   END IF;
   IF p_expires_at IS NULL OR p_expires_at <= NOW() THEN
+    RETURN json_build_object('ok', false, 'error', 'invalid_expiry');
+  END IF;
+  -- Upper-bound check (Codex round 1 PR #55 P2 #1 fix).
+  -- 31 min = 30 min spec contract + 1 min slack for clock
+  -- skew between the TS mintClientPasswordResetToken caller
+  -- and the Postgres NOW(). Any expiry beyond this is a
+  -- buggy caller or a misconfigured service-role consumer.
+  IF p_expires_at > NOW() + INTERVAL '31 minutes' THEN
     RETURN json_build_object('ok', false, 'error', 'invalid_expiry');
   END IF;
   IF NULLIF(TRIM(p_email), '') IS NULL THEN
@@ -551,7 +620,8 @@ BEGIN
 
   v_normalized := _normalize_client_email(p_email);
 
-  SELECT id INTO v_client_id
+  SELECT id, full_name, auth_email
+    INTO v_client_id, v_full_name, v_contact_email
     FROM clients
    WHERE LOWER(auth_email) = v_normalized
      AND signup_status = 'active'
@@ -567,7 +637,13 @@ BEGIN
     v_client_id, p_token_hash, p_expires_at, p_ip
   ) RETURNING id INTO v_token_id;
 
-  RETURN json_build_object('ok', true, 'token_id', v_token_id);
+  RETURN json_build_object(
+    'ok', true,
+    'token_id', v_token_id,
+    'client_id', v_client_id,
+    'full_name', v_full_name,
+    'contact_email', v_contact_email
+  );
 END;
 $$;
 

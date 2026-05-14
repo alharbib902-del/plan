@@ -18,7 +18,7 @@ interface PageProps {
 }
 
 export default function ClientResetPasswordPage({ params }: PageProps) {
-  if (process.env.ENABLE_CLIENT_PORTAL === 'false') notFound();
+  if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
   return (
     <ClientPublicShell
       title={clientsAr.resetTitle}

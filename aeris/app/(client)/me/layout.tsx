@@ -20,7 +20,9 @@ export default async function ClientAuthedLayout({
 }: {
   children: ReactNode;
 }) {
-  if (process.env.ENABLE_CLIENT_PORTAL === 'false') notFound();
+  // Fail-closed (Codex round 1 PR #55 P2 #2): default
+  // disabled when env is unset.
+  if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
   const session = await requireClientSession();
   return <ClientShell fullName={session.full_name}>{children}</ClientShell>;
 }
