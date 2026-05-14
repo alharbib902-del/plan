@@ -732,8 +732,22 @@ BEGIN
   IF NOT _is_sha256_hex(p_token_hash) THEN
     RETURN json_build_object('ok', false, 'error', 'invalid_token_hash');
   END IF;
-  IF NULLIF(TRIM(p_new_password_hash), '') IS NULL THEN
-    RETURN json_build_object('ok', false, 'error', 'invalid_password_hash');
+
+  -- Codex round 4 PR #55 P2 #1 fix — defence-in-depth bcrypt
+  -- format check on p_new_password_hash, mirror of Phase 8
+  -- verify_operator_password_reset (PR 2a line 1096). The
+  -- previous NULL/empty-only guard let any non-bcrypt string
+  -- (a buggy Server Action, an ad-hoc repair script using
+  -- service_role) be written directly into clients.password_hash,
+  -- locking the client out after consuming the reset token.
+  -- bcryptjs.hashSync(plaintext, 12) always emits exactly
+  -- 60 chars starting with $2a$ / $2b$ / $2y$, so anything
+  -- else is by definition malformed.
+  IF p_new_password_hash IS NULL
+     OR length(p_new_password_hash) <> 60
+     OR p_new_password_hash !~ '^\$2[aby]\$'
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'password_hash_malformed');
   END IF;
 
   SELECT id, client_id, expires_at, used_at
