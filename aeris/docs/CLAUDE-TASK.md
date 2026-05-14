@@ -575,6 +575,65 @@ to seed an unapproved operator with high default scoring
 data and assert it is excluded from both the preview
 output AND the dispatched-targets log.
 
+**Phone dedupe contract (Codex round 4 P2 #2 fix).**
+Phase 5's `trip_dispatch_targets` table enforces uniqueness
+on `(dispatch_round_id, target_phone)` — two operators
+sharing the same `contact_phone` value (e.g. multi-account
+shell companies, data-entry duplicates, the same charter
+broker registered twice) would cause the SECOND target
+INSERT to fail with a unique-violation, aborting the entire
+dispatch transaction and leaving the trip in a partially-
+dispatched state.
+
+`auto_dispatch_trip_request` MUST dedupe the scoring output
+by normalised `contact_phone` BEFORE building the
+`trip_dispatch_targets` payload. The dedupe rule:
+
+```sql
+-- Pseudocode for the dedupe step (between scoring and
+-- target INSERT). Inside auto_dispatch_trip_request body,
+-- after `score_operators_for_trip` returns top-N:
+--
+--   1. Normalise each operator's contact_phone (TRIM +
+--      strip whitespace; canonical E.164 form is enforced
+--      by Phase 8 operator signup, but TRIM defends
+--      against drift).
+--   2. Group by normalised phone; for each group, keep
+--      ONLY the highest-ranked (lowest `rank` value)
+--      operator. Drop the rest.
+--   3. Re-rank the deduped list 1..N (so `rank` stays
+--      contiguous in trip_distribution_log).
+--   4. Pass the deduped list to the target INSERT
+--      pipeline.
+```
+
+If dedupe collapses the list below a minimum-fan-out floor
+(`PHASE_9_MIN_DISPATCH_FANOUT=2`, env-configurable, default
+2), the RPC returns `{ok:false, error:
+'insufficient_unique_operators', dispatched_count:0}` and
+**does NOT open a dispatch round** — the trip stays
+`pending` for admin review, and an audit row is logged so
+admin sees why auto-dispatch declined to fire. This is
+strictly safer than dispatching to 1 operator (no
+competition → no offer pressure).
+
+The dedupe rule is documented in `lib/automation/trip-
+distribution.ts` JSDoc + asserted by 3+ unit-test cases in
+`__tests__/trip-distribution.test.ts`:
+  - 5 unique phones → 5 targets dispatched
+  - 5 operators, 2 sharing a phone → 4 targets (one
+    dropped, the lower-rank duplicate)
+  - 5 operators all sharing one phone → 1 unique → RPC
+    returns `insufficient_unique_operators`, no round
+    opened, no log rows written
+
+Probe 16 is amended to insert two synthetic approved
+operators with identical `contact_phone` values, dispatch a
+trip, and assert exactly ONE of them appears in
+`trip_distribution_log` (the higher-ranked) — confirming
+the SQL-level uniqueness violation never occurs in
+production.
+
 **Phase 5 token issuance contract for `auto_dispatch_trip_request`
 (Codex round 1 P1 #4 fix)**
 
@@ -853,7 +912,30 @@ Actions, 1 page + 1 component, ~250 lines)
   PR 2 lands the call-site guarded by the flag so PR 4's
   endpoint switches on with zero PR 2 code change).
 - `cancelMyTripRequest` — flips `status='cancelled'` for a
-  trip the client owns; pre-SELECT ownership check.
+  trip the client owns. Pre-SELECT MUST assert BOTH:
+  (1) `client_id = session.client_id` (ownership) AND
+  (2) `status IN ('pending', 'distributed', 'offered')`
+  (pre-booking states only — Codex round 4 P1 #1 fix). A
+  `status='booked'` trip MUST NOT be cancellable from this
+  Server Action; the booking-cancellation flow lives
+  separately in admin (and is Phase 10 client-side scope).
+  Already-`cancelled` trips return `{ok:false,
+  error:'already_cancelled'}` opaquely. The status check is
+  enforced at the SQL boundary via:
+
+  ```sql
+  UPDATE trip_requests
+     SET status = 'cancelled',
+         updated_at = NOW()
+   WHERE id = :trip_id
+     AND client_id = :session_client_id
+     AND status IN ('pending', 'distributed', 'offered')
+  RETURNING id, status;
+  ```
+
+  Zero rows returned → `{ok:false, error:'cancel_not_allowed'}`
+  (opaque — does not leak whether the trip is booked vs not
+  owned vs not found).
 
 **Components:**
 - `components/clients/charter-form.tsx` — form with origin/
@@ -891,8 +973,33 @@ extended):**
 - `clientAcceptOffer` — pre-SELECT ownership +
   `accept_offer` RPC + revalidate.
 - `clientDeclineOffer` — UPDATE on
-  `phase4/5_operator_offers` to `status='rejected'`,
-  ownership-checked.
+  `phase4_operator_offers` OR `phase5_operator_offers` to
+  `status='rejected'`, with three independent guards
+  enforced at the SQL boundary in a single
+  conditional UPDATE (Codex round 4 P1 #2 fix):
+
+  1. **Trip ownership** — the offer's parent
+     `trip_request_id.client_id` MUST equal
+     `session.client_id`.
+  2. **Offer status** — the offer row's current `status`
+     MUST be `'pending'`. Already-`'accepted'`,
+     `'expired'`, or `'rejected'` offers MUST NOT be
+     mutated (idempotency + race guard).
+  3. **Trip status** — the parent trip's `status` MUST be
+     `'distributed'` OR `'offered'` (NOT `'booked'` or
+     `'cancelled'`). A booked trip's offers are frozen;
+     declining one would corrupt the booking-acceptance
+     audit chain.
+
+  All three checks live inside a single
+  `UPDATE … WHERE … RETURNING id` with the three predicates
+  ANDed. Zero rows returned → `{ok:false,
+  error:'decline_not_allowed'}` opaquely. The Server Action
+  picks the correct table (`phase4_operator_offers` vs
+  `phase5_operator_offers`) from the `source` discriminator
+  the UI passes (mirrors the existing `accept_offer` RPC's
+  source dispatch). The opaque error keeps the failure mode
+  same regardless of which guard tripped.
 - `cancelMyTripRequest` already in PR 2; add UI button.
 
 **Components:**
@@ -978,6 +1085,12 @@ extension, ~800 lines)
   `DispatchPanelV2`.
 - `INTERNAL_DISPATCH_SECRET` (HMAC for the internal route)
 - `TRIP_REDISPATCH_STALE_HOURS=4` (default 4h, configurable)
+- `PHASE_9_MIN_DISPATCH_FANOUT=2` (default 2; minimum unique
+  operators after phone-dedupe required to open a dispatch
+  round — Codex round 4 P2 #2 fix). Below the floor,
+  `auto_dispatch_trip_request` returns
+  `insufficient_unique_operators` and trip stays `pending`
+  for admin review.
 
 **vercel.json:** add 1 PR-4 cron entry (Codex round 1 P1 #2
 fix — moved out of PR 1 so the route exists when the entry
@@ -991,9 +1104,14 @@ canary labels.
 
 ## 6. Founder probes
 
-23 probes for Phase 9 (1, 2, 3, 3-shape, 4, 4-canary, 5–10
-PR1+PR2 + 11–14 PR3 + 15–20 PR4). Each is run on production
-after the relevant PR ships.
+22 probes for Phase 9 (Codex round 4 P2 #1 count
+correction):
+  - **PR 1 (9 probes):** 1, 2, 3, 3-shape, 4, 4-canary, 5, 6, 7
+  - **PR 2 (3 probes):** 8, 9, 10
+  - **PR 3 (4 probes):** 11, 12, 13, 14
+  - **PR 4 (6 probes):** 15, 16, 17, 18, 19, 20
+
+Each is run on production after the relevant PR ships.
 
 ### PR 1 probes (1–7 + 3-shape + 4-canary):
 
@@ -1098,13 +1216,22 @@ after the relevant PR ships.
     NULL. Re-run Preview → verify the synthetic/NULL-phone
     operator does NOT appear in the ranked output (filter
     enforced inside `score_operators_for_trip`).
-16. **Auto-dispatch fires + eligibility (Codex round 3
-    P1 #1 alignment)** — submit a fresh charter form;
-    verify `auto_dispatch_trip_request` ran (3+ rows in
+16. **Auto-dispatch fires + eligibility + phone dedupe
+    (Codex round 3 P1 #1 + round 4 P2 #2 alignment)** —
+    submit a fresh charter form; verify
+    `auto_dispatch_trip_request` ran (3+ rows in
     `trip_distribution_log`) + dispatch round opened with
     same operators. Verify NO `trip_distribution_log` row
     references the synthetic pending/NULL-phone operator
-    from Probe 15.
+    from Probe 15. **Then INSERT two synthetic approved
+    operators with IDENTICAL `contact_phone` values** (e.g.
+    `+966500000099`); re-fire auto-dispatch via
+    `adminForceAutoDispatch`; verify EXACTLY ONE of the two
+    duplicates appears in `trip_distribution_log` (the
+    higher-ranked one) and the Phase 5 `trip_dispatch_targets`
+    INSERT did NOT fail with a unique-violation. This
+    confirms the dedupe step runs BEFORE the target INSERT
+    pipeline.
 17. **Operators receive WhatsApp link** — confirm the
     Phase 5 dispatch flow fires + each top-N operator
     gets a wa.me link (manual visual probe in Vercel
@@ -1146,7 +1273,7 @@ Phase 9 is closed when:
 - [ ] All 3 migrations applied to production (PR 1 + PR 2
       + PR 4; PR 3 is no-migration per §9 — Codex round 1
       P2 #2 fix).
-- [ ] All 23 probes pass (or are explicitly deferred with
+- [ ] All 22 probes pass (or are explicitly deferred with
       written rationale, mirrored from Phase 7 closure
       pattern).
 - [ ] `ENABLE_CLIENT_PORTAL=true` set in Vercel
