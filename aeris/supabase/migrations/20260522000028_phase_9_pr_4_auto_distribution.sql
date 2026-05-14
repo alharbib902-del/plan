@@ -542,7 +542,7 @@ $$;
 -- "missed-initial-dispatch backlog".
 
 CREATE OR REPLACE FUNCTION redispatch_stale_trip_requests(
-  p_stale_hours INT DEFAULT 4
+  p_stale_hours NUMERIC DEFAULT 4
 ) RETURNS JSON
   LANGUAGE plpgsql
   SECURITY DEFINER
@@ -552,7 +552,7 @@ DECLARE
   v_now            TIMESTAMPTZ := NOW();
   v_trip           RECORD;
   v_dispatch_res   JSON;
-  v_stale_hours    INT;
+  v_stale_hours    NUMERIC;
   v_cutoff         TIMESTAMPTZ;
   v_scanned_stale  INT := 0;
   v_scanned_pend   INT := 0;
@@ -561,9 +561,17 @@ DECLARE
   v_errors         INT := 0;
   v_record_res     JSON;
 BEGIN
+  -- Codex round 2 PR #58 P2 #4 fix — accept fractional
+  -- hours (probe 18 needs 0.01h ≈ 36 seconds for a fast
+  -- production smoke). NUMERIC instead of INT, and we use
+  -- (text || ' hours')::INTERVAL so make_interval's INT-
+  -- only arg list isn't a constraint. Negative values are
+  -- coerced to the default; zero is allowed (immediate
+  -- sweep window) but won't overshoot since the cutoff is
+  -- bounded by NOW().
   v_stale_hours := COALESCE(p_stale_hours, 4);
-  IF v_stale_hours < 1 THEN v_stale_hours := 1; END IF;
-  v_cutoff := v_now - make_interval(hours => v_stale_hours);
+  IF v_stale_hours < 0 THEN v_stale_hours := 4; END IF;
+  v_cutoff := v_now - (v_stale_hours::TEXT || ' hours')::INTERVAL;
 
   -- ===== Phase A: stale-round cleanup =====
   FOR v_trip IN
@@ -609,28 +617,60 @@ BEGIN
       v_dispatch_res := auto_dispatch_trip_request(v_trip.trip_id);
       IF (v_dispatch_res->>'ok')::BOOLEAN THEN
         v_redispatched := v_redispatched + 1;
-      ELSIF v_dispatch_res->>'error' = 'insufficient_unique_operators' THEN
-        v_declined := v_declined + 1;
       ELSE
-        v_errors := v_errors + 1;
+        -- Codex round 2 PR #58 P1 #3 fix — failed retry
+        -- recovery. Without this, the trip stays in
+        -- 'distributed'/'offered' with NULL round, no
+        -- longer matching Phase A (no open round) AND
+        -- never matching Phase B (status != 'pending') —
+        -- effectively stranded outside both cron paths.
+        -- Move it back to 'pending' so the next tick's
+        -- Phase B re-picks it up AND admin DispatchPanelV2
+        -- shows it as needing manual handling. The state-
+        -- cleanup writes above remain correct (the round
+        -- was genuinely closed for staleness; this just
+        -- restores the trip's "needs dispatch" status).
+        UPDATE trip_requests
+           SET status = 'pending'
+         WHERE id = v_trip.trip_id;
+
+        IF v_dispatch_res->>'error' = 'insufficient_unique_operators' THEN
+          v_declined := v_declined + 1;
+        ELSE
+          v_errors := v_errors + 1;
+        END IF;
       END IF;
     EXCEPTION WHEN OTHERS THEN
+      -- Same recovery on a hard exception so the trip is
+      -- never lost between the two phases.
+      UPDATE trip_requests
+         SET status = 'pending'
+       WHERE id = v_trip.trip_id;
       v_errors := v_errors + 1;
     END;
   END LOOP;
 
-  -- ===== Phase B: pending-trip drain (Codex round 1 PR
-  -- #58 P1 #3 fix). Catches missed initial-dispatch POSTs.
+  -- ===== Phase B: pending-trip drain (Codex PR #58 round 1
+  -- P1 #3 + round 2 P1 #2 fix). Catches missed initial-
+  -- dispatch POSTs but ONLY for PR 2 authenticated trips —
+  -- legacy guest leads + admin-held manual queue rows stay
+  -- untouched. The (client_id IS NOT NULL AND
+  -- customer_source = 'client_portal') filter is the
+  -- precise PR 2 signature (PR 2 RPC writes both); Phase 4
+  -- lead-promoted trips are `customer_source='lead'`,
+  -- admin direct inserts default to either.
   FOR v_trip IN
     SELECT t.id AS trip_id
       FROM trip_requests t
      WHERE t.status = 'pending'
        AND t.current_dispatch_round_id IS NULL
        AND t.created_at < v_cutoff
+       AND t.client_id IS NOT NULL
+       AND t.customer_source = 'client_portal'
        -- Never drain a trip that already has any
        -- distribution-log row (defensive against any future
-       -- code path that writes log rows out-of-order vs. the
-       -- trip status flip).
+       -- code path that writes log rows out-of-order vs.
+       -- the trip status flip).
        AND NOT EXISTS (
          SELECT 1 FROM trip_distribution_log l
           WHERE l.trip_request_id = t.id
@@ -692,13 +732,13 @@ REVOKE ALL ON FUNCTION auto_dispatch_trip_request(UUID, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION auto_dispatch_trip_request(UUID, INT) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION auto_dispatch_trip_request(UUID, INT) TO service_role;
 
-REVOKE ALL ON FUNCTION redispatch_stale_trip_requests(INT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION redispatch_stale_trip_requests(INT) FROM anon, authenticated;
-GRANT EXECUTE ON FUNCTION redispatch_stale_trip_requests(INT) TO service_role;
+REVOKE ALL ON FUNCTION redispatch_stale_trip_requests(NUMERIC) FROM PUBLIC;
+REVOKE ALL ON FUNCTION redispatch_stale_trip_requests(NUMERIC) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION redispatch_stale_trip_requests(NUMERIC) TO service_role;
 
 COMMENT ON FUNCTION score_operators_for_trip(UUID) IS
   'Phase 9 PR 4 §4.3: pure read; top-5 eligible operators for a trip; service_role only.';
 COMMENT ON FUNCTION auto_dispatch_trip_request(UUID, INT) IS
   'Phase 9 PR 4 §4.3: scoring → dedupe → Phase 5 round + log writes; service_role only.';
-COMMENT ON FUNCTION redispatch_stale_trip_requests(INT) IS
-  'Phase 9 PR 4 §4.4: cron RPC; two phases (stale-round cleanup + pending-trip drain); rescues trips older than p_stale_hours; records tick via record_operator_cron_tick.';
+COMMENT ON FUNCTION redispatch_stale_trip_requests(NUMERIC) IS
+  'Phase 9 PR 4 §4.4: cron RPC; two phases (stale-round cleanup + pending-trip drain); rescues PR 2 client-portal trips older than p_stale_hours (NUMERIC, fractional supported for fast smokes); records tick via record_operator_cron_tick. Phase A failed retries are rolled back to pending so they re-pick up via Phase B.';
