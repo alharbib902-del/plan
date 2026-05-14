@@ -8,16 +8,16 @@
 
 ---
 
-## 📍 Current state (last updated: PR 2 round 1 fixes)
+## 📍 Current state (last updated: PR 2 round 2 fix)
 
 | Field | Value |
 |---|---|
 | **Active PR** | [#56 — Phase 9 PR 2 Charter form](https://github.com/alharbib902-del/plan/pull/56) |
 | **Branch** | `feature/phase-9-pr-2-charter-form` |
-| **Code HEAD** | `6f6ce19` (Codex round 1 fixes — 2 P1 + 1 P2) |
-| **Status** | ⏳ Awaiting Codex round 2 review |
-| **Last action** | Round 1 fixes pushed: bookings.client_id FK retarget + IATA airports lookup + datetime-local Riyadh helper |
-| **Next action** | Codex round 2 review → iterate or merge |
+| **Code HEAD** | `8adc139` (Codex round 2 P1 fix — defer FK validation) |
+| **Status** | ⏳ Awaiting Codex round 3 review |
+| **Last action** | Round 2 fix pushed: drop eager VALIDATE on both retargeted FKs (defer to follow-up cleanup migration) |
+| **Next action** | Codex round 3 review → iterate or merge |
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
-| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `6f6ce19` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
+| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `8adc139` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
@@ -190,6 +190,26 @@ rounds that MUST be applied:
     `lib/utils/datetime-local.ts` (`datetimeLocalToRiyadhIso`);
     every form that ships a `datetime-local` value to a
     SECURITY DEFINER RPC MUST call it.
+17. **NEVER eagerly `VALIDATE CONSTRAINT` after retargeting
+    a FK in a migration that ships in front of any potential
+    legacy data** (Codex round 2 PR #56 P1 #1). PR 2 retargeted
+    `trip_requests.client_id` and `bookings.client_id` from
+    `users(id)` to `clients(id)`. Adding the new FK as
+    `NOT VALID` and immediately running `VALIDATE CONSTRAINT`
+    in the same migration would block production activation /
+    DR replay if any legacy `users(id)`-backed pointer
+    survived in either table. The correct sequence is:
+    1. PR 2 migration adds the FK as `NOT VALID` only —
+       forward writes are still gated; legacy rows are
+       skipped.
+    2. A follow-up cleanup migration (after activation,
+       scope-isolated to the user→client backfill):
+       - NULL orphaned pointers, and
+       - `ALTER TABLE … VALIDATE CONSTRAINT
+         <name>_client_id_clients_fkey;`
+    Always pair "FK retarget across an identity-table swap"
+    with a deferred-validation contract documented in the
+    migration header.
 
 ---
 
@@ -302,11 +322,19 @@ Open items:
 - **PR 1 production activation pending** — see "PR 1
   production activation" panel at the top. Founder action
   out of band; doesn't block PR 2 review.
-- **PR 2 — Code HEAD `6f6ce19` after Codex round 1
-  (2 P1 + 1 P2 closed)**. Awaiting Codex round 2.
-  Validation green: TS clean, ESLint 0, 48 tests pass
-  (10 reset-token + 6 auth-session + 10 email-normalize +
-  16 trip-request-validators + 6 datetime-local).
+- **PR 2 — Code HEAD `8adc139` after Codex round 2
+  (1 P1 closed)**. Awaiting Codex round 3. Validation green:
+  TS clean, ESLint 0, 48 tests pass (10 reset-token +
+  6 auth-session + 10 email-normalize + 16 trip-request-
+  validators + 6 datetime-local). Cumulative PR #56:
+  2 rounds, 4 findings closed (2 P1 + 1 P2 in round 1, 1 P1
+  in round 2).
+- **Follow-up cleanup migration owed (post-Phase 9
+  activation)**: NULL orphaned `trip_requests.client_id` /
+  `bookings.client_id` rows whose UUID points at legacy
+  `users(id)`, then `VALIDATE CONSTRAINT` on both
+  `*_client_id_clients_fkey`. Forward writes are gated
+  in the meantime.
 
 ---
 
