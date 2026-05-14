@@ -216,14 +216,28 @@ ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
 -- direct DB access is not available.
 ```
 
-`client_status` enum:
+`client_status` enum (replay-safe, Codex round 5 P1 #1
+fix). Wrapped in a `DO` block that checks `pg_type` first
+so a replay against a partially-applied DB (staging
+restore, manual repair, fresh DR snapshot mid-migration)
+does not abort before the idempotent table/index work
+below. Mirrors the Phase 8 enum-extension discipline
+(`ALTER TYPE … ADD VALUE IF NOT EXISTS` for the
+`'rejected'` operator_status addition).
 
 ```sql
-CREATE TYPE client_status AS ENUM (
-  'active',     -- normal state
-  'suspended',  -- admin-suspended (rare; future moderation)
-  'deleted'     -- soft-delete; sessions revoked, login blocked
-);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'client_status'
+  ) THEN
+    CREATE TYPE client_status AS ENUM (
+      'active',     -- normal state
+      'suspended',  -- admin-suspended (rare; future moderation)
+      'deleted'     -- soft-delete; sessions revoked, login blocked
+    );
+  END IF;
+END $$;
 ```
 
 ### §3.2 — `client_sessions` table (PR 1)
@@ -652,7 +666,7 @@ inlining the equivalent INSERT):
 | `id` | `uuid_generate_v4()` | PK |
 | `dispatch_round_id` | from the newly opened round | FK |
 | `target_phone` | from operators.contact_phone (looked up via the scoring output's `operator_id`) | wa.me destination |
-| `nonce` | `gen_random_bytes(16)::hex` | 32-char hex, HMAC payload |
+| `nonce` | `encode(gen_random_bytes(16), 'hex')` | 32-char hex, HMAC payload (Codex round 5 P1 #2 fix — `bytea::hex` is not valid PostgreSQL syntax; use `encode(…, 'hex')` for bytea→text conversion). Implementations that mint the nonce in TypeScript before calling the existing Phase 5 opener may instead pass the hex string directly. |
 | `sent_at` | `NOW()` | dispatch timestamp |
 | `expires_at` | `NOW() + INTERVAL '4 hours'` | matches §1 retention |
 | `status` | `'pending'` | dispatch_target_status enum |
@@ -724,13 +738,14 @@ UPDATE trip_dispatch_targets
    AND status = 'pending';
 
 -- 2. Close the stale round with a dedicated reason.
---    PR 4 migration ALTERs the closed_reason check (or
---    extends the dispatch_round_status closed_reason
---    enum) to add 'stale_timeout' as a fourth value
---    alongside 'offer_accepted', 'redispatched',
---    'admin_cancel'. The new value is added explicitly so
---    audit queries can distinguish auto-timeout from admin-
---    initiated cancellation.
+--    Phase 5's trip_dispatch_rounds.closed_reason is plain
+--    text today (no CHECK constraint, no enum). PR 4
+--    migration adds an explicit CHECK constraint that
+--    pins the allowed values + the new 'stale_timeout'
+--    value (Codex round 5 P2 #1 fix — the round 4 wording
+--    incorrectly assumed an existing enum/CHECK; that was
+--    not in the schema audit). See migration block below
+--    this code sample.
 UPDATE trip_dispatch_rounds
    SET status = 'closed',
        closed_reason = 'stale_timeout',
@@ -755,10 +770,57 @@ all three state changes (target = `cancelled`, round =
 `closed`/`stale_timeout`, trip's `current_dispatch_round_id`
 = NULL) AFTER the cron tick.
 
-The PR 4 migration adds the `'stale_timeout'` value to the
-`closed_reason` enum/CHECK in the same migration that
-defines `redispatch_stale_trip_requests`, so the RPC body
-and the schema constraint ship atomically.
+**`closed_reason` CHECK constraint (Codex round 5 P2 #1
+fix).** The PR 4 migration introduces a real CHECK
+constraint on `trip_dispatch_rounds.closed_reason`,
+pinning the allowed values explicitly. Phase 5 currently
+stores this as unbounded text; the migration audits
+existing rows + adds the constraint atomically with the
+`redispatch_stale_trip_requests` RPC body so the
+`'stale_timeout'` value cannot land in production without
+the matching schema enforcement:
+
+```sql
+-- PR 4 migration §X (executed before the RPC CREATE):
+
+-- Audit existing rows. If any row has a value outside the
+-- expected set, fail loudly so a Phase 5 historical
+-- divergence is fixed manually before the constraint
+-- lands. (Audit confirmed Phase 5 ships only the three
+-- values below, but the assertion documents intent and
+-- guards future schema drift.)
+DO $$
+DECLARE
+  v_offending_count INT;
+BEGIN
+  SELECT COUNT(*) INTO v_offending_count
+    FROM trip_dispatch_rounds
+   WHERE closed_reason IS NOT NULL
+     AND closed_reason NOT IN ('offer_accepted', 'redispatched', 'admin_cancel');
+  IF v_offending_count > 0 THEN
+    RAISE EXCEPTION 'PR 4 migration: trip_dispatch_rounds has % rows with unexpected closed_reason values; manual cleanup required before CHECK can be added', v_offending_count;
+  END IF;
+END $$;
+
+ALTER TABLE trip_dispatch_rounds
+  ADD CONSTRAINT trip_dispatch_rounds_closed_reason_check
+  CHECK (
+    closed_reason IS NULL
+    OR closed_reason IN (
+      'offer_accepted',
+      'redispatched',
+      'admin_cancel',
+      'stale_timeout'
+    )
+  );
+```
+
+The CHECK ships in the same migration file as the
+`redispatch_stale_trip_requests` body, so the RPC's
+`closed_reason='stale_timeout'` write is always backed by
+schema enforcement on production. Future closed_reason
+values (e.g. Phase 10 admin merge/split) will require an
+explicit migration to extend the CHECK list.
 
 ---
 
@@ -912,16 +974,13 @@ Actions, 1 page + 1 component, ~250 lines)
   PR 2 lands the call-site guarded by the flag so PR 4's
   endpoint switches on with zero PR 2 code change).
 - `cancelMyTripRequest` — flips `status='cancelled'` for a
-  trip the client owns. Pre-SELECT MUST assert BOTH:
-  (1) `client_id = session.client_id` (ownership) AND
-  (2) `status IN ('pending', 'distributed', 'offered')`
-  (pre-booking states only — Codex round 4 P1 #1 fix). A
+  trip the client owns. The Server Action makes a single
+  conditional UPDATE that asserts BOTH ownership AND
+  status guard inside the SQL WHERE clause (Codex round 4
+  P1 #1 fix + round 5 P2 #2 simplification). A
   `status='booked'` trip MUST NOT be cancellable from this
   Server Action; the booking-cancellation flow lives
-  separately in admin (and is Phase 10 client-side scope).
-  Already-`cancelled` trips return `{ok:false,
-  error:'already_cancelled'}` opaquely. The status check is
-  enforced at the SQL boundary via:
+  separately in admin (Phase 10 client-side scope).
 
   ```sql
   UPDATE trip_requests
@@ -933,9 +992,19 @@ Actions, 1 page + 1 component, ~250 lines)
   RETURNING id, status;
   ```
 
-  Zero rows returned → `{ok:false, error:'cancel_not_allowed'}`
-  (opaque — does not leak whether the trip is booked vs not
-  owned vs not found).
+  **Single result shape (Codex round 5 P2 #2 fix).** Zero
+  rows returned → `{ok:false, error:'cancel_not_allowed'}`,
+  opaquely. The earlier `already_cancelled` branch was
+  unreachable under this UPDATE (a cancelled row also fails
+  the WHERE predicate, so it returns zero rows
+  indistinguishably from booked / cross-owner / not-found).
+  The opaque single-error model matches Phase 8's
+  `leg_not_found` discipline (Phase 8 §4 operator-empty-
+  legs-authed.ts) — never leak which guard tripped. If a
+  future requirement needs to differentiate already-
+  cancelled (e.g. for idempotent retry UI), the Server
+  Action would need a separate pre-SELECT step BEFORE the
+  UPDATE; that is intentionally NOT specified here.
 
 **Components:**
 - `components/clients/charter-form.tsx` — form with origin/
