@@ -8,16 +8,16 @@
 
 ---
 
-## 📍 Current state (last updated: PR 1 round 1 fixes)
+## 📍 Current state (last updated: PR 1 round 2 fixes)
 
 | Field | Value |
 |---|---|
 | **Active PR** | [#55 — Phase 9 PR 1 Client Auth](https://github.com/alharbib902-del/plan/pull/55) |
 | **Branch** | `feature/phase-9-pr-1-client-auth` |
-| **HEAD** | `bc0384d` (added this resume doc; code HEAD = `a363064`) |
-| **Status** | ⏳ Awaiting Codex round 2 review |
-| **Last action** | Round 1 fixes (4x — 2 P1 + 2 P2) pushed at `a363064`; resume doc committed at `bc0384d` |
-| **Next action** | Codex round 2 review → iterate or merge |
+| **HEAD** | `42bee15` (Codex round 2 fixes pushed) |
+| **Status** | ⏳ Awaiting Codex round 3 review |
+| **Last action** | Round 2 fixes (3x — 1 P1 + 2 P2) pushed |
+| **Next action** | Codex round 3 review → iterate or merge |
 
 ---
 
@@ -26,7 +26,7 @@
 | # | PR | Status | sha | Notes |
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
-| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `bc0384d` | Client auth (32 files, 26 tests) |
+| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `42bee15` | Client auth (32 files, 26 tests) |
 | PR 2 | — | ⏳ pending | — | Charter form (~250 lines) |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
@@ -77,6 +77,29 @@ rounds that MUST be applied:
 8. **Mirror existing patterns**: when implementing a
    client-side feature, look at the operator-side first
    (Phase 8) and adapt. Do not invent new shapes.
+9. **Field-shape validation in SQL is NOT optional** (Codex
+   round 2 PR #55 P1 #1). A `NULLIF(TRIM())` blanket-empty
+   check is insufficient for any RPC that writes to
+   immutable columns or VARCHAR(N) ceilings. Required:
+   per-field structured contract (`email_invalid`,
+   `password_hash_malformed`, `full_name_invalid`,
+   `contact_phone_invalid`) + matching length / regex
+   checks. Mirror Phase 8 `operator_signup` exactly.
+10. **Structured RPC failures must record degraded alert**
+    (Codex round 2 PR #55 P2 #2). Any opaque-success Server
+    Action that wraps an RPC needs an `else if (!result.ok)`
+    branch that calls `recordClientEmailAlertStatus` with
+    `{ ok: false, reason: 'send_failed', detail:
+    '<rpc>_rpc_failed: <upstream_error>' }`. Otherwise admin
+    canary stays 'healthy' while production silently drops
+    emails.
+11. **No HMAC for client sessions** (Codex round 2 PR #55
+    P2 #3). Sessions are opaque random 32-byte hex stored as
+    `sha256(token_hash)` — same as Phase 8 operator pattern.
+    Do NOT introduce a `*_SESSION_TOKEN_SECRET` env var; it
+    would imply a security property that doesn't exist.
+    Reset tokens DO use HMAC (`CLIENT_PASSWORD_RESET_TOKEN_SECRET`)
+    because they travel in the URL.
 
 ---
 
