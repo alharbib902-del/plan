@@ -24,6 +24,7 @@
     "test:clients-password-reset-token": "tsx lib/clients/__tests__/password-reset-token.test.ts",
     "test:clients-auth-session": "tsx lib/clients/__tests__/auth-session.test.ts",
     "test:clients-email-normalize": "tsx lib/clients/__tests__/email-normalize.test.ts",
+    "test:clients-trip-request-validators": "tsx lib/clients/__tests__/trip-request-validators.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

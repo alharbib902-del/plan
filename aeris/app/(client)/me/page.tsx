@@ -12,11 +12,9 @@ export const metadata: Metadata = {
 };
 
 /**
- * Phase 9 PR 1 — `/me` landing page.
- *
- * Placeholder while PR 2 (charter form) + PR 3 (requests
- * list) land. Once `/me/charter` ships in PR 2 this page
- * will redirect there for new sessions.
+ * Phase 9 PR 1 — `/me` landing page (extended in PR 2 with
+ * a primary charter CTA). PR 3 will replace this with a
+ * requests-list dashboard.
  */
 export default function ClientMeLandingPage() {
   return (
@@ -31,12 +29,20 @@ export default function ClientMeLandingPage() {
       </header>
 
       <div className="rounded-2xl border border-border bg-navy-card/40 p-6">
-        <Link
-          href="/me/profile"
-          className="font-ar inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/25"
-        >
-          {clientsAr.meLandingProfileLink}
-        </Link>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href="/me/charter"
+            className="font-ar inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/25 px-4 py-2 text-sm font-medium text-gold-light transition-colors hover:bg-gold/35"
+          >
+            {clientsAr.charterTitle}
+          </Link>
+          <Link
+            href="/me/profile"
+            className="font-ar inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/25"
+          >
+            {clientsAr.meLandingProfileLink}
+          </Link>
+        </div>
       </div>
     </section>
   );

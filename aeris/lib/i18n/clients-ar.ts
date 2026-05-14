@@ -97,6 +97,37 @@ export const clientsAr = {
   changePasswordSuccess: 'تم تحديث كلمة المرور.',
 
   // ------------------------------------------------------------
+  // Phase 9 PR 2 — Authenticated charter form
+  // ------------------------------------------------------------
+  charterTitle: 'طلب رحلة Charter',
+  charterSubtitle:
+    'املأ تفاصيل رحلتك وسنوزّع طلبك على المشغّلين المؤهّلين.',
+  charterDepartureIataLabel: 'كود مطار المغادرة (IATA)',
+  charterArrivalIataLabel: 'كود مطار الوصول (IATA)',
+  charterDepartureDateLabel: 'تاريخ ووقت المغادرة',
+  charterReturnDateLabel: 'تاريخ ووقت العودة (اختياري)',
+  charterPassengersLabel: 'عدد الركاب',
+  charterAircraftPrefLabel: 'تفضيل فئة الطائرة (اختياري)',
+  charterAircraftPrefAny: 'لا تفضيل',
+  charterAircraftPrefLight: 'خفيفة (Light)',
+  charterAircraftPrefMid: 'متوسطة (Mid)',
+  charterAircraftPrefSuperMid: 'متوسطة كبيرة (Super-Mid)',
+  charterAircraftPrefHeavy: 'ثقيلة (Heavy)',
+  charterAircraftPrefLongRange: 'بعيدة المدى (Long-Range)',
+  charterSpecialRequestsLabel: 'طلبات خاصة (اختياري)',
+  charterSubmit: 'إرسال الطلب',
+  charterSubmitting: 'جارٍ الإرسال...',
+  charterSuccessHeading: 'تم استلام طلبك',
+  charterSuccessBody: (requestNumber: string): string =>
+    `رقم طلبك: ${requestNumber}. ستظهر العروض في «طلباتي» خلال دقائق.`,
+  charterSuccessGoToRequests: 'الذهاب إلى طلباتي',
+
+  cancelTripConfirm: 'هل أنت متأكد من إلغاء هذا الطلب؟',
+  cancelTripSubmit: 'إلغاء الطلب',
+  cancelTripSubmitting: 'جارٍ الإلغاء...',
+  cancelTripSuccess: 'تم إلغاء الطلب.',
+
+  // ------------------------------------------------------------
   // Error translation map (RPC error codes → Arabic strings)
   // ------------------------------------------------------------
   errors: {
@@ -142,5 +173,26 @@ export const clientsAr = {
     lookup_failed: 'تعذّر قراءة بيانات الحساب.',
     update_failed: 'تعذّر حفظ التعديلات. حاول مرة أخرى.',
     not_implemented: 'هذه الميزة لم تُفعَّل بعد.',
+
+    // Phase 9 PR 2 — create_authenticated_trip_request +
+    // cancelMyTripRequest structured contracts (client_not_found
+    // is shared with PR 1 above and intentionally not redefined).
+    client_not_active:
+      'الحساب غير مفعّل. تواصل مع الدعم لاستعادة الوصول.',
+    invalid_trip_type:
+      'نوع الرحلة غير مدعوم في هذه الصفحة (charter فقط).',
+    invalid_legs:
+      'يجب إضافة قطعة طيران واحدة على الأقل.',
+    invalid_iata: 'كود المطار يجب أن يكون 3 أحرف لاتينية.',
+    invalid_departure_date:
+      'تاريخ المغادرة يجب أن يكون في المستقبل.',
+    invalid_return_date:
+      'تاريخ العودة يجب أن يكون بعد تاريخ المغادرة.',
+    invalid_passengers: 'عدد الركاب يجب أن يكون بين 1 و 19.',
+    invalid_aircraft_pref: 'فئة الطائرة المختارة غير معروفة.',
+    special_requests_too_long:
+      'الطلبات الخاصة يجب أن تكون أقل من 2000 حرف.',
+    cancel_not_allowed:
+      'لا يمكن إلغاء هذا الطلب الآن (قد يكون محجوزاً أو لم يعد متاحاً).',
   } as Record<string, string>,
 } as const;
