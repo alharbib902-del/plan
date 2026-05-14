@@ -186,7 +186,38 @@ These are settled before spec acceptance:
 Mirrors Phase 8 `operators` extension shape but standalone
 (no inheritance from `users`).
 
+**Migration order (Codex round 6 P1 #1 fix).** The
+`client_status` enum MUST be created BEFORE `CREATE TABLE
+clients` because `clients.signup_status` references the
+type at table-creation time. The earlier round-5 ordering
+placed the enum DO block AFTER the CREATE TABLE, which
+would fail with `type "client_status" does not exist` on
+a fresh DB. The migration ships the enum block first, then
+the table:
+
 ```sql
+-- §3.1.a — client_status enum (must run BEFORE CREATE
+-- TABLE clients). Replay-safe via DO block + pg_type
+-- existence check, schema-scoped to public to avoid
+-- false positives from same-name types in other schemas
+-- (Codex round 6 P1 #1 hardening).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'client_status'
+      AND n.nspname = 'public'
+  ) THEN
+    CREATE TYPE public.client_status AS ENUM (
+      'active',     -- normal state
+      'suspended',  -- admin-suspended (rare; future moderation)
+      'deleted'     -- soft-delete; sessions revoked, login blocked
+    );
+  END IF;
+END $$;
+
+-- §3.1.b — clients table (depends on client_status above).
 CREATE TABLE IF NOT EXISTS clients (
   id                       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   -- Identity (auth_email is the unique login key)
@@ -214,30 +245,6 @@ ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
 -- No RLS policies: service_role bypasses; runtime code
 -- always uses the service-role admin client. Client-side
 -- direct DB access is not available.
-```
-
-`client_status` enum (replay-safe, Codex round 5 P1 #1
-fix). Wrapped in a `DO` block that checks `pg_type` first
-so a replay against a partially-applied DB (staging
-restore, manual repair, fresh DR snapshot mid-migration)
-does not abort before the idempotent table/index work
-below. Mirrors the Phase 8 enum-extension discipline
-(`ALTER TYPE … ADD VALUE IF NOT EXISTS` for the
-`'rejected'` operator_status addition).
-
-```sql
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_type WHERE typname = 'client_status'
-  ) THEN
-    CREATE TYPE client_status AS ENUM (
-      'active',     -- normal state
-      'suspended',  -- admin-suspended (rare; future moderation)
-      'deleted'     -- soft-delete; sessions revoked, login blocked
-    );
-  END IF;
-END $$;
 ```
 
 ### §3.2 — `client_sessions` table (PR 1)
@@ -626,10 +633,34 @@ If dedupe collapses the list below a minimum-fan-out floor
 2), the RPC returns `{ok:false, error:
 'insufficient_unique_operators', dispatched_count:0}` and
 **does NOT open a dispatch round** — the trip stays
-`pending` for admin review, and an audit row is logged so
-admin sees why auto-dispatch declined to fire. This is
-strictly safer than dispatching to 1 operator (no
-competition → no offer pressure).
+`pending` for admin review. This is strictly safer than
+dispatching to 1 operator (no competition → no offer
+pressure).
+
+**No DB audit row for this decline reason (Codex round 6
+P2 #1 fix).** The earlier round-4 wording promised an
+"audit row" for this decline, but `trip_distribution_log`
+requires NOT NULL `operator_id` + NOT NULL
+`dispatch_target_id`, which the dedupe-failure case has
+neither. Rather than add a parallel failure-events table
+(out of scope for the dedupe fix), the dedupe-decline
+signal lives in TWO places only:
+  1. The RPC's structured return value
+     (`{ok:false, error:'insufficient_unique_operators'}`)
+     — surfaced to the calling Server Action, which
+     can render an admin-visible toast / log line.
+  2. A `console.error()` line in the Internal API route
+     handler with the trip_request_id + the surviving-
+     unique-phone count, captured by Vercel Functions
+     logs.
+The admin canary readout (Phase 8 PR 2e infrastructure)
+shows the dispatched count per trip via
+`trip_distribution_log`; a dedupe-decline trip simply has
+zero log rows, which is the same observable signal as
+auto-dispatch being disabled. Founder triage path:
+inspect Vercel Functions logs for the `console.error`
+when admin notices a trip stuck `pending` past the
+expected dispatch window.
 
 The dedupe rule is documented in `lib/automation/trip-
 distribution.ts` JSDoc + asserted by 3+ unit-test cases in
@@ -793,14 +824,30 @@ DO $$
 DECLARE
   v_offending_count INT;
 BEGIN
+  -- Audit allowlist MUST include 'stale_timeout' so a
+  -- replay AFTER redispatch_stale_trip_requests has
+  -- written its first row does not RAISE on values the
+  -- migration itself enabled (Codex round 6 P1 #2 fix).
   SELECT COUNT(*) INTO v_offending_count
     FROM trip_dispatch_rounds
    WHERE closed_reason IS NOT NULL
-     AND closed_reason NOT IN ('offer_accepted', 'redispatched', 'admin_cancel');
+     AND closed_reason NOT IN (
+       'offer_accepted',
+       'redispatched',
+       'admin_cancel',
+       'stale_timeout'
+     );
   IF v_offending_count > 0 THEN
     RAISE EXCEPTION 'PR 4 migration: trip_dispatch_rounds has % rows with unexpected closed_reason values; manual cleanup required before CHECK can be added', v_offending_count;
   END IF;
 END $$;
+
+-- Idempotent constraint application: drop the prior
+-- definition (if any) before re-adding so a replay does
+-- not fail with "constraint already exists" (Codex
+-- round 6 P1 #2 fix).
+ALTER TABLE trip_dispatch_rounds
+  DROP CONSTRAINT IF EXISTS trip_dispatch_rounds_closed_reason_check;
 
 ALTER TABLE trip_dispatch_rounds
   ADD CONSTRAINT trip_dispatch_rounds_closed_reason_check
@@ -820,7 +867,9 @@ The CHECK ships in the same migration file as the
 `closed_reason='stale_timeout'` write is always backed by
 schema enforcement on production. Future closed_reason
 values (e.g. Phase 10 admin merge/split) will require an
-explicit migration to extend the CHECK list.
+explicit migration to extend the CHECK list (and to
+extend the audit allowlist above for the same replay-
+safety reason).
 
 ---
 
