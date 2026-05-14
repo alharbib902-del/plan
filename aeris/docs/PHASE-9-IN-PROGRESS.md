@@ -14,10 +14,10 @@
 |---|---|
 | **Active PR** | [#58 — Phase 9 PR 4 Auto-distribution engine](https://github.com/alharbib902-del/plan/pull/58) |
 | **Branch** | `feature/phase-9-pr-4-auto-distribution` |
-| **Code HEAD** | `62c3521` (Codex round 2 fixes — 3 P1 + 1 P2) |
-| **Status** | ⏳ Awaiting Codex round 3 review |
-| **Last action** | Round 2 fixes pushed: cron honours ENABLE_TRIP_AUTO_DISTRIBUTION + Phase B restricted to client-portal trips + Phase A failure-recovery flips back to pending + fractional NUMERIC stale-hours |
-| **Next action** | Codex round 3 review → iterate or merge |
+| **Code HEAD** | `ace150a` (Codex round 3 fixes — 1 P1 + 2 P2) |
+| **Status** | ⏳ Awaiting Codex round 4 review |
+| **Last action** | Round 3 fixes pushed: dropped Phase B log-row exclusion (was re-stranding) + endpoint honours flag too + contract comment updated to NUMERIC |
+| **Next action** | Codex round 4 review → iterate or merge |
 
 ### PR 1 + 2 + 3 production activation (founder, can run in parallel with PR 4 dev)
 
@@ -61,7 +61,7 @@
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
 | PR 3 | [#57](https://github.com/alharbib902-del/plan/pull/57) | ✅ MERGED | `05f5713` | Client portal — 2 Codex rounds, 1 P2 closed (fastest in Phase 9) |
-| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `62c3521` | Auto-distribution — 7 files, 7 tests, 3 RPCs + endpoint + 2-phase cron |
+| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `ace150a` | Auto-distribution — 7 files, 7 tests, 3 RPCs + endpoint + 2-phase cron |
 
 ---
 
@@ -358,6 +358,22 @@ rounds that MUST be applied:
     writes remain correct (the old round was genuinely
     closed); restoring `pending` just keeps the trip in
     play.
+27. **"Defensive against future code paths" filters can
+    create the very stranding bug they were meant to
+    prevent** (Codex round 3 PR #58 P1 #1). PR 4 Phase B
+    initially excluded any trip with an existing
+    `trip_distribution_log` row, "in case" some future
+    code path wrote logs out-of-order vs. the trip status
+    flip. But every Phase A failure-recovery row HAS a
+    prior log row by construction, so the defensive
+    filter silently re-stranded exactly the trips the
+    recovery was trying to save. Lesson: when adding a
+    "defensive" filter, model the actual call paths that
+    can flip a row INTO the queue you're scanning —
+    including recovery paths that just landed in a prior
+    convention. If the defensive filter would exclude a
+    legitimate recovered row, it is a stranding bug
+    waiting to happen, not defence.
 
 ---
 
