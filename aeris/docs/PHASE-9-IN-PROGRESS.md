@@ -12,12 +12,12 @@
 
 | Field | Value |
 |---|---|
-| **Active PR** | PR 3 — Client portal (branch pushed, awaiting PR open) |
+| **Active PR** | [#57 — Phase 9 PR 3 Client portal](https://github.com/alharbib902-del/plan/pull/57) |
 | **Branch** | `feature/phase-9-pr-3-client-portal` |
 | **Code HEAD** | `62fe8ce` (PR 3 initial — 4 pages + 2 Server Actions + 5 components + 10 tests) |
-| **Status** | ⏳ Ready to open PR; awaiting Codex round 1 review |
-| **Last action** | PR 3 code commit pushed at `62fe8ce` (18 files, +1773/-8) |
-| **Next action** | Open PR via `gh pr create` → run CI → invite Codex review |
+| **Status** | ⏳ Awaiting Codex round 1 review |
+| **Last action** | PR #57 opened against `main` |
+| **Next action** | Codex round 1 review → iterate or merge |
 
 ### PR 1 + PR 2 production activation (founder, can run in parallel with PR 3 dev)
 
@@ -58,7 +58,7 @@
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
-| **PR 3** | (about to open) | ⏳ READY FOR REVIEW | `62fe8ce` | Client portal — 18 files, 10 new tests, 5 components |
+| **PR 3** | [#57](https://github.com/alharbib902-del/plan/pull/57) | 🟡 OPEN | `62fe8ce` | Client portal — 18 files, 10 new tests, 5 components |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
 ---
