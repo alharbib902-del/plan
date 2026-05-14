@@ -8,22 +8,23 @@
 
 ---
 
-## 📍 Current state (last updated: PR 3 round 0 — initial commit ready for review)
+## 📍 Current state (last updated: PR 3 merged → PR 4 starting)
 
 | Field | Value |
 |---|---|
-| **Active PR** | [#57 — Phase 9 PR 3 Client portal](https://github.com/alharbib902-del/plan/pull/57) |
-| **Branch** | `feature/phase-9-pr-3-client-portal` |
-| **Code HEAD** | `d87f435` (Codex round 1 P2 fix — UUID guard on detail-page query helpers) |
-| **Status** | ⏳ Awaiting Codex round 2 review |
-| **Last action** | Round 1 fix pushed: `isUuid` short-circuit in `getTripRequestForClient` + `getBookingForClient` |
-| **Next action** | Codex round 2 review → iterate or merge |
+| **Active PR** | PR 4 — Auto-distribution engine (branch open, not yet pushed) |
+| **Branch** | `feature/phase-9-pr-4-auto-distribution` |
+| **Code HEAD** | `05f5713` on `main` (squash-merge of PR #57) |
+| **Status** | 🚧 PR 4 in active development (planning + migration phase next) |
+| **Last action** | PR #57 merged at `05f5713` after Codex round 2 accepted 100/100 (1 P2 closed across 2 rounds — fastest PR yet) |
+| **Next action** | Build PR 4 per Phase 9 spec §5; founder can run PR 1 + 2 + 3 activation in parallel |
 
-### PR 1 + PR 2 production activation (founder, can run in parallel with PR 3 dev)
+### PR 1 + 2 + 3 production activation (founder, can run in parallel with PR 4 dev)
 
 1. Apply migrations in order in Supabase:
    - `20260520000026_phase_9_pr_1_client_auth.sql`
    - `20260521000027_phase_9_pr_2_create_authenticated_trip_request.sql`
+   - (PR 3 ships no migration)
 2. Set Vercel env vars (Production + Preview):
    - `ENABLE_CLIENT_PORTAL=true`
    - `CLIENT_PASSWORD_RESET_TOKEN_SECRET=<openssl rand -hex 32>`
@@ -31,6 +32,7 @@
 4. Run probes per Phase 9 spec §6:
    - 9 PR 1 probes (1, 2, 3, 3-shape, 4, 4-canary, 5, 6, 7)
    - 3 PR 2 probes (8, 9, 10)
+   - 4 PR 3 probes (11, 12, 13, 14)
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -58,8 +60,8 @@
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
-| **PR 3** | [#57](https://github.com/alharbib902-del/plan/pull/57) | 🟡 OPEN | `d87f435` | Client portal — 20 files, 20 new tests, 5 components |
-| PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
+| PR 3 | [#57](https://github.com/alharbib902-del/plan/pull/57) | ✅ MERGED | `05f5713` | Client portal — 2 Codex rounds, 1 P2 closed (fastest in Phase 9) |
+| **PR 4** | — | 🚧 IN DEV | — | Auto-distribution engine (~800 lines, the largest PR in Phase 9) |
 
 ---
 
@@ -269,68 +271,88 @@ rounds that MUST be applied:
 
 ## ▶️ Resume instructions
 
-### If you're resuming PR 3 mid-flight
+### If you're resuming PR 4 mid-flight
 
-1. `git checkout feature/phase-9-pr-3-client-portal`
-2. Read Phase 9 spec §5 PR 3 inventory (below) plus the
-   spec round 4 P1 #2 single-conditional-UPDATE pattern for
-   `clientDeclineOffer`.
+1. `git checkout feature/phase-9-pr-4-auto-distribution`
+2. Read Phase 9 spec §3.8 (`trip_distribution_log`),
+   §3.9 (CHECK extension), §4.3 (RPCs), §5 PR 4 (full
+   inventory). Critical guards documented in conventions
+   #14–#19 above.
 3. Continue from the open todo (`git status` to see what's
    staged); validate (type-check + lint + new test) before
    each push.
 
-### PR 3 inventory (Phase 9 spec §5)
+### PR 4 inventory (Phase 9 spec §5 — the largest PR)
 
-- **No migration** (reuses existing tables — `trip_requests`,
-  `phase4_operator_offers`, `phase5_operator_offers`,
-  `bookings`, `accept_offer` RPC).
-- **4 pages** under `app/(client)/me/`:
-  - `requests/page.tsx` — list with status chips +
-    `?status=` filter (`all|pending|distributed|offered|
-    booked|cancelled`)
-  - `requests/[id]/page.tsx` — detail (metadata + status
-    timeline + offers via `UnifiedOfferCard` + accept /
-    decline / cancel-trip buttons)
-  - `bookings/page.tsx` — read-only list (status='booked'
-    trips)
-  - `bookings/[id]/page.tsx` — booking detail (operator
-    snapshot, route, add-ons)
-- **2 NEW Server Actions** (extend
-  `app/actions/clients-trip-requests.ts`):
-  - `clientAcceptOffer` — pre-SELECT trip ownership +
-    `accept_offer(source, offer_id)` RPC + revalidate
-  - `clientDeclineOffer` — single conditional UPDATE on
-    `phase4_operator_offers` OR `phase5_operator_offers`
-    with three guards ANDed in the WHERE clause (Codex
-    round 4 P1 #2 fix on spec): trip ownership, offer
-    `status='pending'`, parent trip `status IN
-    ('distributed','offered')`. Zero rows → opaque
-    `decline_not_allowed`.
-- **`cancelMyTripRequest`** already shipped in PR 2 — PR 3
-  just adds the UI button on the request detail page.
-- **Components** (~10):
-  - reuse `UnifiedOfferCard` (existing) for offer rendering
-  - new `requests-table.tsx`, `request-detail.tsx`,
-    `bookings-table.tsx`, `booking-detail.tsx`,
-    `accept-offer-button.tsx`, `decline-offer-button.tsx`,
-    `cancel-trip-button.tsx`
-- **Validators** extended in `lib/validators/clients.ts`:
-  `acceptOfferSchema` (offer_id UUID + source enum),
-  `declineOfferSchema` (same)
-- **i18n** entries added to `clientsAr`: status chip labels,
-  table headers, action labels, `decline_not_allowed` /
-  `accept_failed` error contracts
-- **1 test suite** for the new validators
+- **1 migration**
+  `20260522000028_phase_9_pr_4_auto_distribution.sql`:
+  - **§3.8** `trip_distribution_log` table (one row per
+    `(trip × round × operator)` triple; uniqueness via
+    `dispatch_target_id` per Codex round 3 P1 #2 fix)
+  - **§3.9** extend
+    `operator_cron_tick_history_job_name_check` with the
+    4th client-cleanup name `redispatch_stale_trip_requests`
+  - **§4.3** two SECURITY DEFINER RPCs
+    (`score_operators_for_trip`, `auto_dispatch_trip_request`)
+    + cleanup RPC (`redispatch_stale_trip_requests`)
+- **`score_operators_for_trip(p_trip_request_id) → JSON`**:
+  pure read; returns top-5 `[{operator_id, score, rank,
+  contact_phone, …}]`. **Eligibility filter** (Codex round 3
+  P1 #1): `WHERE signup_status = 'approved' AND
+  contact_phone IS NOT NULL AND TRIM(contact_phone) <> ''`.
+  Score formula: rating 40 / response time 30 / price 20 /
+  location 10 (per CLAUDE.md "Trip Distribution Engine").
+- **`auto_dispatch_trip_request(p_trip_request_id) → JSON`**:
+  scoring → **phone dedupe** (Codex round 4 P2 #2: normalise
+  + group by phone; keep highest-ranked; re-rank 1..N) →
+  open Phase 5 dispatch round (existing
+  `open_phase5_dispatch_round` reused) → INSERT
+  `trip_distribution_log` rows → set
+  `trip_requests.current_dispatch_round_id` → returns
+  `{ok, dispatched_count, round_id, targets:[…]}`. Min
+  fanout `PHASE_9_MIN_DISPATCH_FANOUT=2` (env, default 2);
+  below → `{ok:false, error:'insufficient_unique_operators',
+  dispatched_count:0}` + `console.error` only (no parallel
+  audit table per Codex round 6 P2 #1).
+- **`redispatch_stale_trip_requests`**: cron RPC scanning
+  for trips that landed in `pending` more than N hours ago
+  with no current_dispatch_round_id; calls
+  `auto_dispatch_trip_request` for each. Records tick in
+  `operator_cron_tick_history`.
+- **`/api/trip-distribution/internal/dispatch` endpoint**
+  (`app/api/trip-distribution/internal/dispatch/route.ts`):
+  POST receiver for the PR 2 fire-and-forget helper. Auth
+  via `Authorization: Bearer ${CRON_SECRET}`. Body
+  `{trip_request_id, event}`. Calls
+  `auto_dispatch_trip_request` synchronously; success
+  logs structured row.
+- **Cron route**
+  `app/api/cron/client/redispatch-stale/route.ts` (every
+  6h via vercel.json). Wraps the cron RPC.
+- **Admin canary extension**: 5th `<ChannelHealth>` card
+  for the trip-distribution channel (Phase 8 PR 2e
+  pattern).
+- **Tests**: 1+ test suite (likely Jest tsx for the
+  scoring formula in TS mirror — pure function easy to
+  pin).
+- **6 founder probes (15–20)** per Phase 9 spec §6:
+  - 15: scoring excludes unapproved operators
+  - 16: dispatch fan-out happy path
+  - 17: phone dedupe collapses correctly
+  - 18: insufficient_unique_operators decline
+  - 19: redispatch cron idempotency
+  - 20: trip_distribution_log uniqueness on
+    `dispatch_target_id`
 
-### When PR 3 reaches Codex 100/100
+### When PR 4 reaches Codex 100/100
 
-1. Merge PR 3 (squash + delete branch)
+1. Merge PR 4 (squash + delete branch)
 2. Sync main locally
-3. Update this file: PR 3 row → ✅ MERGED + merge sha
-4. Set Active PR row to PR 4
-5. Begin PR 4 (auto-distribution engine — `score_operators_for_trip`,
-   `auto_dispatch_trip_request`, `/api/trip-distribution/internal/dispatch`,
-   PR 4 cron drains, per Phase 9 spec §5)
+3. Update this file: PR 4 row → ✅ MERGED + merge sha
+4. Phase 9 is then **CODE COMPLETE**. Founder runs final
+   activation (apply PR 4 migration + flip
+   `ENABLE_TRIP_AUTO_DISTRIBUTION=true` after probes 16+17
+   pass) + 22-probe sweep, then closes Phase 9.
 
 ---
 
@@ -397,15 +419,14 @@ Open items:
 - **PR 1 production activation pending** — see "PR 1
   production activation" panel at the top. Founder action
   out of band; doesn't block PR 2 review.
-- **PR 1 + PR 2 production activation pending** — see
+- **PR 1 + 2 + 3 production activation pending** — see
   panel at the top of this doc. Founder action out of band;
-  doesn't block PR 3 review.
-- **PR 3 — Code HEAD `d87f435` after Codex round 1
-  (1 P2 closed)**. Awaiting Codex round 2. Validation green:
-  TS clean, ESLint 0, 68 tests pass (10 reset-token +
-  6 auth-session + 10 email-normalize + 16 trip-request-
-  validators + 6 datetime-local + 10 offer-action-validators
-  + 10 uuid).
+  doesn't block PR 4 development.
+- **PR 4 — IN ACTIVE DEVELOPMENT**, branch
+  `feature/phase-9-pr-4-auto-distribution`. No code
+  committed yet at this update. The largest PR in Phase 9
+  (~800 lines spread across migration + 2 RPCs + endpoint +
+  cron + canary).
 - **Follow-up cleanup migration (lighter scope after PR 2
   round 3)**: post-Phase 9 activation, run `ALTER TABLE …
   VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
