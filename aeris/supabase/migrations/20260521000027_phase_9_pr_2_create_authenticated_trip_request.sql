@@ -125,10 +125,27 @@ BEGIN
 END $$;
 
 -- Step 2a: backfill snapshots from `users` for any orphaned
--- pointer that still has a matching legacy users row.
+-- pointer that still has a matching legacy users row. Codex
+-- round 4 PR #56 P1 #1 fix: `users.full_name` is VARCHAR(200)
+-- while `trip_requests.customer_name` is VARCHAR(120), so a
+-- valid legacy user with a 120+ char name would crash this
+-- UPDATE with `value too long for type character varying(120)`
+-- and abort the migration. `LEFT(..., 120)` truncates safely.
+-- `users.phone` is VARCHAR(20) (matches the target), but we
+-- still pipe it through `NULLIF(BTRIM(...), '')` so an empty-
+-- string row falls through to the placeholder rather than
+-- writing a meaningless blank into the snapshot.
 UPDATE trip_requests AS tr
-   SET customer_name  = COALESCE(NULLIF(BTRIM(tr.customer_name),  ''), u.full_name, 'Legacy customer'),
-       customer_phone = COALESCE(NULLIF(BTRIM(tr.customer_phone), ''), u.phone,     'unknown')
+   SET customer_name  = COALESCE(
+                          NULLIF(BTRIM(tr.customer_name), ''),
+                          NULLIF(LEFT(u.full_name, 120), ''),
+                          'Legacy customer'
+                        ),
+       customer_phone = COALESCE(
+                          NULLIF(BTRIM(tr.customer_phone), ''),
+                          NULLIF(BTRIM(u.phone), ''),
+                          'unknown'
+                        )
   FROM users u
  WHERE tr.client_id IS NOT NULL
    AND tr.client_id = u.id
@@ -231,10 +248,23 @@ BEGIN
 END $$;
 
 -- Step 3a: backfill snapshots from `users` for any orphaned
--- pointer that still has a matching legacy users row.
+-- pointer that still has a matching legacy users row. Same
+-- Codex round 4 PR #56 P1 #1 fix as §1: `users.full_name` is
+-- VARCHAR(200) while `bookings.customer_name_snapshot` is
+-- VARCHAR(120), so a 120+ char name aborts the migration
+-- without LEFT(120). `users.phone` width matches but still
+-- gets BTRIM/empty-fallback for clean snapshots.
 UPDATE bookings AS b
-   SET customer_name_snapshot  = COALESCE(NULLIF(BTRIM(b.customer_name_snapshot),  ''), u.full_name, 'Legacy customer'),
-       customer_phone_snapshot = COALESCE(NULLIF(BTRIM(b.customer_phone_snapshot), ''), u.phone,     'unknown')
+   SET customer_name_snapshot  = COALESCE(
+                                    NULLIF(BTRIM(b.customer_name_snapshot), ''),
+                                    NULLIF(LEFT(u.full_name, 120), ''),
+                                    'Legacy customer'
+                                  ),
+       customer_phone_snapshot = COALESCE(
+                                    NULLIF(BTRIM(b.customer_phone_snapshot), ''),
+                                    NULLIF(BTRIM(u.phone), ''),
+                                    'unknown'
+                                  )
   FROM users u
  WHERE b.client_id IS NOT NULL
    AND b.client_id = u.id
