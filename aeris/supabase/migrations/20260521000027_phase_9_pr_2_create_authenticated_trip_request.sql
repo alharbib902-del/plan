@@ -11,6 +11,20 @@
 --                              [Codex round 1 PR #56 P1 #1 fix]
 --   §3   create_authenticated_trip_request(...)  RPC
 --
+-- Validation discipline (Codex round 2 PR #56 P1 #1 fix):
+-- Both retargeted FKs are added with `NOT VALID` AND ARE NOT
+-- VALIDATED in this migration. PostgreSQL still enforces the
+-- new FK against every forward INSERT/UPDATE; only pre-existing
+-- rows are skipped. A follow-up cleanup migration (post-Phase 9
+-- activation) is responsible for:
+--   1. NULLing any trip_requests.client_id and
+--      bookings.client_id whose UUID points at the legacy
+--      users(id) instead of the new clients(id).
+--   2. `ALTER TABLE … VALIDATE CONSTRAINT
+--      <name>_client_id_clients_fkey;`
+-- Eager validation here would block production activation / DR
+-- replay if any legacy users-backed pointer survived.
+--
 -- Dependencies:
 --   - Phase 1   trip_requests, bookings, trip_type,
 --               aircraft_category, trip_request_status,
@@ -65,11 +79,19 @@
 --      snapshot columns (Phase 4) preserve the readable identity
 --      after the FK clears, and the trip_requests_identity_check
 --      constraint (Phase 4) keeps the row valid post-clearance.
---   3. Use `NOT VALID` so the constraint is added without
---      scanning historical rows; then run `VALIDATE CONSTRAINT`
---      in a separate statement so legacy data (Phase 1 rows
---      with users.id pointers, if any) surfaces explicitly
---      rather than silently failing the INSERT later.
+--   3. Add the constraint as `NOT VALID` and DO NOT validate it
+--      in this migration (Codex round 2 PR #56 P1 #1 fix). All
+--      forward INSERT/UPDATE traffic IS still gated by the new
+--      FK — Postgres applies a NOT VALID FK to every new row;
+--      only pre-existing rows are skipped. A separate cleanup +
+--      backfill migration (post-Phase 9 activation) will:
+--        a. NULL out any trip_requests.client_id whose UUID does
+--           not exist in clients (legacy Phase 1 user pointers).
+--        b. `ALTER TABLE … VALIDATE CONSTRAINT
+--           trip_requests_client_id_clients_fkey;`
+--      Validating eagerly here would block production activation
+--      / DR replay if any legacy users-backed pointer survived
+--      to this point.
 --
 -- DR/replay safety: each step uses IF EXISTS / DO blocks so a
 -- partial replay (e.g. dropped FK already, retried migration)
@@ -102,8 +124,9 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE trip_requests
-  VALIDATE CONSTRAINT trip_requests_client_id_clients_fkey;
+-- Intentionally NO `VALIDATE CONSTRAINT` here. See plan step
+-- 3 above. Forward writes are still enforced; legacy rows
+-- are deferred to a follow-up cleanup migration.
 
 
 -- ============================================================
@@ -126,9 +149,17 @@ ALTER TABLE trip_requests
 --      side which dropped NOT NULL in Phase 4 (a guest-trip
 --      that gets booked needs a NULL pointer too).
 --   2. Drop the legacy FK to users(id).
---   3. Re-add the FK to clients(id) with ON DELETE SET NULL,
---      NOT VALID, then VALIDATE in a separate statement so
---      legacy bookings rows surface explicitly.
+--   3. Re-add the FK to clients(id) with ON DELETE SET NULL
+--      and `NOT VALID`. **Do NOT validate eagerly here**
+--      (Codex round 2 PR #56 P1 #1 fix). Forward writes are
+--      gated by the new FK; legacy rows from Phase 1 (any
+--      bookings.client_id pointing at users(id)) are deferred
+--      to a follow-up cleanup migration (post-Phase 9
+--      activation) that NULLs the orphaned pointers and then
+--      runs `ALTER TABLE … VALIDATE CONSTRAINT
+--      bookings_client_id_clients_fkey;`. Validating here
+--      would block production activation / DR replay if any
+--      legacy users-backed booking pointer survived.
 --
 -- Snapshot survival: Phase 6 PR 2a's accept_offer extension
 -- writes `customer_name` / `customer_phone` snapshots on
@@ -170,8 +201,9 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE bookings
-  VALIDATE CONSTRAINT bookings_client_id_clients_fkey;
+-- Intentionally NO `VALIDATE CONSTRAINT` here. See plan step
+-- 3 above. Forward writes are still enforced; legacy rows
+-- are deferred to a follow-up cleanup migration.
 
 
 -- ============================================================
