@@ -8,16 +8,16 @@
 
 ---
 
-## 📍 Current state (last updated: PR 2 round 2 fix)
+## 📍 Current state (last updated: PR 2 round 3 fix)
 
 | Field | Value |
 |---|---|
 | **Active PR** | [#56 — Phase 9 PR 2 Charter form](https://github.com/alharbib902-del/plan/pull/56) |
 | **Branch** | `feature/phase-9-pr-2-charter-form` |
-| **Code HEAD** | `8adc139` (Codex round 2 P1 fix — defer FK validation) |
-| **Status** | ⏳ Awaiting Codex round 3 review |
-| **Last action** | Round 2 fix pushed: drop eager VALIDATE on both retargeted FKs (defer to follow-up cleanup migration) |
-| **Next action** | Codex round 3 review → iterate or merge |
+| **Code HEAD** | `4e8130a` (Codex round 3 P1 fix — inline backfill before new FKs) |
+| **Status** | ⏳ Awaiting Codex round 4 review |
+| **Last action** | Round 3 fix pushed: inline-backfill orphaned client_id pointers (snapshot from `users` → placeholder → NULL) before adding the new NOT VALID FKs |
+| **Next action** | Codex round 4 review → iterate or merge |
 
 ### PR 1 production activation (founder, can run in parallel with PR 2 dev)
 
@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
-| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `8adc139` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
+| **PR 2** | [#56](https://github.com/alharbib902-del/plan/pull/56) | 🟡 OPEN | `4e8130a` | Charter form — 12 files, 22 new tests, 11 RPC contracts |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
 
@@ -198,18 +198,37 @@ rounds that MUST be applied:
     `NOT VALID` and immediately running `VALIDATE CONSTRAINT`
     in the same migration would block production activation /
     DR replay if any legacy `users(id)`-backed pointer
-    survived in either table. The correct sequence is:
-    1. PR 2 migration adds the FK as `NOT VALID` only —
-       forward writes are still gated; legacy rows are
-       skipped.
-    2. A follow-up cleanup migration (after activation,
-       scope-isolated to the user→client backfill):
-       - NULL orphaned pointers, and
-       - `ALTER TABLE … VALIDATE CONSTRAINT
-         <name>_client_id_clients_fkey;`
-    Always pair "FK retarget across an identity-table swap"
-    with a deferred-validation contract documented in the
-    migration header.
+    survived in either table. Defer the `VALIDATE` to a
+    follow-up cleanup migration after activation is cold-quiet.
+18. **`NOT VALID` is NOT enough on its own — inline-backfill
+    legacy orphans inside the same FK-retarget migration**
+    (Codex round 3 PR #56 P1 #1). PostgreSQL still applies a
+    `NOT VALID` FK to every forward INSERT/UPDATE; only
+    pre-existing rows are skipped. So the moment a downstream
+    RPC (Phase 6 `accept_offer` copying `v_trip.client_id`
+    into `bookings.client_id`) tries to write a still-orphaned
+    legacy pointer, the new FK rejects it. The correct
+    pattern for an identity-table FK retarget is:
+    1. DROP old FK
+    2. **Inline-backfill orphans (3 ordered UPDATEs per
+       table)**:
+       a. snapshot-fill from the legacy table (e.g. `users`)
+          for orphans whose legacy row still exists, into
+          whatever snapshot columns the row has
+          (`customer_name`/`customer_phone` on
+          trip_requests; `customer_name_snapshot`/
+          `customer_phone_snapshot` on bookings — yes the
+          column names DIFFER between tables);
+       b. placeholder-fill (e.g. `'Legacy customer'` /
+          `'unknown'`) for orphans whose legacy row is also
+          gone, so any identity_check passes after NULL;
+       c. `UPDATE … SET fk_column = NULL WHERE fk_column IS
+          NOT NULL AND NOT EXISTS (SELECT 1 FROM new_table
+          WHERE id = fk_column);`
+    3. ADD new FK with `NOT VALID` (per #17 above).
+    4. Defer `VALIDATE CONSTRAINT` to cleanup migration.
+    The UPDATEs are idempotent (orphan filter no longer
+    matches once NULLed) so DR replay is safe.
 
 ---
 
@@ -322,19 +341,20 @@ Open items:
 - **PR 1 production activation pending** — see "PR 1
   production activation" panel at the top. Founder action
   out of band; doesn't block PR 2 review.
-- **PR 2 — Code HEAD `8adc139` after Codex round 2
-  (1 P1 closed)**. Awaiting Codex round 3. Validation green:
-  TS clean, ESLint 0, 48 tests pass (10 reset-token +
-  6 auth-session + 10 email-normalize + 16 trip-request-
-  validators + 6 datetime-local). Cumulative PR #56:
-  2 rounds, 4 findings closed (2 P1 + 1 P2 in round 1, 1 P1
-  in round 2).
-- **Follow-up cleanup migration owed (post-Phase 9
-  activation)**: NULL orphaned `trip_requests.client_id` /
-  `bookings.client_id` rows whose UUID points at legacy
-  `users(id)`, then `VALIDATE CONSTRAINT` on both
-  `*_client_id_clients_fkey`. Forward writes are gated
-  in the meantime.
+- **PR 2 — Code HEAD `4e8130a` after Codex round 3
+  (1 P1 closed)**. Awaiting Codex round 4. Validation green:
+  TS clean, ESLint 0, 48 tests pass. Cumulative PR #56:
+  3 rounds, 5 findings closed (2 P1 + 1 P2 in round 1,
+  1 P1 in round 2, 1 P1 in round 3).
+- **Follow-up cleanup migration (lighter scope after round
+  3)**: post-Phase 9 activation, run `ALTER TABLE …
+  VALIDATE CONSTRAINT` on both `*_client_id_clients_fkey`.
+  Round 3's inline backfill already cleared every legacy
+  orphan; the deferred VALIDATE is now just a
+  belt-and-braces safety net against any concurrent process
+  slipping a stray pointer in between the backfill and the
+  FK swap (which Postgres serialises within a single
+  migration anyway, so this is mostly paperwork).
 
 ---
 
