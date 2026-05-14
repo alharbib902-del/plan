@@ -14,9 +14,9 @@
 |---|---|
 | **Active PR** | [#55 — Phase 9 PR 1 Client Auth](https://github.com/alharbib902-del/plan/pull/55) |
 | **Branch** | `feature/phase-9-pr-1-client-auth` |
-| **HEAD** | `a363064` (Codex round 1 fixes pushed) |
+| **HEAD** | `bc0384d` (added this resume doc; code HEAD = `a363064`) |
 | **Status** | ⏳ Awaiting Codex round 2 review |
-| **Last action** | Round 1 fixes (4x — 2 P1 + 2 P2) pushed |
+| **Last action** | Round 1 fixes (4x — 2 P1 + 2 P2) pushed at `a363064`; resume doc committed at `bc0384d` |
 | **Next action** | Codex round 2 review → iterate or merge |
 
 ---
@@ -26,7 +26,7 @@
 | # | PR | Status | sha | Notes |
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
-| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `a363064` | Client auth (32 files, 26 tests) |
+| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `bc0384d` | Client auth (32 files, 26 tests) |
 | PR 2 | — | ⏳ pending | — | Charter form (~250 lines) |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
