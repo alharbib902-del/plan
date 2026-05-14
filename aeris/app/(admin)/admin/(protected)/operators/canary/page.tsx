@@ -11,7 +11,10 @@ import {
   type CronTickHealth,
   type OperatorCleanupJobName,
 } from '@/lib/admin/operators/canary-queries';
+import { getClientNotificationAlertStatus } from '@/lib/notifications/client-email-alert-status';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
+import { clientsAr } from '@/lib/i18n/clients-ar';
 
 /**
  * Phase 8 PR 2e — admin canary readout for operator-side
@@ -54,9 +57,17 @@ export default async function AdminOperatorsCanaryPage() {
     notFound();
   }
 
-  const [velocity, alertStatus, attemptMix, cronHealth] = await Promise.all([
+  const adminClient = createAdminClient();
+  const [
+    velocity,
+    alertStatus,
+    clientAlertStatus,
+    attemptMix,
+    cronHealth,
+  ] = await Promise.all([
     safeGetOperatorSignupVelocity(),
     getOperatorNotificationAlertStatus(),
+    getClientNotificationAlertStatus(adminClient),
     getSignupAttemptMix(),
     getCronTickHealth(),
   ]);
@@ -82,7 +93,10 @@ export default async function AdminOperatorsCanaryPage() {
 
       <VelocityCard velocity={velocity} />
 
-      <NotificationHealthCard alertStatus={alertStatus} />
+      <NotificationHealthCard
+        alertStatus={alertStatus}
+        clientAlertStatus={clientAlertStatus}
+      />
 
       <AttemptMixCard mix={attemptMix} />
 
@@ -138,8 +152,12 @@ function VelocityCard({
 
 function NotificationHealthCard({
   alertStatus,
+  clientAlertStatus,
 }: {
   alertStatus: Awaited<ReturnType<typeof getOperatorNotificationAlertStatus>>;
+  clientAlertStatus: Awaited<
+    ReturnType<typeof getClientNotificationAlertStatus>
+  >;
 }) {
   if (!alertStatus) {
     return (
@@ -165,6 +183,19 @@ function NotificationHealthCard({
           status={alertStatus.whatsapp_status}
           lastFailureAt={alertStatus.whatsapp_last_failure_at}
           lastFailureReason={alertStatus.whatsapp_last_failure_reason}
+        />
+        {/* Phase 9 PR 1 — 4th ChannelHealth card for the
+            client-side Resend pipeline. Reads from the
+            client_notification_alert_status singleton; if
+            the row is unavailable (missing or transient DB
+            error), the helper returns null and we render a
+            neutral muted-state card so the operator-side
+            cards stay observable. */}
+        <ChannelHealth
+          label={clientsAr.canaryClientEmailChannel}
+          status={clientAlertStatus?.status ?? 'unknown'}
+          lastFailureAt={clientAlertStatus?.last_failure_at ?? null}
+          lastFailureReason={clientAlertStatus?.last_failure_reason ?? null}
         />
       </div>
     </Card>

@@ -1443,6 +1443,129 @@ export type OperatorSignupAttemptUpdate = Partial<
   Omit<OperatorSignupAttemptRow, 'id' | 'created_at'>
 >;
 
+// ============================================================================
+// Phase 9 PR 1 — client portal tables
+//
+// Migration file: 20260520000026_phase_9_pr_1_client_auth.sql
+// Same posture as Phase 8 PR 1 operators: service_role only,
+// RLS enabled with no policies. Functions map intentionally
+// excludes the new RPCs (Phase 8 PR 2e #48 lesson — adding
+// parameterless RPCs to the Functions map collapsed inference
+// across the entire codebase).
+// ============================================================================
+
+export type ClientSignupStatus = 'active' | 'suspended' | 'deleted';
+
+export type ClientRow = {
+  id: string;
+  auth_email: string;
+  full_name: string;
+  contact_phone: string;
+  password_hash: string;
+  password_must_change: boolean;
+  signup_status: ClientSignupStatus;
+  last_login_at: string | null;
+  marketing_opt_in: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClientInsert = Partial<ClientRow> & {
+  auth_email: string;
+  full_name: string;
+  contact_phone: string;
+  password_hash: string;
+};
+
+export type ClientUpdate = Partial<Omit<ClientRow, 'id' | 'created_at'>>;
+
+export type ClientSessionRow = {
+  id: string;
+  client_id: string;
+  token_hash: string;
+  issued_at: string;
+  expires_at: string;
+  remember_me: boolean;
+  ip_address: string | null;
+  user_agent: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+export type ClientSessionInsert = Partial<ClientSessionRow> & {
+  client_id: string;
+  token_hash: string;
+  expires_at: string;
+};
+
+export type ClientSessionUpdate = Partial<
+  Omit<ClientSessionRow, 'id' | 'created_at'>
+>;
+
+export type ClientPasswordResetTokenRow = {
+  id: string;
+  client_id: string;
+  token_hash: string;
+  issued_at: string;
+  expires_at: string;
+  used_at: string | null;
+  ip_address: string | null;
+  created_at: string;
+};
+
+export type ClientPasswordResetTokenInsert =
+  Partial<ClientPasswordResetTokenRow> & {
+    client_id: string;
+    token_hash: string;
+    expires_at: string;
+  };
+
+export type ClientPasswordResetTokenUpdate = Partial<
+  Omit<ClientPasswordResetTokenRow, 'id' | 'created_at'>
+>;
+
+export type ClientSignupAttemptResult =
+  | 'success'
+  | 'duplicate_email'
+  | 'rate_limited'
+  | 'validation_failed';
+
+export type ClientSignupAttemptRow = {
+  id: string;
+  ip_address: string;
+  attempted_at: string;
+  email_attempted: string | null;
+  result: ClientSignupAttemptResult;
+  created_at: string;
+};
+
+export type ClientSignupAttemptInsert =
+  Partial<ClientSignupAttemptRow> & {
+    ip_address: string;
+    result: ClientSignupAttemptResult;
+  };
+
+export type ClientSignupAttemptUpdate = Partial<
+  Omit<ClientSignupAttemptRow, 'id' | 'created_at'>
+>;
+
+export type ClientNotificationAlertStatusValue =
+  | 'healthy'
+  | 'config_missing'
+  | 'send_failed';
+
+export type ClientNotificationAlertStatusRow = {
+  id: 1;
+  status: ClientNotificationAlertStatusValue;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+  updated_at: string;
+};
+
+export type ClientNotificationAlertStatusUpdate = Partial<
+  Omit<ClientNotificationAlertStatusRow, 'id'>
+>;
+
 // --- operator_notification_alert_status (Phase 8 §3.10) ---
 
 // Singleton — id is always 1 (CHECK enforced by migration).
@@ -2352,6 +2475,39 @@ export type Database = {
         Row: OperatorCronTickHistoryRow;
         Insert: OperatorCronTickHistoryInsert;
         Update: OperatorCronTickHistoryUpdate;
+        Relationships: [];
+      };
+      // Phase 9 PR 1 — client portal tables (mirror of
+      // operator portal in Phase 8 PR 2c). Same posture:
+      // service_role only, RLS enabled with no policies.
+      clients: {
+        Row: ClientRow;
+        Insert: ClientInsert;
+        Update: ClientUpdate;
+        Relationships: [];
+      };
+      client_sessions: {
+        Row: ClientSessionRow;
+        Insert: ClientSessionInsert;
+        Update: ClientSessionUpdate;
+        Relationships: [];
+      };
+      client_password_reset_tokens: {
+        Row: ClientPasswordResetTokenRow;
+        Insert: ClientPasswordResetTokenInsert;
+        Update: ClientPasswordResetTokenUpdate;
+        Relationships: [];
+      };
+      client_signup_attempts: {
+        Row: ClientSignupAttemptRow;
+        Insert: ClientSignupAttemptInsert;
+        Update: ClientSignupAttemptUpdate;
+        Relationships: [];
+      };
+      client_notification_alert_status: {
+        Row: ClientNotificationAlertStatusRow;
+        Insert: ClientNotificationAlertStatusRow;
+        Update: ClientNotificationAlertStatusUpdate;
         Relationships: [];
       };
     };

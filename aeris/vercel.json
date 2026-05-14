@@ -33,6 +33,18 @@
     {
       "path": "/api/cron/operator/signup-attempts",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/client/sessions",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/client/reset-tokens",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/client/signup-attempts",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
