@@ -8,16 +8,25 @@
 
 ---
 
-## 📍 Current state (last updated: PR 1 round 2 fixes)
+## 📍 Current state (last updated: PR 1 round 3 fixes)
 
 | Field | Value |
 |---|---|
 | **Active PR** | [#55 — Phase 9 PR 1 Client Auth](https://github.com/alharbib902-del/plan/pull/55) |
 | **Branch** | `feature/phase-9-pr-1-client-auth` |
-| **HEAD** | `42bee15` (Codex round 2 fixes pushed) |
-| **Status** | ⏳ Awaiting Codex round 3 review |
-| **Last action** | Round 2 fixes (3x — 1 P1 + 2 P2) pushed |
-| **Next action** | Codex round 3 review → iterate or merge |
+| **Code HEAD** | `d63dea0` (Codex round 3 P2 #1 fix — clientSignup ip_required) |
+| **Status** | ⏳ Awaiting Codex round 4 review |
+| **Last action** | Round 3 fix (1x P2) pushed at `d63dea0` |
+| **Next action** | Codex round 4 review → iterate or merge |
+
+> **Note on `Code HEAD` vs `git log` tip:** the row above
+> records the last *code* commit. Each update to this
+> resume-doc itself produces an additional commit on the
+> branch (one of `bc0384d`/`f65c7c1`/`031636a`/this one),
+> so `git rev-parse HEAD` may be one commit ahead of `Code
+> HEAD`. The doc-only commits never change product
+> behaviour; Codex review still applies to `Code HEAD`.
+> See Codex round 3 PR #55 P2 #2 for the rationale.
 
 ---
 
@@ -26,7 +35,7 @@
 | # | PR | Status | sha | Notes |
 |---|---|---|---|---|
 | Spec | [#54](https://github.com/alharbib902-del/plan/pull/54) | ✅ MERGED | `62873b0` | 7 Codex rounds → 100/100 |
-| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `42bee15` | Client auth (32 files, 26 tests) |
+| **PR 1** | [#55](https://github.com/alharbib902-del/plan/pull/55) | 🟡 OPEN | `d63dea0` | Client auth (32 files, 26 tests) |
 | PR 2 | — | ⏳ pending | — | Charter form (~250 lines) |
 | PR 3 | — | ⏳ pending | — | Client portal (~600 lines) |
 | PR 4 | — | ⏳ pending | — | Auto-distribution engine (~800 lines) |
@@ -100,6 +109,23 @@ rounds that MUST be applied:
     would imply a security property that doesn't exist.
     Reset tokens DO use HMAC (`CLIENT_PASSWORD_RESET_TOKEN_SECRET`)
     because they travel in the URL.
+12. **Never mask a missing client IP with a sentinel like
+    `'0.0.0.0'`** (Codex round 3 PR #55 P2 #1). For any
+    Server Action that writes to a NOT NULL `ip_address`
+    column (signup attempts), do the check between Zod parse
+    and bcrypt:
+    ```ts
+    const ip = clientIp();
+    if (!ip) return { ok: false, error: 'ip_required' };
+    ```
+    A sentinel collapses honest users into one bucket so the
+    24h rate-limit blocks unrelated signups, AND it
+    neutralises the matching `ip_required` RPC contract
+    (probes can't validate the missing-IP path because the
+    Server Action prevents it from firing). Login + reset
+    actions DO pass `clientIp()` directly because their
+    target columns (`*_sessions.ip_address`,
+    `*_password_reset_tokens.ip_address`) are nullable INET.
 
 ---
 
@@ -202,8 +228,9 @@ client_status (active | suspended | deleted)
 
 ## 🚨 Open risks / unresolved
 
-None known at this point. All Codex round 1 findings
-addressed. Next blocking step is the round 2 review.
+None known at this point. All Codex round 1 + 2 + 3
+findings addressed (4 + 3 + 1 = 8 total: 3 P1 + 5 P2).
+Next blocking step is the round 4 review.
 
 ---
 
@@ -217,6 +244,15 @@ findings, etc.), the next conversation MUST:
 2. Update the **PR sequence** table.
 3. Append any **new lessons** to "Key conventions".
 4. Adjust the **Resume instructions** for the new state.
+
+**Two-commit rhythm per round (Codex round 3 PR #55 P2 #2
+discipline).** Push the code fixes first, then update this
+doc to point at the code-fix SHA, then push the doc commit.
+The "Code HEAD" row records the last *code* commit, not the
+doc commit itself — `git rev-parse HEAD` will be one ahead.
+The doc-only commit never changes product behaviour, so
+this divergence is acceptable as long as the row in the
+Current state table is correct as of the last *code* push.
 
 The doc is the single source of truth for "where are we?"
 in Phase 9 — keep it accurate.
