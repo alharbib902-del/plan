@@ -11,19 +11,26 @@
 --                              [Codex round 1 PR #56 P1 #1 fix]
 --   §3   create_authenticated_trip_request(...)  RPC
 --
--- Validation discipline (Codex round 2 PR #56 P1 #1 fix):
--- Both retargeted FKs are added with `NOT VALID` AND ARE NOT
--- VALIDATED in this migration. PostgreSQL still enforces the
--- new FK against every forward INSERT/UPDATE; only pre-existing
--- rows are skipped. A follow-up cleanup migration (post-Phase 9
--- activation) is responsible for:
---   1. NULLing any trip_requests.client_id and
---      bookings.client_id whose UUID points at the legacy
---      users(id) instead of the new clients(id).
---   2. `ALTER TABLE … VALIDATE CONSTRAINT
---      <name>_client_id_clients_fkey;`
--- Eager validation here would block production activation / DR
--- replay if any legacy users-backed pointer survived.
+-- Validation discipline (Codex round 2 PR #56 P1 #1 + round 3
+-- P1 #1 fixes):
+--   * Both retargeted FKs are added with `NOT VALID`. Forward
+--     INSERT/UPDATE traffic IS still gated by the new FK
+--     (Postgres enforces NOT VALID FKs against new rows);
+--     pre-existing rows are skipped.
+--   * Round 3 fix — we ALSO inline-backfill orphaned client_id
+--     pointers (trip_requests + bookings) BEFORE adding the new
+--     FKs. Without this, accept_offer / backfill_booking_from_offer
+--     would copy a legacy users(id) pointer from a still-orphaned
+--     trip into bookings.client_id, then fail the NOT VALID FK on
+--     the booking insert (NOT VALID still applies to forward
+--     writes). Snapshots are seeded from `users` first so the
+--     identity-check + ZATCA/audit readability survive the NULL.
+--   * `VALIDATE CONSTRAINT` is INTENTIONALLY NOT issued here.
+--     A follow-up cleanup migration can `VALIDATE` once we are
+--     confident no concurrent backfill is in flight; eager
+--     validation in this same statement could still block
+--     activation if a row sneaks in between the backfill and
+--     the VALIDATE.
 --
 -- Dependencies:
 --   - Phase 1   trip_requests, bookings, trip_type,
@@ -71,31 +78,39 @@
 --
 -- Plan:
 --   1. Drop the legacy FK to `users(id)`.
---   2. Re-add the FK to `clients(id)` with ON DELETE SET NULL
+--   2. Inline-backfill orphaned client_id pointers — defensively
+--      copy `users.full_name`/`phone` into the trip's
+--      `customer_name`/`customer_phone` snapshot first (so the
+--      Phase-4 trip_requests_identity_check stays satisfied and
+--      ZATCA/audit identity stays readable), then NULL the
+--      client_id. Done HERE rather than deferred (Codex round 3
+--      PR #56 P1 #1 fix) because the bookings FK below is also
+--      NOT VALID, which still rejects forward writes — and
+--      `accept_offer`/`backfill_booking_from_offer` copy
+--      `v_trip.client_id` straight into `bookings.client_id`,
+--      so any legacy trip with a users(id) pointer would fail
+--      the booking insert until the orphan is cleared. Cleaning
+--      it now keeps every accept_offer call valid from the
+--      moment this migration commits.
+--   3. Re-add the FK to `clients(id)` with ON DELETE SET NULL
 --      (NOT CASCADE): if a client deletes their account in a
 --      future privacy flow, their historic trip_requests must
 --      remain on file for audit + ZATCA invoicing — only the
---      pointer is cleared. The customer_name / customer_phone
---      snapshot columns (Phase 4) preserve the readable identity
---      after the FK clears, and the trip_requests_identity_check
---      constraint (Phase 4) keeps the row valid post-clearance.
---   3. Add the constraint as `NOT VALID` and DO NOT validate it
---      in this migration (Codex round 2 PR #56 P1 #1 fix). All
---      forward INSERT/UPDATE traffic IS still gated by the new
---      FK — Postgres applies a NOT VALID FK to every new row;
---      only pre-existing rows are skipped. A separate cleanup +
---      backfill migration (post-Phase 9 activation) will:
---        a. NULL out any trip_requests.client_id whose UUID does
---           not exist in clients (legacy Phase 1 user pointers).
---        b. `ALTER TABLE … VALIDATE CONSTRAINT
---           trip_requests_client_id_clients_fkey;`
---      Validating eagerly here would block production activation
---      / DR replay if any legacy users-backed pointer survived
---      to this point.
+--      pointer is cleared.
+--   4. Add the constraint as `NOT VALID` and DO NOT validate it
+--      in this migration (Codex round 2 PR #56 P1 #1 fix). The
+--      backfill in step 2 already cleared every legacy orphan;
+--      `NOT VALID` is kept only as a defence-in-depth lever in
+--      case any concurrent process slipped a stray pointer in
+--      between the backfill and the FK swap. A follow-up
+--      cleanup migration can `VALIDATE` once activation is
+--      cold-quiet.
 --
 -- DR/replay safety: each step uses IF EXISTS / DO blocks so a
 -- partial replay (e.g. dropped FK already, retried migration)
--- does not error out.
+-- does not error out. The backfill UPDATEs are idempotent —
+-- running them twice is a no-op (the orphan filter no longer
+-- matches once `client_id` is NULL).
 
 DO $$
 BEGIN
@@ -108,6 +123,32 @@ BEGIN
       DROP CONSTRAINT trip_requests_client_id_fkey;
   END IF;
 END $$;
+
+-- Step 2a: backfill snapshots from `users` for any orphaned
+-- pointer that still has a matching legacy users row.
+UPDATE trip_requests AS tr
+   SET customer_name  = COALESCE(NULLIF(BTRIM(tr.customer_name),  ''), u.full_name, 'Legacy customer'),
+       customer_phone = COALESCE(NULLIF(BTRIM(tr.customer_phone), ''), u.phone,     'unknown')
+  FROM users u
+ WHERE tr.client_id IS NOT NULL
+   AND tr.client_id = u.id
+   AND NOT EXISTS (SELECT 1 FROM clients c WHERE c.id = tr.client_id);
+
+-- Step 2b: for orphans whose users row is also gone, seed
+-- placeholder snapshots so the Phase-4 identity_check passes
+-- after the NULL.
+UPDATE trip_requests
+   SET customer_name  = COALESCE(NULLIF(BTRIM(customer_name),  ''), 'Legacy customer'),
+       customer_phone = COALESCE(NULLIF(BTRIM(customer_phone), ''), 'unknown')
+ WHERE client_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM clients c WHERE c.id = trip_requests.client_id);
+
+-- Step 2c: NULL the orphaned pointers. The defensive
+-- snapshots seeded above keep the rows readable + valid.
+UPDATE trip_requests
+   SET client_id = NULL
+ WHERE client_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM clients c WHERE c.id = trip_requests.client_id);
 
 DO $$
 BEGIN
@@ -124,9 +165,10 @@ BEGIN
   END IF;
 END $$;
 
--- Intentionally NO `VALIDATE CONSTRAINT` here. See plan step
--- 3 above. Forward writes are still enforced; legacy rows
--- are deferred to a follow-up cleanup migration.
+-- Intentionally NO `VALIDATE CONSTRAINT` here. The backfill
+-- above cleared every orphan; the deferred VALIDATE is just a
+-- belt-and-braces safety net against concurrent writes during
+-- activation.
 
 
 -- ============================================================
@@ -149,28 +191,30 @@ END $$;
 --      side which dropped NOT NULL in Phase 4 (a guest-trip
 --      that gets booked needs a NULL pointer too).
 --   2. Drop the legacy FK to users(id).
---   3. Re-add the FK to clients(id) with ON DELETE SET NULL
---      and `NOT VALID`. **Do NOT validate eagerly here**
---      (Codex round 2 PR #56 P1 #1 fix). Forward writes are
---      gated by the new FK; legacy rows from Phase 1 (any
---      bookings.client_id pointing at users(id)) are deferred
---      to a follow-up cleanup migration (post-Phase 9
---      activation) that NULLs the orphaned pointers and then
---      runs `ALTER TABLE … VALIDATE CONSTRAINT
---      bookings_client_id_clients_fkey;`. Validating here
---      would block production activation / DR replay if any
---      legacy users-backed booking pointer survived.
+--   3. Inline-backfill orphaned client_id pointers — defensively
+--      copy users.full_name / users.phone into the booking's
+--      customer_name_snapshot / customer_phone_snapshot first
+--      (Phase 6 PR 2a snapshot columns), then NULL the
+--      client_id. Same Codex round 3 PR #56 P1 #1 fix that
+--      §1 applies to trip_requests; bookings tend to be
+--      shorter-lived (post-accept), but we backfill here
+--      defensively so any legacy bookings row that survived
+--      from Phase 1 testing doesn't permanently violate the
+--      new NOT VALID FK either.
+--   4. Re-add the FK to clients(id) with ON DELETE SET NULL
+--      and `NOT VALID`. Same deferred-VALIDATE rationale
+--      as §1.
 --
 -- Snapshot survival: Phase 6 PR 2a's accept_offer extension
--- writes `customer_name` / `customer_phone` snapshots on
--- every booking INSERT (the migration header comment in
--- 20260508000007_phase_6_2_addons.sql §340-345 documents the
--- contract). So a bookings row whose client_id eventually
--- clears (privacy delete, FK retarget mismatch) stays
--- readable for ZATCA / audit.
+-- writes `customer_name_snapshot` / `customer_phone_snapshot`
+-- on every booking INSERT (Phase 6 PR 2a §66-67). So a
+-- bookings row whose client_id eventually clears (privacy
+-- delete, FK retarget mismatch) stays readable for ZATCA /
+-- audit.
 --
 -- DR/replay safety: each step uses IF EXISTS / DO blocks so
--- a partial replay does not error out.
+-- a partial replay does not error out. The backfill UPDATEs
+-- are idempotent (same rationale as §1).
 
 ALTER TABLE bookings ALTER COLUMN client_id DROP NOT NULL;
 
@@ -185,6 +229,30 @@ BEGIN
       DROP CONSTRAINT bookings_client_id_fkey;
   END IF;
 END $$;
+
+-- Step 3a: backfill snapshots from `users` for any orphaned
+-- pointer that still has a matching legacy users row.
+UPDATE bookings AS b
+   SET customer_name_snapshot  = COALESCE(NULLIF(BTRIM(b.customer_name_snapshot),  ''), u.full_name, 'Legacy customer'),
+       customer_phone_snapshot = COALESCE(NULLIF(BTRIM(b.customer_phone_snapshot), ''), u.phone,     'unknown')
+  FROM users u
+ WHERE b.client_id IS NOT NULL
+   AND b.client_id = u.id
+   AND NOT EXISTS (SELECT 1 FROM clients c WHERE c.id = b.client_id);
+
+-- Step 3b: for orphans with no matching users row, seed
+-- placeholders so the snapshots are never blank post-NULL.
+UPDATE bookings
+   SET customer_name_snapshot  = COALESCE(NULLIF(BTRIM(customer_name_snapshot),  ''), 'Legacy customer'),
+       customer_phone_snapshot = COALESCE(NULLIF(BTRIM(customer_phone_snapshot), ''), 'unknown')
+ WHERE client_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM clients c WHERE c.id = bookings.client_id);
+
+-- Step 3c: NULL the orphaned pointers.
+UPDATE bookings
+   SET client_id = NULL
+ WHERE client_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM clients c WHERE c.id = bookings.client_id);
 
 DO $$
 BEGIN
@@ -201,9 +269,10 @@ BEGIN
   END IF;
 END $$;
 
--- Intentionally NO `VALIDATE CONSTRAINT` here. See plan step
--- 3 above. Forward writes are still enforced; legacy rows
--- are deferred to a follow-up cleanup migration.
+-- Intentionally NO `VALIDATE CONSTRAINT` here. The backfill
+-- above cleared every orphan; the deferred VALIDATE is just
+-- a belt-and-braces safety net against concurrent writes
+-- during activation.
 
 
 -- ============================================================
