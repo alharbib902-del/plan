@@ -14,10 +14,10 @@
 |---|---|
 | **Active PR** | [#58 — Phase 9 PR 4 Auto-distribution engine](https://github.com/alharbib902-del/plan/pull/58) |
 | **Branch** | `feature/phase-9-pr-4-auto-distribution` |
-| **Code HEAD** | `83ee2fe` (Codex round 1 fixes — 3 P1 + 1 P2) |
-| **Status** | ⏳ Awaiting Codex round 2 review |
-| **Last action** | Round 1 fixes pushed: cron-history INSERT switched to record_operator_cron_tick + CHECK list restated with exact existing names + redispatch RPC now drains pending trips (Phase B) + p_stale_hours parameterised |
-| **Next action** | Codex round 2 review → iterate or merge |
+| **Code HEAD** | `62c3521` (Codex round 2 fixes — 3 P1 + 1 P2) |
+| **Status** | ⏳ Awaiting Codex round 3 review |
+| **Last action** | Round 2 fixes pushed: cron honours ENABLE_TRIP_AUTO_DISTRIBUTION + Phase B restricted to client-portal trips + Phase A failure-recovery flips back to pending + fractional NUMERIC stale-hours |
+| **Next action** | Codex round 3 review → iterate or merge |
 
 ### PR 1 + 2 + 3 production activation (founder, can run in parallel with PR 4 dev)
 
@@ -61,7 +61,7 @@
 | PR 1 | [#55](https://github.com/alharbib902-del/plan/pull/55) | ✅ MERGED | `dfd14d1` | Client auth — 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
 | PR 2 | [#56](https://github.com/alharbib902-del/plan/pull/56) | ✅ MERGED | `25f6c52` | Charter form — 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
 | PR 3 | [#57](https://github.com/alharbib902-del/plan/pull/57) | ✅ MERGED | `05f5713` | Client portal — 2 Codex rounds, 1 P2 closed (fastest in Phase 9) |
-| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `83ee2fe` | Auto-distribution — 7 files, 7 tests, 3 RPCs + endpoint + 2-phase cron |
+| **PR 4** | [#58](https://github.com/alharbib902-del/plan/pull/58) | 🟡 OPEN | `62c3521` | Auto-distribution — 7 files, 7 tests, 3 RPCs + endpoint + 2-phase cron |
 
 ---
 
@@ -301,10 +301,63 @@ rounds that MUST be applied:
     hard-coded `INTERVAL '… hours'` literals** (Codex
     round 1 PR #58 P2 #4). Probes that lower the threshold
     for a fast production smoke + future tuning both need
-    a knob. Pattern: `RPC(p_threshold_hours INT DEFAULT N)`
-    + cron route reads `*_HOURS` env (default N) + passes
-    through. Document the env in `.env.example` with the
-    probe rationale.
+    a knob. Pattern: `RPC(p_threshold_hours NUMERIC
+    DEFAULT N)` + cron route reads `*_HOURS` env (default N,
+    parsed as `parseFloat` not `parseInt` so fractional
+    values like `0.01` survive — Codex round 2 PR #58 P2 #4
+    fix) + passes through. SQL cutoff via
+    `(value::TEXT || ' hours')::INTERVAL` so fractional
+    NUMERIC flows correctly. Document the env in
+    `.env.example` with the probe rationale.
+24. **Kill-switch flags MUST cover EVERY entry point, not
+    just the originating Server Action** (Codex round 2
+    PR #58 P1 #1). PR 4's `ENABLE_TRIP_AUTO_DISTRIBUTION`
+    initially gated only the create-trip fire-and-forget
+    POST; the redispatch cron called the dispatcher
+    unconditionally so trips left pending while the flag
+    was intentionally off would still get auto-dispatched
+    after the stale threshold. Audit every code path that
+    can reach the gated function: Server Actions, cron
+    routes, internal endpoints, admin force-actions. When
+    the flag is off, cron routes record a
+    `success=true / error_label='skipped:flag_disabled'`
+    tick and exit without touching state — never silently
+    skip the tick recording (the canary needs to see the
+    cron is alive even when intentionally off).
+25. **Fire-and-forget drains MUST scope by the originating
+    surface, not "every old row that looks pending"**
+    (Codex round 2 PR #58 P1 #2). PR 4's Phase B
+    initially scanned every `status='pending'` trip with
+    no log row, sweeping legacy guest leads + admin
+    manual queue items into the auto-dispatcher. The fix
+    is two ANDed filters: `client_id IS NOT NULL`
+    (excludes Phase 4 lead-promoted trips) AND
+    `customer_source = 'client_portal'` (the precise PR 2
+    RPC write signature; lead-promoted trips are
+    `customer_source='lead'`, admin direct inserts default
+    to either). Pattern: any drain pickling rows by status
+    alone needs an explicit "this row was created via the
+    surface I'm draining" filter — usually the same
+    `customer_source` / origin discriminator the original
+    write used.
+26. **State-cleanup transactions that fence in a retry
+    MUST roll back to a re-pickable state on retry
+    failure** (Codex round 2 PR #58 P1 #3). PR 4 Phase A
+    closed the stale round + NULLed
+    `current_dispatch_round_id` BEFORE retrying
+    auto-dispatch. If the retry returned
+    `insufficient_unique_operators` /
+    `no_eligible_operators` / `open_round_failed`, the
+    trip stayed in `'distributed'/'offered'` with no
+    active round — outside both Phase A (no open round to
+    match) and Phase B (status filter excludes it) — and
+    was lost forever. Fix: on any non-ok retry result OR
+    exception, `UPDATE trip_requests SET status='pending'`
+    so the next cron tick re-picks it via Phase B AND
+    admin DispatchPanelV2 surfaces it. The state-cleanup
+    writes remain correct (the old round was genuinely
+    closed); restoring `pending` just keeps the trip in
+    play.
 
 ---
 
