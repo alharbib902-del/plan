@@ -159,6 +159,19 @@ export async function clientSignup(input: {
     };
   }
 
+  // Codex round 3 PR #55 P2 #1 fix — return ip_required when
+  // headers are unavailable instead of masking with
+  // '0.0.0.0'. The mask grouped real users under one fake IP,
+  // so the 24h rate-limit could block unrelated honest signups
+  // and the ip_required RPC contract could never fire as
+  // designed (probes had no way to validate the missing-IP
+  // path). Mirror Phase 8 operatorSignup discipline (PR 2c
+  // line 175): IP check sits between Zod parse and bcrypt so
+  // we don't burn a 12-cost hash on a request we can't
+  // attribute.
+  const ip = clientIp();
+  if (!ip) return { ok: false, error: 'ip_required' };
+
   let passwordHash: string;
   try {
     passwordHash = await hashClientPassword(parsed.data.password);
@@ -174,7 +187,7 @@ export async function clientSignup(input: {
     p_full_name: parsed.data.full_name,
     p_phone: parsed.data.phone,
     p_marketing_opt_in: parsed.data.marketing_opt_in,
-    p_ip: clientIp() ?? '0.0.0.0',
+    p_ip: ip,
   });
   if (error) {
     console.error('[clients-public.clientSignup] rpc error', error);
