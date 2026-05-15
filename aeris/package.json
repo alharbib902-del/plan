@@ -29,6 +29,10 @@
     "test:utils-datetime-local": "tsx lib/utils/__tests__/datetime-local.test.ts",
     "test:utils-uuid": "tsx lib/utils/__tests__/uuid.test.ts",
     "test:automation-trip-distribution-scoring": "tsx lib/automation/__tests__/trip-distribution-scoring.test.ts",
+    "test:clients-empty-legs-validators": "tsx lib/clients/__tests__/empty-legs-validators.test.ts",
+    "test:empty-legs-matching-clients": "tsx lib/empty-legs/__tests__/matching-clients.test.ts",
+    "test:empty-legs-frequency-cap-clients": "tsx lib/empty-legs/__tests__/frequency-cap-clients.test.ts",
+    "test:notifications-client-empty-leg-alert-status": "tsx lib/notifications/__tests__/client-empty-leg-alert-status.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

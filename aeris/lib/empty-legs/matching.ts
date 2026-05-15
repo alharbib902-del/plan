@@ -8,9 +8,14 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 import {
   listEligibleCandidates,
+  listEligibleClientCandidates,
   type CandidateRow,
+  type ClientCandidateRow,
 } from './candidate-pool';
-import { shouldSkipCandidate } from './frequency-cap';
+import {
+  shouldSkipCandidate,
+  shouldSkipClientCandidate,
+} from './frequency-cap';
 import {
   CAPACITY_WEIGHT,
   DISCOUNT_WEIGHT,
@@ -20,6 +25,7 @@ import {
 } from './score-weights';
 import {
   enqueueLegNotifications,
+  enqueueClientLegNotifications,
   type EnqueuedRow,
 } from './notifications';
 
@@ -69,7 +75,23 @@ import {
  */
 
 export type MatchOutcome =
-  | { ok: true; matched: { leg_id: string; rows_written: number } }
+  | {
+      ok: true;
+      matched: {
+        leg_id: string;
+        rows_written: number;
+        // Phase 10 PR 1 round 2 P2 #4: count of client_id-keyed
+        // empty_leg_notifications rows successfully inserted.
+        // Optional + populated only when the client-loop ran.
+        clients_written?: number;
+        // Phase 10 PR 1 round 6 P2 #3: count of eligible clients
+        // (passed candidate-pool + frequency-cap) but who opted
+        // out of BOTH email AND wa.me channels in §3.3
+        // notification_preferences. Observability counter only —
+        // does NOT affect shouldMarkOutboxProcessed (round 7 P1 #1).
+        clients_skipped_preferences?: number;
+      };
+    }
   | { ok: true; skipped: 'suppress_notifications'; leg_id: string }
   | { ok: true; skipped: 'notifications_disabled'; leg_id: string }
   | { ok: true; skipped: 'leg_not_found'; leg_id: string }
@@ -79,7 +101,10 @@ export type MatchOutcome =
  * Whether the match-trigger route should mark the outbox
  * row `processed_at = NOW()` for this leg's outcome.
  *
- *   - matched           → YES (the work is done)
+ *   - matched           → YES (the work is done; counters
+ *                              like clients_skipped_preferences
+ *                              are observability-only — Phase 10
+ *                              round 7 P1 #1 fix)
  *   - suppress_notifications → YES (intentional skip,
  *                                   replay would re-notify
  *                                   real candidates)
@@ -87,6 +112,9 @@ export type MatchOutcome =
  *   - leg_not_found     → YES (no point re-trying a
  *                              deleted leg)
  *   - error             → NO (transient failure, replay)
+ *
+ * Phase 10 explicitly does NOT change this contract — see
+ * spec §4.2 step 3 for the full reasoning.
  */
 export function shouldMarkOutboxProcessed(outcome: MatchOutcome): boolean {
   if (!outcome.ok) return false;
@@ -99,6 +127,17 @@ export function shouldMarkOutboxProcessed(outcome: MatchOutcome): boolean {
 
 function isNotificationsFlagEnabled(): boolean {
   return process.env.ENABLE_EMPTY_LEGS_NOTIFICATIONS === 'true';
+}
+
+/**
+ * Phase 10 PR 1 — feature flag for the client-loop. Starts OFF
+ * in production; flipped to 'true' permanently after Probes
+ * 21+22+23 pass per the activation runbook. When unset or
+ * false, the entire client extension code path is dead — no
+ * production behaviour change vs Phase 7.
+ */
+function isClientPortalFlagEnabled(): boolean {
+  return process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true';
 }
 
 // ============================================================
@@ -321,8 +360,56 @@ export async function matchLeg(
     };
   }
 
+  // ---- Phase 10 PR 1: client-loop (guarded by ENABLE_CLIENT_EMPTY_LEGS_PORTAL)
+  //
+  // When OFF, this entire block is dead — no production
+  // behaviour change vs Phase 7. When ON, list eligible
+  // clients → score → frequency-cap filter → top-N →
+  // enqueueClientLegNotifications (which handles per-client
+  // channel selection per opt-in prefs + match-email Resend
+  // dispatch + alert wiring).
+  let clientsWritten: number | undefined;
+  let clientsSkippedPreferences: number | undefined;
+  if (isClientPortalFlagEnabled()) {
+    try {
+      const clientCandidates = await listEligibleClientCandidates();
+      const eligibleClients: { cand: ClientCandidateRow; score: number }[] = [];
+      for (const cand of clientCandidates) {
+        const skip = await shouldSkipClientCandidate(cand.client_id, leg.id);
+        if (skip) continue;
+        const score = scoreCandidateAgainstLeg(leg, cand);
+        if (score <= 0) continue;
+        eligibleClients.push({ cand, score });
+      }
+      eligibleClients.sort((a, b) => b.score - a.score);
+      const topClients = eligibleClients.slice(0, TOP_N).map((t) => t.cand);
+
+      const clientResult = await enqueueClientLegNotifications({
+        leg,
+        eventType,
+        candidates: topClients,
+      });
+      clientsWritten = clientResult.written.length;
+      clientsSkippedPreferences = clientResult.skipped_preferences;
+    } catch (err) {
+      // Non-fatal: lead-loop already succeeded; log the
+      // client-loop error but still return the matched outcome
+      // so the outbox gets marked processed (the lead-loop
+      // work is real + idempotent on retry would be wasteful).
+      console.error('[matching] client-loop failed (non-fatal)', err);
+      // clientsWritten + clientsSkippedPreferences stay undefined
+    }
+  }
+
   return {
     ok: true,
-    matched: { leg_id: legId, rows_written: written.length },
+    matched: {
+      leg_id: legId,
+      rows_written: written.length,
+      ...(clientsWritten !== undefined && { clients_written: clientsWritten }),
+      ...(clientsSkippedPreferences !== undefined && {
+        clients_skipped_preferences: clientsSkippedPreferences,
+      }),
+    },
   };
 }

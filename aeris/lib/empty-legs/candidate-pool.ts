@@ -128,3 +128,162 @@ export async function listEligibleCandidates(
   }
   return out;
 }
+
+// ============================================================
+// Phase 10 PR 1 — client candidate pool
+//
+// Sibling reader for the §4.2 client-loop. Reads `clients`
+// rows that are eligible for a Phase 10 empty-leg notification.
+// Eligibility (looser than the lead path because Phase 10
+// gives authenticated clients first-class status):
+//
+//   1. `signup_status = 'active'` — suspended/deleted clients
+//      never receive Phase 10 outreach.
+//
+//   2. The matcher applies the per-channel opt-in check
+//      (§3.3 isClientOptedIn) AT MATCHING TIME via
+//      lib/clients/notification-preferences.ts. The candidate
+//      pool returns ALL active clients; the matcher filters
+//      out opted-out clients into MatchOutcome.matched
+//      .clients_skipped_preferences (Decision §4.2 step 3
+//      + round 6 P2 #3).
+//
+//   3. Per-client signal sources (Decision #13) come from
+//      the latest non-cancelled `trip_requests` row keyed on
+//      `client_id = client.id`. NULL handling per Decision #13:
+//      - origin_iata / destination_iata NULL → no geo signal
+//      - passengers NULL → defaults to 2 (median family size)
+//      - departure_date NULL → wide window (no time score)
+//      - route_pairs derived from full trip_requests history
+//        (used by route-affinity factor; not in CandidateRow
+//        because the existing scorer doesn't read it directly)
+//
+// The matcher then scores each candidate against the leg via
+// `scoreCandidateAgainstLeg` (signal substitutions per
+// Decision #13), applies `frequency-cap.ts::shouldSkipClientCandidate`
+// to drop clients already notified on this leg, takes the top N.
+// ============================================================
+
+const CLIENTS_TABLE = 'clients';
+const TRIP_REQUESTS_TABLE = 'trip_requests';
+
+export interface ClientCandidateRow extends CandidateRow {
+  /** Client UUID — alias of `id` for caller clarity. */
+  client_id: string;
+  /** Per-client opt-in JSONB — read at matching time by
+   *  `lib/clients/notification-preferences.ts::isClientOptedIn`. */
+  notification_preferences: Record<string, unknown> | null;
+}
+
+interface RawClientRow {
+  id?: string;
+  full_name?: string | null;
+  contact_phone?: string | null;
+  signup_status?: string | null;
+  notification_preferences?: Record<string, unknown> | null;
+}
+
+interface RawTripRequestSignalRow {
+  client_id?: string;
+  departure_airport?: string | null;
+  arrival_airport?: string | null;
+  passengers_count?: number | null;
+  departure_date?: string | null;
+}
+
+export async function listEligibleClientCandidates(
+  limit = 1000
+): Promise<ClientCandidateRow[]> {
+  noStore();
+  const client = createAdminClient();
+
+  // 1. Pull all active clients (preferences filtered at matching time).
+  const { data: clientsData, error: clientsError } = await client
+    .from(CLIENTS_TABLE)
+    .select(
+      'id, full_name, contact_phone, signup_status, notification_preferences'
+    )
+    .eq('signup_status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (clientsError) {
+    console.error('[candidate-pool] clients list failed', clientsError);
+    throw new Error(
+      `listEligibleClientCandidates failed (clients): ${clientsError.message}`
+    );
+  }
+
+  const rows = (clientsData ?? []) as RawClientRow[];
+  if (rows.length === 0) return [];
+
+  const clientIds: string[] = [];
+  for (const r of rows) {
+    if (typeof r.id === 'string' && r.id.length > 0) clientIds.push(r.id);
+  }
+  if (clientIds.length === 0) return [];
+
+  // 2. For each client, pull the latest non-cancelled trip_request
+  //    for signal-source projection (Decision #13). Single query
+  //    with a WHERE IN over all client ids; we group + reduce in
+  //    memory because the per-client "latest" requires a window
+  //    function that's awkward via the query builder.
+  const { data: signalData, error: signalError } = await client
+    .from(TRIP_REQUESTS_TABLE)
+    .select(
+      'client_id, departure_airport, arrival_airport, passengers_count, departure_date, created_at'
+    )
+    .in('client_id', clientIds)
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false });
+
+  if (signalError) {
+    console.error('[candidate-pool] trip_requests read failed', signalError);
+    throw new Error(
+      `listEligibleClientCandidates failed (signals): ${signalError.message}`
+    );
+  }
+
+  // Take FIRST occurrence per client_id (the order DESC above
+  // means the first hit IS the latest non-cancelled request).
+  const signalByClient = new Map<string, RawTripRequestSignalRow>();
+  for (const s of (signalData ?? []) as RawTripRequestSignalRow[]) {
+    if (typeof s.client_id !== 'string') continue;
+    if (signalByClient.has(s.client_id)) continue;
+    signalByClient.set(s.client_id, s);
+  }
+
+  // 3. Project to ClientCandidateRow shape with NULL handling
+  //    per Decision #13.
+  const out: ClientCandidateRow[] = [];
+  for (const r of rows) {
+    if (typeof r.id !== 'string' || r.id.length === 0) continue;
+    const phone = typeof r.contact_phone === 'string' ? r.contact_phone : '';
+    if (phone.trim().length === 0) continue;
+
+    const signal = signalByClient.get(r.id);
+
+    out.push({
+      // CandidateRow fields (mirror of lead shape)
+      id: r.id,
+      customer_name: r.full_name ?? null,
+      customer_phone: phone,
+      origin: null, // freeform not used for client signals
+      destination: null,
+      origin_iata: signal?.departure_airport ?? null,
+      destination_iata: signal?.arrival_airport ?? null,
+      departure_date: signal?.departure_date ?? null,
+      return_date: null, // empty-leg matching only uses departure
+      passengers:
+        typeof signal?.passengers_count === 'number'
+          ? signal.passengers_count
+          : 2, // Decision #13: NULL → 2 (median family size)
+      last_empty_leg_notified_at: null, // tracked per-client via empty_leg_notifications.client_id
+      empty_legs_opt_in: true, // explicit opt-in check happens in matching loop via prefs JSONB
+      // Phase 10 ClientCandidateRow extensions
+      client_id: r.id,
+      notification_preferences: r.notification_preferences ?? null,
+    });
+  }
+  return out;
+}
