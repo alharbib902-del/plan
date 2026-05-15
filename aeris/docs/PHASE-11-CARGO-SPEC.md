@@ -1,7 +1,7 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 7).
-> **Codex history:** rounds 1-6 closed 15 P1 + 10 P2 (25 findings):
+> **Status:** Draft for Codex review (round 8).
+> **Codex history:** rounds 1-7 closed 16 P1 + 11 P2 (27 findings):
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -83,12 +83,29 @@
 >   `CREATE TABLE IF NOT EXISTS` couldn't fix; Probe 28
 >   extended 20→25 to verify every invariant).
 >
-> Round 7 should verify the actor-guard relaxation actually
-> aligns with `app/actions/empty-legs.ts:435` admin pattern,
-> the bookings column widening is non-breaking for Phase 6/9
-> charter + Phase 7/10 empty-leg booking surfaces, and that
-> Probe 28 catches every replay-drift case (RLS + widths +
-> NOT NULL + named CHECKs).
+> - **Round 7 (1 P1 + 1 P2):** P1 #1 (date casts raise
+>   sqlstate `22007 invalid_datetime_format`, NOT `22P02
+>   invalid_text_representation` — the existing handlers
+>   missed this branch so values like `'not-a-date'` escaped
+>   as raw PG errors; added `WHEN invalid_datetime_format`
+>   to all 3 RPC EXCEPTION blocks → structured
+>   malformed_input contract for date casts too), P2 #2
+>   (Probe 28 extended 25 → 30 to verify the remaining 5
+>   named CHECKs that round 6 P2 #4 didn't add defensive
+>   re-adds for: identity_check + category_required_check +
+>   origin_present_check + destination_present_check +
+>   caps_at_least_one_check; the category check is verified
+>   via `pg_get_constraintdef ILIKE '%horse_count IS NULL%'`
+>   to ensure the round-3-strict form is in place, not any
+>   pre-round-3 lax form a partial replay might have left).
+>
+> Round 8 should verify the 22007 handler addition is correct
+> Postgres semantics (date + timestamp casts both raise 22007
+> on malformed input), and that Probe 28's category-check
+> ILIKE assertion correctly distinguishes the strict form
+> from any plausible drifted form (the strict form is the
+> only one that contains `horse_count IS NULL` as a forbid
+> clause).
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -1238,6 +1255,15 @@ BEGIN
         RETURN json_build_object('ok', false, 'error', 'validation_failed');
       END;
     WHEN invalid_text_representation THEN
+      -- Sqlstate 22P02 — UUID, numeric, ENUM cast failures
+      RETURN json_build_object('ok', false, 'error', 'malformed_input');
+    WHEN invalid_datetime_format THEN
+      -- Sqlstate 22007 — Codex round 7 PR #64 P1 #1 fix.
+      -- Date casts (e.g. (p_payload->>'pickup_date')::DATE) raise
+      -- 22007 NOT 22P02 when the input is a malformed date like
+      -- 'not-a-date' or '2026-13-99'. The prior handler missed
+      -- this branch → raw PG error escaped instead of the
+      -- structured malformed_input contract.
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
 
@@ -1428,6 +1454,15 @@ BEGIN
         RETURN json_build_object('ok', false, 'error', 'validation_failed');
       END;
     WHEN invalid_text_representation THEN
+      -- Sqlstate 22P02 — UUID, numeric, ENUM cast failures
+      RETURN json_build_object('ok', false, 'error', 'malformed_input');
+    WHEN invalid_datetime_format THEN
+      -- Sqlstate 22007 — Codex round 7 PR #64 P1 #1 fix.
+      -- Date casts (e.g. (p_payload->>'pickup_date')::DATE) raise
+      -- 22007 NOT 22P02 when the input is a malformed date like
+      -- 'not-a-date' or '2026-13-99'. The prior handler missed
+      -- this branch → raw PG error escaped instead of the
+      -- structured malformed_input contract.
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
 
@@ -1616,6 +1651,15 @@ BEGIN
         RETURN json_build_object('ok', false, 'error', 'validation_failed');
       END;
     WHEN invalid_text_representation THEN
+      -- Sqlstate 22P02 — UUID, numeric, ENUM cast failures
+      RETURN json_build_object('ok', false, 'error', 'malformed_input');
+    WHEN invalid_datetime_format THEN
+      -- Sqlstate 22007 — Codex round 7 PR #64 P1 #1 fix.
+      -- Date casts (e.g. (p_payload->>'pickup_date')::DATE) raise
+      -- 22007 NOT 22P02 when the input is a malformed date like
+      -- 'not-a-date' or '2026-13-99'. The prior handler missed
+      -- this branch → raw PG error escaped instead of the
+      -- structured malformed_input contract.
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
 
@@ -2240,24 +2284,64 @@ SELECT
   EXISTS (SELECT 1 FROM pg_class
     WHERE relname = 'cargo_aircraft_capabilities'
       AND relnamespace = 'public'::regnamespace
-      AND relrowsecurity = true) AS cargo_caps_rls_enabled;
+      AND relrowsecurity = true) AS cargo_caps_rls_enabled,
+  -- Codex round 7 PR #64 P2 #2 fix — verify the remaining 5
+  -- named CHECK constraints that CREATE TABLE IF NOT EXISTS
+  -- could leave drifted/missing on a partial replay. Round 6
+  -- P2 #4 added defensive DO-block re-adds for the 2 request
+  -- value/date CHECKs + 3 cargo_offers price CHECKs; this
+  -- round extends Probe 28 to verify the rest:
+  --   - cargo_requests_identity_check
+  --   - cargo_requests_category_required_check
+  --   - cargo_requests_origin_present_check
+  --   - cargo_requests_destination_present_check
+  --   - cargo_aircraft_capabilities_at_least_one_check
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_requests_identity_check'
+      AND conrelid = 'cargo_requests'::regclass) AS has_identity_check,
+  -- Strict category check definition assertion (round 7 P2 #2
+  -- bonus): the Round 3 P2 #3 fix tightened the constraint
+  -- from "min required" to "min required AND other 3 categories
+  -- NULL" — Probe verifies the constraint definition contains
+  -- "horse_count IS NULL" (one of the cross-category NULL
+  -- requirements that distinguishes the strict form from the
+  -- pre-round-3 lax form). If a partial replay landed the lax
+  -- form, this check fires false → drift detected.
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_requests_category_required_check'
+      AND conrelid = 'cargo_requests'::regclass
+      AND pg_get_constraintdef(oid) ILIKE '%horse_count IS NULL%')
+    AS has_category_check_strict,
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_requests_origin_present_check'
+      AND conrelid = 'cargo_requests'::regclass) AS has_origin_present_check,
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_requests_destination_present_check'
+      AND conrelid = 'cargo_requests'::regclass) AS has_destination_present_check,
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_aircraft_capabilities_at_least_one_check'
+      AND conrelid = 'cargo_aircraft_capabilities'::regclass) AS has_caps_at_least_one_check;
 ```
 
-**Expected:** all 25 = `true` (extended from 20 → 25 in
-Codex round 6 P1 #2 + P1 #3 + P2 #4 fixes:
-- `bookings_operator_name_width_200` (§3.4.3 widened bookings)
-- `bookings_operator_email_width_255` (§3.4.3 widened bookings)
-- `cargo_requests_rls_enabled` (§3.1 RLS)
-- `cargo_offers_rls_enabled` (§3.2 RLS)
-- `cargo_caps_rls_enabled` (§3.5 RLS)
+**Expected:** all 30 = `true` (extended from 25 → 30 in
+Codex round 7 P2 #2 fix:
+- `has_identity_check` (§3.1 identity)
+- `has_category_check_strict` (§3.1 — definition contains
+  `horse_count IS NULL`, the cross-category NULL marker that
+  distinguishes the round-3 strict form from any pre-round-3
+  lax form a partial replay might have left)
+- `has_origin_present_check` (§3.1)
+- `has_destination_present_check` (§3.1)
+- `has_caps_at_least_one_check` (§3.5)
 
-Round 6 elevates Probe 28 from a "schema present" check to a
-"schema invariants intact" check — every constraint that
-`CREATE TABLE IF NOT EXISTS` could skip on a partial replay
-is verified explicitly. ANY false here means the migration
-landed against a drifted DB; defensive ALTERs in §3.1 / §3.2
-should have caught the drift but Probe 28 is the final
-verifier before flipping `ENABLE_CARGO=true`.
+Round 6 elevated Probe 28 from a "schema present" check to a
+"schema invariants intact" check; round 7 completes the
+coverage — every constraint that `CREATE TABLE IF NOT EXISTS`
+could skip on a partial replay is now verified explicitly.
+ANY false here means the migration landed against a drifted
+DB; defensive ALTERs in §3.1 / §3.2 should have caught the
+drift but Probe 28 is the final fail-fast verifier before
+flipping `ENABLE_CARGO=true`.
 
 ### Probe 29 — Guest cargo request appears in admin queue
 
@@ -2357,9 +2441,9 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 8
+## Open questions for Codex round 9
 
-Rounds 1-6 closed 15 P1 + 10 P2:
+Rounds 1-7 closed 16 P1 + 11 P2:
 
 - **Round 1:**
   - **P1 #1:** §3.4 extends BOTH constraints
@@ -2495,6 +2579,21 @@ Rounds 1-6 closed 15 P1 + 10 P2:
     RLS + bookings widths + the constraints. Closes the
     partial-replay drift cases that `CREATE TABLE IF NOT EXISTS`
     can't recover from.
+- **Round 7:**
+  - **P1 #1:** Added `WHEN invalid_datetime_format` (sqlstate
+    22007) to the EXCEPTION blocks in §4.1 + §4.2 + §4.3.
+    Date casts raise 22007 not 22P02 on malformed input
+    (e.g. `'not-a-date'`, `'2026-13-99'`); the existing
+    handlers only caught 22P02 so date errors escaped raw.
+    Maps to the same structured `malformed_input` contract.
+  - **P2 #2:** Probe 28 extended 25 → 30 to verify the 5
+    remaining named CHECKs (identity + category strict +
+    origin_present + destination_present + caps_at_least_one).
+    The category check is verified via `pg_get_constraintdef
+    ILIKE '%horse_count IS NULL%'` — the strict round-3 form
+    is the only one that contains a cross-category NULL
+    forbid clause, so this assertion catches a drifted
+    pre-round-3 lax form.
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -2517,4 +2616,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 7 review.**
+**Spec ready for Codex round 8 review.**
