@@ -1,7 +1,7 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 5).
-> **Codex history:** rounds 1-4 closed 10 P1 + 7 P2 (17 findings):
+> **Status:** Draft for Codex review (round 6).
+> **Codex history:** rounds 1-5 closed 12 P1 + 9 P2 (21 findings):
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -48,14 +48,28 @@
 >   at DB boundary as defense-in-depth — Server Action layer
 >   stays primary auth gate).
 >
-> Round 5 should verify the §4.4 deadlock fix uses
-> deterministic id-ORDER lock acquisition (not just
-> "lock request then offer"), that the new 7 NOT NULL
-> guards return BEFORE any DB write attempt (so they
-> can't be confused with the existing CHECK-based
-> structured errors), and that the §4.4 contracts table
-> documents all 9 possible error codes including the new
-> `actor_required`.
+> - **Round 5 (2 P1 + 2 P2):** P1 #1 (§4.4 explicit booking-
+>   shape decision: cargo follows Phase 7/10 pattern of
+>   `offer_id=NULL` + `trip_request_id=NULL` + populated
+>   `source_offer_table/id`; verified `/me/bookings` doesn't
+>   join through legacy `offer_id`; Probe 31 confirms post-
+>   accept shape), P1 #2 (§4.1 + §4.2 explicit `origin_required`
+>   + `destination_required` field-specific contracts instead
+>   of generic validation_failed for the route presence CHECK
+>   path), P2 #3 (§3.2 post-create defensive ALTER COLUMN TYPE
+>   on operator_*_snapshot widths to handle the
+>   CREATE-TABLE-IF-NOT-EXISTS-skips-drifted-shape failure
+>   mode), P2 #4 (§4.4 actor XOR — rejects both-set as
+>   `actor_ambiguous` complementing the round-4 actor_required
+>   for both-NULL).
+>
+> Round 6 should verify the §4.4 booking-shape decision
+> rationale is operationally complete (no Phase 11 booking
+> reads code path expects `offer_id IS NOT NULL`), the
+> defensive `ALTER COLUMN TYPE` actually no-ops on a fresh
+> migration AND fixes the drift on a partial-replay (PG
+> behavior contract), and Probe 28 covers all 22 schema
+> checks introduced through round 5.
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -648,6 +662,19 @@ CREATE INDEX IF NOT EXISTS idx_cargo_offers_operator
 CREATE INDEX IF NOT EXISTS idx_cargo_offers_pending
   ON cargo_offers (cargo_request_id, status)
   WHERE status = 'pending';
+
+-- Codex round 5 PR #64 P2 #3 fix — post-create shape audit.
+-- CREATE TABLE IF NOT EXISTS skips when the table already
+-- exists, so a partial earlier replay that created cargo_offers
+-- with the round-1-original `operator_name_snapshot VARCHAR(120)`
+-- shape would survive the IF NOT EXISTS guard and leave the
+-- bad widths in place. Defensive ALTER COLUMN TYPE statements
+-- run unconditionally; PG no-ops when the column already has
+-- the target type, and migrates the data when it doesn't.
+-- Matches Phase 8 PR 2e migration discipline.
+ALTER TABLE cargo_offers
+  ALTER COLUMN operator_name_snapshot TYPE VARCHAR(200),
+  ALTER COLUMN operator_email_snapshot TYPE VARCHAR(255);
 ```
 
 ### §3.3 — `cargo_requests.accepted_offer_id` FK + invariant
@@ -940,6 +967,26 @@ BEGIN
   IF NULLIF(p_payload->>'estimated_value_sar', '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'estimated_value_required');
   END IF;
+  -- Codex round 5 PR #64 P1 #2 fix — explicit field-specific
+  -- guards for origin + destination. The §3.1 route presence
+  -- CHECKs (cargo_requests_origin_present_check +
+  -- cargo_requests_destination_present_check) catch the
+  -- all-NULL-per-side case at DB layer, but they map to the
+  -- generic `validation_failed` contract via the catch-all
+  -- check_violation handler. For a user-facing intake form,
+  -- "missing origin" + "missing destination" are normal
+  -- validation errors that deserve distinct messages — the
+  -- form can highlight the specific field. The DB CHECK
+  -- stays as defense-in-depth for direct RPC calls bypassing
+  -- the Server Action.
+  IF NULLIF(TRIM(p_payload->>'origin_iata'), '') IS NULL
+     AND NULLIF(TRIM(p_payload->>'origin_freeform'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'origin_required');
+  END IF;
+  IF NULLIF(TRIM(p_payload->>'destination_iata'), '') IS NULL
+     AND NULLIF(TRIM(p_payload->>'destination_freeform'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'destination_required');
+  END IF;
 
   -- Other guards (rate limit per IP, etc.) handled by app layer.
   -- DB layer enforces structural integrity via the §3.1
@@ -1064,9 +1111,11 @@ GRANT EXECUTE ON FUNCTION create_cargo_request_guest(JSONB, INET)
 | `customer_phone_required` | payload missing `customer_phone` (round 4 P1 #2 fix; §4.1 only) |
 | `pickup_date_required` | payload missing `pickup_date` (round 4 P1 #2 fix; both §4.1 + §4.2) |
 | `estimated_value_required` | payload missing `estimated_value_sar` (round 4 P1 #2 fix; both) |
+| `origin_required` | both `origin_iata` AND `origin_freeform` empty/missing (round 5 P1 #2 fix — explicit field-specific contract instead of generic validation_failed; both §4.1 + §4.2) |
+| `destination_required` | both `destination_iata` AND `destination_freeform` empty/missing (round 5 P1 #2 fix; both) |
 | `value_invalid` | `estimated_value_sar <= 0` (round 3 P2 #4 fix; via `cargo_requests_value_positive_check`) |
 | `date_invalid` | `delivery_date_target < pickup_date` (round 3 P2 #4 fix; via `cargo_requests_date_order_check`) |
-| `validation_failed` | Other DB CHECK constraint rejected (identity + category exclusivity + route + flexibility range) |
+| `validation_failed` | Other DB CHECK constraint rejected (identity + category exclusivity + flexibility range) |
 | `malformed_input` | numeric/date parsing failed |
 
 §4.2 (`create_cargo_request_authenticated`) returns the same
@@ -1136,6 +1185,17 @@ BEGIN
   END IF;
   IF NULLIF(p_payload->>'estimated_value_sar', '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'estimated_value_required');
+  END IF;
+  -- Codex round 5 PR #64 P1 #2 fix (mirror of §4.1) — explicit
+  -- field-specific guards for origin + destination. Same
+  -- rationale as §4.1.
+  IF NULLIF(TRIM(p_payload->>'origin_iata'), '') IS NULL
+     AND NULLIF(TRIM(p_payload->>'origin_freeform'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'origin_required');
+  END IF;
+  IF NULLIF(TRIM(p_payload->>'destination_iata'), '') IS NULL
+     AND NULLIF(TRIM(p_payload->>'destination_freeform'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'destination_required');
   END IF;
 
   BEGIN
@@ -1449,6 +1509,39 @@ GRANT EXECUTE ON FUNCTION submit_cargo_offer(UUID, UUID, JSONB)
 Branches on guest vs authed path. Accepts an offer →
 creates a `bookings` row with `source_discriminator='cargo'`.
 
+**Codex round 5 PR #64 P1 #1 fix — explicit booking-shape
+decision.** Cargo bookings follow the EXACT same source-offer
+linkage pattern that Phase 7 + Phase 10 use for empty-leg
+bookings:
+- `offer_id = NULL` (legacy column, points at the unused
+  `offers` table; never populated for cargo OR empty-leg)
+- `trip_request_id = NULL` (cargo doesn't flow through the
+  Phase 4-6 trip_requests funnel)
+- `source_offer_table = 'cargo_offers'` (extended in §3.4.2)
+- `source_offer_id = v_offer.id` (UUID of the accepted offer)
+
+The Phase 6.2 `bookings_source_offer_pair_check` constraint
+enforces `(source_offer_table IS NULL) = (source_offer_id IS NULL)`
+— both NULL OR both NOT NULL. Cargo's INSERT sets both to
+non-NULL, so the pair check passes trivially.
+
+Verified: no downstream booking display / query code in
+`/me/bookings` (Phase 9 PR 3 + Phase 10 PR 2) joins through
+`bookings.offer_id`; all queries key on `client_id` then read
+the row directly. The same is true for Phase 7 empty-leg
+bookings, which already ship with `offer_id=NULL`. Cargo
+inherits this contract without code changes.
+
+**Probe 31 verifier** (§6 below) confirms the post-accept
+booking row has the expected shape:
+`offer_id IS NULL AND trip_request_id IS NULL AND
+source_offer_table='cargo_offers' AND source_offer_id IS NOT NULL`.
+Any future code that adds `bookings.offer_id`-keyed queries
+must explicitly handle the NULL case OR migrate cargo
+bookings to populate it (deferred to Phase 14 when
+HyperPay integration may want a unified offer pointer
+across all 5 business units).
+
 ```sql
 CREATE OR REPLACE FUNCTION accept_cargo_offer(
   p_offer_id UUID,
@@ -1466,18 +1559,19 @@ DECLARE
   v_booking_id UUID;
   v_request_id_for_lock UUID;
 BEGIN
-  -- Codex round 4 PR #64 P2 #4 fix — actor authorization guard.
-  -- The signature documents `p_actor_admin_user_id` as set for
-  -- admin acceptance, but the body only branched on
-  -- p_actor_client_id IS NULL → admin path without checking
-  -- p_actor_admin_user_id. A buggy/forged Server Action that
-  -- passed both NULL would silently take the admin branch
-  -- without any actor identity. Reject the all-NULL case at
-  -- the DB boundary (defense-in-depth — Server Action layer
-  -- is the primary auth gate, but DB layer should not accept
-  -- anonymous accept_cargo_offer calls even via service-role).
+  -- Codex round 4 PR #64 P2 #4 + round 5 P2 #4 fix — actor
+  -- authorization XOR guard. Round 4 rejected the all-NULL
+  -- case (anonymous accept). Round 5 also rejects the all-SET
+  -- case (ambiguous accountability — body would silently take
+  -- the client branch but audit_logs would carry a non-NULL
+  -- admin id, leaving the audit trail confused about who
+  -- actually accepted). Exactly one of the two actor IDs must
+  -- be set.
   IF p_actor_client_id IS NULL AND p_actor_admin_user_id IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'actor_required');
+  END IF;
+  IF p_actor_client_id IS NOT NULL AND p_actor_admin_user_id IS NOT NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'actor_ambiguous');
   END IF;
 
   -- Codex round 4 PR #64 P1 #1 fix — deadlock-safe lock order.
@@ -1676,7 +1770,8 @@ GRANT EXECUTE ON FUNCTION accept_cargo_offer(UUID, UUID, UUID)
 
 | Code | Trigger |
 |---|---|
-| `actor_required` | Both `p_actor_client_id` AND `p_actor_admin_user_id` are NULL (round 4 P2 #4 fix; defense-in-depth — Server Action layer is primary auth gate) |
+| `actor_required` | Both `p_actor_client_id` AND `p_actor_admin_user_id` are NULL (round 4 P2 #4 fix) |
+| `actor_ambiguous` | Both actor IDs are non-NULL (round 5 P2 #4 fix — XOR; ambiguous accountability would log admin id while body takes client branch) |
 | `offer_not_found` | `p_offer_id` invalid OR offer deleted post-lock (rare) |
 | `request_not_found` | `cargo_offers.cargo_request_id` references missing request (only possible if FK violated; defensive) |
 | `offer_not_pending` | `cargo_offers.status` not 'pending' (already accepted/declined/withdrawn/expired by another actor) |
@@ -1980,15 +2075,33 @@ SELECT submit_cargo_offer(
 );
 ```
 2. Client accepts via `/me/cargo-requests/[id]` → "اقبل العرض".
-3. SQL verify:
+3. SQL verify (Codex round 5 PR #64 P1 #1 fix — explicit
+   booking-shape verifier; cargo bookings MUST follow the
+   Phase 7/10 pattern of NULL `offer_id` + `trip_request_id`
+   while populated `source_offer_*` carries the linkage):
 ```sql
-SELECT booking_number, source_discriminator, total_amount,
-       customer_name_snapshot
+SELECT
+  booking_number,
+  source_discriminator,
+  source_offer_table,
+  -- Phase 11 booking shape contract:
+  offer_id IS NULL AS legacy_offer_id_null,
+  trip_request_id IS NULL AS trip_request_id_null,
+  source_offer_id IS NOT NULL AS source_offer_id_populated,
+  total_amount,
+  customer_name_snapshot
 FROM bookings
 WHERE source_offer_table = 'cargo_offers'
 ORDER BY created_at DESC LIMIT 1;
 ```
-**Expected:** `source_discriminator='cargo'`, `total_amount=300000`.
+**Expected:**
+- `source_discriminator='cargo'`
+- `source_offer_table='cargo_offers'`
+- `legacy_offer_id_null=true` (Phase 11 booking-shape contract)
+- `trip_request_id_null=true` (Phase 11 booking-shape contract)
+- `source_offer_id_populated=true` (paired with source_offer_table)
+- `total_amount=300000`
+
 4. Visit `/me/bookings` → row appears with chip **"شحن"**.
 
 ### Probe 32 — Distribution filters by capability
@@ -2021,9 +2134,9 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 6
+## Open questions for Codex round 7
 
-Rounds 1-4 closed 10 P1 + 7 P2:
+Rounds 1-5 closed 12 P1 + 9 P2:
 
 - **Round 1:**
   - **P1 #1:** §3.4 extends BOTH constraints
@@ -2105,6 +2218,31 @@ Rounds 1-4 closed 10 P1 + 7 P2:
     primary auth gate (cookie + ADMIN_INBOX_PASSWORD), but
     the DB boundary should never accept anonymous accept
     calls even via service-role.
+- **Round 5:**
+  - **P1 #1:** §4.4 explicit booking-shape decision documented:
+    cargo follows Phase 7/10 pattern of `offer_id=NULL` +
+    `trip_request_id=NULL` + populated `source_offer_table` +
+    `source_offer_id`. Verified `/me/bookings` queries don't
+    join through legacy `offer_id`. Probe 31 confirms post-
+    accept booking row has the expected shape.
+  - **P1 #2:** §4.1 + §4.2 explicit `origin_required` +
+    `destination_required` field-specific structured contracts.
+    Replaces the generic `validation_failed` from the route
+    presence CHECK fall-through, so the public `/cargo` form
+    can highlight the specific missing field. DB CHECKs stay
+    as defense-in-depth.
+  - **P2 #3:** §3.2 defensive `ALTER COLUMN TYPE` on
+    `operator_name_snapshot` (→ VARCHAR(200)) +
+    `operator_email_snapshot` (→ VARCHAR(255)) AFTER the
+    `CREATE TABLE IF NOT EXISTS`. Handles the
+    partial-replay-with-drifted-shape case where IF NOT EXISTS
+    skips the create + leaves the wrong widths in place. PG
+    no-ops when the column already has the target type;
+    migrates data when it doesn't.
+  - **P2 #4:** §4.4 actor XOR — round 4's `actor_required`
+    rejected both-NULL; round 5 adds `actor_ambiguous` to
+    reject both-set. Together they enforce "exactly one"
+    semantics; the audit trail is unambiguous.
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -2127,4 +2265,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 5 review.**
+**Spec ready for Codex round 6 review.**
