@@ -181,34 +181,26 @@ These are settled before spec acceptance:
    the RPC + on success calls
    `sendClientEmptyLegReservationEmail` (NEW Resend helper,
    mirror of Phase 9 password-reset email).
-   **Alert channel separation (Codex round 2 PR #61 P2 #5
-   fix).** Empty-leg reservation email is a different
-   operational channel from client auth/password-reset,
-   so failure DOES NOT write to the existing
-   `client_notification_alert_status` singleton (which
-   would mislabel `/admin/operators/canary` "client auth
-   unhealthy" when only the empty-leg reservation channel
-   is degraded). Two options scoped for Codex round 3
-   selection:
-   - **(A) New singleton** `client_empty_leg_alert_status`
-     (table + helper `recordClientEmptyLegAlertStatus`)
-     + 5th `<ChannelHealth>` card on the canary page.
-     Mirror of Phase 8 PR 2e singleton + Phase 9 PR 1
-     §3.7 + the existing `empty_leg_outreach_alert_status`
-     (Phase 7) discipline. ~30 lines migration + ~80 lines
-     helper + ~40 lines canary card.
-   - **(B) Extend `empty_leg_outreach_alert_status`**
-     (Phase 7 singleton already covers empty-leg
-     dispatcher health) + add a `category` column or
-     parallel row to distinguish "outreach send" from
-     "client reservation confirm". Cheaper schema, but
-     muddies Phase 7's existing semantics.
-   The spec's recommendation is **option (A)** — clean
-   separation matches the Phase 8/9 alert-singleton
-   pattern + keeps the canary cards 1-to-1 with Resend
-   email channels (the operator never has to read a
-   composite "category" field). PR 1 ships option (A)
-   unless Codex round 3 prefers (B).
+   **Alert channel separation (Codex PR #61 round 2 P2 #5
+   + round 3 P2 #3 fix — settled).** Empty-leg reservation
+   email is a different operational channel from client
+   auth/password-reset, so failure DOES NOT write to the
+   existing `client_notification_alert_status` singleton
+   (which would mislabel `/admin/operators/canary` "client
+   auth unhealthy" when only the empty-leg reservation
+   channel is degraded). PR 1 ships a NEW singleton
+   `client_empty_leg_alert_status` (§3.6) + matching
+   `recordClientEmptyLegAlertStatus` helper + a 5th
+   `<ChannelHealth>` card on the canary page (verbatim
+   Arabic title "بريد العملاء — عرض رحلة فارغة (Resend)").
+   Mirror of Phase 8 PR 2e singleton + Phase 9 PR 1 §3.7
+   + the existing `empty_leg_outreach_alert_status` (Phase
+   7) discipline. ~30 lines migration + ~80 lines helper
+   + ~40 lines canary card. The "extend existing Phase 7
+   singleton with a category column" alternative was
+   considered + rejected during round 2 review: it muddies
+   Phase 7's existing semantics + breaks the canary's
+   1-to-1 mapping between cards and Resend channels.
 9. **Reserve TTL:** 24 hours (matches Phase 7 guest
    default). Cron `cleanup_expired_empty_leg_reservations`
    already exists from Phase 7 — extends to also clear
@@ -389,15 +381,22 @@ the XOR check, otherwise every client INSERT raises
 evaluates. The `types/database.ts` regen must reflect the
 nullable shape.
 
-**Replay-safe XOR add (Codex round 2 PR #61 P1 #3 fix).**
-A previous failed migration run (e.g. partial replay where
-`client_id` got added + NOT NULL got dropped, then ADD
-CONSTRAINT failed mid-flight) could leave malformed rows
-(`both NULL` or `both populated`) that abort `ADD CONSTRAINT`
-on retry. Use Phase 9 PR 2 §1 discipline: audit-then-add as
-NOT VALID, then VALIDATE in a separate statement so any
-legacy violations surface as a structured failure rather
-than silently corrupting forward writes.
+**Replay-safe XOR add (Codex round 2 PR #61 P1 #3 + round 3
+P2 #2 fix).** A previous failed migration run (e.g. partial
+replay where `client_id` got added + NOT NULL got dropped,
+then ADD CONSTRAINT failed mid-flight) could leave malformed
+rows (`both NULL` or `both populated`) that would abort the
+constraint addition on retry. We use a strict pre-audit
+model: a `DO` block scans for any XOR-violating rows + RAISES
+EXCEPTION with the offending count if any are found, then
+the migration runs `ADD CONSTRAINT` normally. Round 2's
+draft also added `NOT VALID` + `VALIDATE` separately, but
+that branch is unreachable when the pre-audit RAISE is in
+place (the pre-audit fails fast on any violation, so the
+constraint always lands against a clean dataset). Dropped
+the `NOT VALID` + `VALIDATE` pair for internal consistency
+(Codex round 3 P2 #2 fix); a single normal `ADD CONSTRAINT`
+suffices.
 
 ```sql
 ALTER TABLE empty_leg_notifications
@@ -432,22 +431,17 @@ BEGIN
   END IF;
 END $$;
 
--- XOR check — added NOT VALID so a clean Phase-7 production
--- DB never blocks forward dispatch on the constraint addition,
--- then VALIDATE separately. Forward INSERTs are gated as soon
--- as the constraint exists (Postgres applies NOT VALID to new
--- writes); the VALIDATE pass just confirms historical rows
--- comply.
+-- XOR check. The pre-audit DO block above has guaranteed
+-- zero violating rows by this point, so a normal
+-- ADD CONSTRAINT (no NOT VALID dance) is sufficient and
+-- internally consistent (Codex round 3 PR #61 P2 #2 fix).
 ALTER TABLE empty_leg_notifications
   DROP CONSTRAINT IF EXISTS empty_leg_notifications_recipient_xor_check;
 
 ALTER TABLE empty_leg_notifications
   ADD CONSTRAINT empty_leg_notifications_recipient_xor_check CHECK (
     (client_id IS NULL) <> (lead_inquiry_id IS NULL)
-  ) NOT VALID;
-
-ALTER TABLE empty_leg_notifications
-  VALIDATE CONSTRAINT empty_leg_notifications_recipient_xor_check;
+  );
 
 -- Sibling unique index for client+leg dedupe
 CREATE UNIQUE INDEX IF NOT EXISTS idx_empty_leg_notifications_client_leg_unique
@@ -1027,9 +1021,18 @@ BEGIN
          reservation_expires_at = NULL
    WHERE id = p_leg_id;
 
-  -- 5. Audit log entry
+  -- 5. Audit log entry. Codex round 3 PR #61 P1 #1 fix:
+  --    audit_logs has `user_id` (NOT `actor_id`) and the
+  --    column is FK to `users(id) ON DELETE SET NULL`.
+  --    Aeris admin auth is cookie + env-var based (Phase 8
+  --    `ADMIN_INBOX_PASSWORD`); admins do NOT have a `users`
+  --    row. So we pass user_id = NULL and stash p_admin_user_id
+  --    inside new_value for traceability. (If a future phase
+  --    wires admin → users row, this can flip back to a real
+  --    FK.) The `action` column is VARCHAR(100) — keep the
+  --    label short.
   INSERT INTO audit_logs (
-    entity_type, entity_id, action, new_value, actor_id
+    entity_type, entity_id, action, new_value, user_id
   ) VALUES (
     'booking', v_booking_id, 'empty_leg_client_confirmed',
     jsonb_build_object(
@@ -1038,7 +1041,7 @@ BEGIN
       'admin_user_id', p_admin_user_id,
       'confirmed_at', v_now
     ),
-    p_admin_user_id
+    NULL
   );
 
   RETURN json_build_object(
