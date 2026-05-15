@@ -123,18 +123,11 @@ BEGIN
   SELECT * INTO v_offer FROM cargo_offers
    WHERE id = p_offer_id FOR UPDATE;
 
-  -- Idempotency: re-decline returns ok with already_declined=true.
-  IF v_offer.status = 'declined' THEN
-    RETURN json_build_object('ok', true, 'already_declined', true);
-  END IF;
-  IF v_offer.status <> 'pending' THEN
-    -- accepted, withdrawn, expired → not declinable.
-    RETURN json_build_object('ok', false, 'error', 'offer_not_pending',
-      'current_status', v_offer.status);
-  END IF;
-
-  -- Authorization: client path requires client_id match;
-  -- admin path requires request.client_id IS NULL (guest only).
+  -- Round 1 PR #66 P2 #2 — authorization BEFORE idempotency.
+  -- A logged-in client probing arbitrary offer UUIDs must not learn
+  -- whether they're declined; only the request owner / admin (for
+  -- guest requests) gets to see status. The earlier draft returned
+  -- already_declined=true before authz, which was a status-leak.
   IF p_actor_client_id IS NOT NULL THEN
     IF v_request.client_id IS NULL OR v_request.client_id <> p_actor_client_id THEN
       RETURN json_build_object('ok', false, 'error', 'forbidden');
@@ -146,21 +139,40 @@ BEGIN
     END IF;
   END IF;
 
+  -- Idempotency (now scoped to the authorized actor).
+  -- Re-decline returns ok with already_declined=true.
+  IF v_offer.status = 'declined' THEN
+    RETURN json_build_object('ok', true, 'already_declined', true);
+  END IF;
+  IF v_offer.status <> 'pending' THEN
+    -- accepted, withdrawn, expired → not declinable.
+    RETURN json_build_object('ok', false, 'error', 'offer_not_pending',
+      'current_status', v_offer.status);
+  END IF;
+
   UPDATE cargo_offers
      SET status = 'declined',
          decided_at = NOW(),
          decline_reason = NULLIF(BTRIM(p_reason), '')
    WHERE id = p_offer_id;
 
-  -- Audit log (mirror of empty-leg decline pattern).
-  INSERT INTO audit_logs (actor_type, actor_id, action, target_type, target_id, metadata)
+  -- Audit log — Round 1 PR #66 P1 #1 fix.
+  -- The audit_logs schema uses (entity_type, entity_id, action,
+  -- old_value, new_value, user_id), NOT (actor_type, actor_id,
+  -- target_type, target_id, metadata). Phase 7/10 pattern: pack
+  -- actor info inside new_value JSONB; user_id stays NULL because
+  -- admins have no users row (Phase 8 cookie auth) and the
+  -- clients table is separate from auth.users.
+  INSERT INTO audit_logs (entity_type, entity_id, action, new_value)
   VALUES (
-    CASE WHEN p_actor_client_id IS NOT NULL THEN 'client' ELSE 'admin' END,
-    p_actor_client_id,  -- NULL on admin path; admin actor captured in metadata
-    'cargo_offer_declined',
     'cargo_offers',
     p_offer_id,
-    json_build_object('reason', NULLIF(BTRIM(p_reason), ''))
+    'cargo_offer_declined',
+    jsonb_build_object(
+      'actor_type', CASE WHEN p_actor_client_id IS NOT NULL THEN 'client' ELSE 'admin' END,
+      'actor_client_id', p_actor_client_id,
+      'reason', NULLIF(BTRIM(p_reason), '')
+    )
   );
 
   RETURN json_build_object('ok', true, 'offer_id', p_offer_id);
@@ -229,14 +241,17 @@ BEGIN
          withdraw_reason = NULLIF(BTRIM(p_reason), '')
    WHERE id = p_offer_id;
 
-  INSERT INTO audit_logs (actor_type, actor_id, action, target_type, target_id, metadata)
+  -- Round 1 PR #66 P1 #1 — same audit_logs shape as §2.2 decline.
+  INSERT INTO audit_logs (entity_type, entity_id, action, new_value)
   VALUES (
-    'operator',
-    p_operator_id,
-    'cargo_offer_withdrawn',
     'cargo_offers',
     p_offer_id,
-    json_build_object('reason', NULLIF(BTRIM(p_reason), ''))
+    'cargo_offer_withdrawn',
+    jsonb_build_object(
+      'actor_type', 'operator',
+      'actor_operator_id', p_operator_id,
+      'reason', NULLIF(BTRIM(p_reason), '')
+    )
   );
 
   RETURN json_build_object('ok', true, 'offer_id', p_offer_id);
@@ -247,24 +262,45 @@ REVOKE ALL ON FUNCTION withdraw_cargo_offer(UUID, UUID, TEXT) FROM PUBLIC, anon,
 GRANT EXECUTE ON FUNCTION withdraw_cargo_offer(UUID, UUID, TEXT) TO service_role;
 ```
 
-**Schema deltas required:**
+**Schema deltas required** (Round 1 PR #66 P2 #4 — replay-safe
+DO blocks inline; do NOT copy raw `ADD CONSTRAINT` because PG
+will fail on second-run with `42710 duplicate_object`):
 
 ```sql
--- Add nullable reason columns (defensive ALTERs, replay-safe).
+-- Add nullable reason columns (CREATE COLUMN IF NOT EXISTS is
+-- replay-safe natively).
 ALTER TABLE cargo_offers
   ADD COLUMN IF NOT EXISTS decline_reason TEXT,
   ADD COLUMN IF NOT EXISTS withdraw_reason TEXT;
 
-ALTER TABLE cargo_offers
-  ADD CONSTRAINT cargo_offers_decline_reason_length_check
-    CHECK (decline_reason IS NULL OR length(decline_reason) <= 500);
-ALTER TABLE cargo_offers
-  ADD CONSTRAINT cargo_offers_withdraw_reason_length_check
-    CHECK (withdraw_reason IS NULL OR length(withdraw_reason) <= 500);
-```
+-- Length CHECKs wrapped in pg_constraint guards (Phase 9
+-- replay-safety convention).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_offers_decline_reason_length_check'
+       AND conrelid = 'cargo_offers'::regclass
+  ) THEN
+    ALTER TABLE cargo_offers
+      ADD CONSTRAINT cargo_offers_decline_reason_length_check
+      CHECK (decline_reason IS NULL OR length(decline_reason) <= 500);
+  END IF;
+END $$;
 
-(Wrap each `ADD CONSTRAINT` in a `pg_constraint` existence guard
-DO block per Phase 9 replay-safety convention.)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_offers_withdraw_reason_length_check'
+       AND conrelid = 'cargo_offers'::regclass
+  ) THEN
+    ALTER TABLE cargo_offers
+      ADD CONSTRAINT cargo_offers_withdraw_reason_length_check
+      CHECK (withdraw_reason IS NULL OR length(withdraw_reason) <= 500);
+  END IF;
+END $$;
+```
 
 ### §2.4 §4.6 `cancel_cargo_request` — full SQL
 
@@ -303,7 +339,20 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'request_not_found');
   END IF;
 
-  -- Idempotency.
+  -- Round 1 PR #66 P2 #2 — authorization FIRST (mirror §2.2 decline).
+  -- Probing an arbitrary request UUID must not reveal whether it
+  -- exists, is cancelled, or is accepted. Auth-then-state.
+  IF p_actor_client_id IS NOT NULL THEN
+    IF v_request.client_id IS NULL OR v_request.client_id <> p_actor_client_id THEN
+      RETURN json_build_object('ok', false, 'error', 'forbidden');
+    END IF;
+  ELSE
+    IF v_request.client_id IS NOT NULL THEN
+      RETURN json_build_object('ok', false, 'error', 'admin_cannot_cancel_authed');
+    END IF;
+  END IF;
+
+  -- Idempotency (now scoped to the authorized actor).
   IF v_request.status = 'cancelled' THEN
     RETURN json_build_object('ok', true, 'already_cancelled', true);
   END IF;
@@ -317,17 +366,6 @@ BEGIN
   IF v_request.status NOT IN ('pending', 'offers_received') THEN
     RETURN json_build_object('ok', false, 'error', 'request_not_cancellable',
       'current_status', v_request.status);
-  END IF;
-
-  -- Authorization (mirror §4.5 decline).
-  IF p_actor_client_id IS NOT NULL THEN
-    IF v_request.client_id IS NULL OR v_request.client_id <> p_actor_client_id THEN
-      RETURN json_build_object('ok', false, 'error', 'forbidden');
-    END IF;
-  ELSE
-    IF v_request.client_id IS NOT NULL THEN
-      RETURN json_build_object('ok', false, 'error', 'admin_cannot_cancel_authed');
-    END IF;
   END IF;
 
   -- Cascade: decline all pending offers (ordered by id for
@@ -344,20 +382,24 @@ BEGIN
   )
   SELECT COUNT(*) INTO v_cascade_count FROM cascade;
 
+  -- Round 1 PR #66 P2 #3 — reuse cargo_requests.cancellation_reason
+  -- (created in PR 1 §3.1 line 141) instead of adding a duplicate
+  -- cancel_reason. cancelled_at also already exists from PR 1.
   UPDATE cargo_requests
      SET status = 'cancelled',
-         cancel_reason = NULLIF(BTRIM(p_reason), ''),
+         cancellation_reason = NULLIF(BTRIM(p_reason), ''),
          cancelled_at = NOW()
    WHERE id = p_request_id;
 
-  INSERT INTO audit_logs (actor_type, actor_id, action, target_type, target_id, metadata)
+  -- Round 1 PR #66 P1 #1 — audit_logs shape matches Phase 7/10.
+  INSERT INTO audit_logs (entity_type, entity_id, action, new_value)
   VALUES (
-    CASE WHEN p_actor_client_id IS NOT NULL THEN 'client' ELSE 'admin' END,
-    p_actor_client_id,
-    'cargo_request_cancelled',
     'cargo_requests',
     p_request_id,
-    json_build_object(
+    'cargo_request_cancelled',
+    jsonb_build_object(
+      'actor_type', CASE WHEN p_actor_client_id IS NOT NULL THEN 'client' ELSE 'admin' END,
+      'actor_client_id', p_actor_client_id,
       'reason', NULLIF(BTRIM(p_reason), ''),
       'cascade_declined_offers', v_cascade_count
     )
@@ -373,19 +415,35 @@ REVOKE ALL ON FUNCTION cancel_cargo_request(UUID, UUID, UUID, TEXT) FROM PUBLIC,
 GRANT EXECUTE ON FUNCTION cancel_cargo_request(UUID, UUID, UUID, TEXT) TO service_role;
 ```
 
-**Schema deltas required:**
+**Schema deltas required** (Round 1 PR #66 P2 #3 + #4):
+
+PR 1 §3.1 already shipped both `cancellation_reason TEXT` and
+`cancelled_at TIMESTAMPTZ` on `cargo_requests` (lines 140–141 of
+the PR 1 migration). Reuse those columns — adding a duplicate
+`cancel_reason` would split the source of truth and leave
+`types/database.ts` stale. The only delta needed in PR 2 is the
+length CHECK on the existing column, wrapped in a pg_constraint
+guard for replay safety:
 
 ```sql
-ALTER TABLE cargo_requests
-  ADD COLUMN IF NOT EXISTS cancel_reason TEXT,
-  ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
-
-ALTER TABLE cargo_requests
-  ADD CONSTRAINT cargo_requests_cancel_reason_length_check
-    CHECK (cancel_reason IS NULL OR length(cancel_reason) <= 500);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_requests_cancellation_reason_length_check'
+       AND conrelid = 'cargo_requests'::regclass
+  ) THEN
+    ALTER TABLE cargo_requests
+      ADD CONSTRAINT cargo_requests_cancellation_reason_length_check
+      CHECK (cancellation_reason IS NULL
+             OR length(cancellation_reason) <= 500);
+  END IF;
+END $$;
 ```
 
-(Same pg_constraint guard pattern.)
+The `cancel_cargo_request` RPC writes to `cancellation_reason`
+(see §2.4 SQL above) so the column name flows end-to-end:
+PR 1 schema → PR 2 RPC → existing `types/database.ts` row type.
 
 ---
 
