@@ -71,6 +71,29 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </Link>
                 </>
               ) : null}
+              {/* Round 2 PR #65 P2 #2 — gated cargo nav links so the
+                  founder can reach the queue + capability matrix
+                  without memorizing hidden URLs. The flag check uses
+                  `=== 'true'` (fail-closed) to match the same
+                  discipline as /admin/cargo + /admin/cargo/aircraft-
+                  capabilities pages, so the links never appear when
+                  the cargo surface is off. */}
+              {process.env.ENABLE_CARGO === 'true' ? (
+                <>
+                  <Link
+                    href="/admin/cargo"
+                    className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                  >
+                    الشحن
+                  </Link>
+                  <Link
+                    href="/admin/cargo/aircraft-capabilities"
+                    className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                  >
+                    قدرات الشحن
+                  </Link>
+                </>
+              ) : null}
             </nav>
           </div>
 

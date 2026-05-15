@@ -1,0 +1,634 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+import Link from 'next/link';
+
+import { cargoAr } from '@/lib/i18n/cargo-ar';
+import { submitCargoRequestPublic } from '@/app/actions/cargo-public';
+import type { CargoType } from '@/lib/cargo/types';
+
+/**
+ * Phase 11 PR 1 — public cargo intake form.
+ *
+ * 4-stage layout:
+ *   1. Cargo type selector (4 options + descriptions)
+ *   2. Customer fields (name, phone, email)
+ *   3. Shared shipment fields (origin, destination, dates, value)
+ *   4. Per-category conditional fields (renders based on
+ *      selected cargo_type)
+ *
+ * Submits to submitCargoRequestPublic Server Action which
+ * wraps §4.1 create_cargo_request_guest RPC. On success
+ * shows the CGO-XXXX reference + login CTA.
+ *
+ * Uses native HTML inputs (no react-hook-form) to keep PR 1
+ * scope contained; PR 2 may refactor to RHF for shared
+ * authed/public form. Field names match the Server Action's
+ * Zod payload shape exactly.
+ */
+
+const CARGO_TYPES: CargoType[] = ['horse', 'luxury_car', 'valuables', 'other'];
+
+interface SuccessState {
+  cargo_request_id: string;
+  cargo_request_number: string;
+}
+
+export function CargoRequestForm() {
+  const [cargoType, setCargoType] = useState<CargoType>('horse');
+  const [isPending, startTransition] = useTransition();
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [success, setSuccess] = useState<SuccessState | null>(null);
+
+  const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+
+    // Build the payload matching cargoRequestPublicSchema.
+    // Use FormDataEntryValue → string conversion + parse
+    // numerics inline so the Server Action receives Zod-friendly
+    // types. Empty strings → undefined so Zod's `.optional()`
+    // applies and the DB-side NULLIF guards (round 8 P2 #2)
+    // can default appropriately.
+    const v = (key: string): string | undefined => {
+      const raw = fd.get(key);
+      if (raw === null) return undefined;
+      const s = String(raw).trim();
+      return s.length > 0 ? s : undefined;
+    };
+    const num = (key: string): number | undefined => {
+      const s = v(key);
+      if (s === undefined) return undefined;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const bool = (key: string): boolean | undefined => {
+      const raw = fd.get(key);
+      return raw === 'on' || raw === 'true' ? true : undefined;
+    };
+
+    // Per-category fields conditional based on cargoType
+    const categoryFields: Record<string, unknown> = {};
+    if (cargoType === 'horse') {
+      categoryFields.horse_count = num('horse_count');
+      categoryFields.horse_groom_required = bool('horse_groom_required');
+      categoryFields.horse_cites_status = v('horse_cites_status');
+      categoryFields.horse_stall_requirements = v('horse_stall_requirements');
+    } else if (cargoType === 'luxury_car') {
+      categoryFields.car_make = v('car_make');
+      categoryFields.car_model = v('car_model');
+      categoryFields.car_year = num('car_year');
+      categoryFields.car_running_condition = bool('car_running_condition');
+      categoryFields.car_enclosed_required = bool('car_enclosed_required');
+    } else if (cargoType === 'valuables') {
+      categoryFields.valuables_declared_value_sar = num(
+        'valuables_declared_value_sar'
+      );
+      categoryFields.valuables_security_level = v('valuables_security_level');
+      categoryFields.valuables_climate_controlled = bool(
+        'valuables_climate_controlled'
+      );
+      categoryFields.valuables_item_description = v(
+        'valuables_item_description'
+      );
+    } else {
+      categoryFields.other_description = v('other_description');
+      categoryFields.other_dimensions_lwh_cm = v('other_dimensions_lwh_cm');
+      categoryFields.other_weight_kg = num('other_weight_kg');
+      categoryFields.other_special_handling = v('other_special_handling');
+    }
+
+    const payload = {
+      cargo_type: cargoType,
+      customer_name: v('customer_name'),
+      customer_phone: v('customer_phone'),
+      customer_email: v('customer_email'),
+      origin_iata: v('origin_iata')?.toUpperCase(),
+      origin_freeform: v('origin_freeform'),
+      destination_iata: v('destination_iata')?.toUpperCase(),
+      destination_freeform: v('destination_freeform'),
+      pickup_date: v('pickup_date'),
+      delivery_date_target: v('delivery_date_target'),
+      flexibility_days: num('flexibility_days') ?? 0,
+      estimated_value_sar: num('estimated_value_sar'),
+      insurance_required: bool('insurance_required') ?? false,
+      handling_notes: v('handling_notes'),
+      ...categoryFields,
+    };
+
+    setErrorCode(null);
+    setFieldErrors({});
+    startTransition(async () => {
+      const result = await submitCargoRequestPublic(payload);
+      if (!result.ok) {
+        setErrorCode(result.error);
+        if (result.field_errors) setFieldErrors(result.field_errors);
+        return;
+      }
+      setSuccess({
+        cargo_request_id: result.cargo_request_id,
+        cargo_request_number: result.cargo_request_number,
+      });
+    });
+  };
+
+  if (success) {
+    return (
+      <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-8 text-center">
+        <h2 className="font-ar text-2xl text-emerald-100">
+          {cargoAr.submitSuccessTitle}
+        </h2>
+        <p className="font-ar mt-3 text-sm text-emerald-200">
+          {cargoAr.submitSuccessMessage}
+        </p>
+        <p
+          dir="ltr"
+          className="font-mono mt-4 inline-block rounded-lg border border-emerald-400/50 bg-navy-card px-4 py-2 text-lg text-gold-light"
+        >
+          {success.cargo_request_number}
+        </p>
+        <p className="font-ar mt-6 text-sm text-ink-muted">
+          <Link
+            href="/login?redirect=/me/cargo-requests"
+            className="text-gold-light hover:text-gold"
+          >
+            {cargoAr.submitSuccessLoginCta}
+          </Link>
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="space-y-6 rounded-2xl border border-border bg-navy-card/40 p-6 sm:p-8"
+    >
+      {errorCode ? (
+        <div
+          role="alert"
+          className="font-ar rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"
+        >
+          {cargoErrorMessage(errorCode)}
+        </div>
+      ) : null}
+
+      {/* 1. Cargo type selector */}
+      <fieldset className="space-y-3">
+        <legend className="font-ar mb-2 text-base font-medium text-ink">
+          {cargoAr.cargoTypeLabel}
+        </legend>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {CARGO_TYPES.map((t) => (
+            <label
+              key={t}
+              className={`font-ar cursor-pointer rounded-lg border p-4 transition-colors ${
+                cargoType === t
+                  ? 'border-gold bg-gold/10 text-gold-light'
+                  : 'border-border bg-navy-secondary/40 text-ink hover:border-gold/40'
+              }`}
+            >
+              <input
+                type="radio"
+                name="cargo_type_radio"
+                value={t}
+                checked={cargoType === t}
+                onChange={() => setCargoType(t)}
+                className="sr-only"
+              />
+              <div className="font-medium">{cargoAr.cargoTypes[t]}</div>
+              <p className="mt-1 text-xs text-ink-muted">
+                {cargoAr.cargoTypeDescriptions[t]}
+              </p>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      {/* 2. Customer fields */}
+      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field
+          label={cargoAr.customerNameLabel}
+          name="customer_name"
+          required
+          error={fieldErrors.customer_name}
+          maxLength={120}
+        />
+        <Field
+          label={cargoAr.customerPhoneLabel}
+          name="customer_phone"
+          required
+          dir="ltr"
+          error={fieldErrors.customer_phone}
+          maxLength={20}
+        />
+        <Field
+          label={cargoAr.customerEmailLabel}
+          name="customer_email"
+          type="email"
+          dir="ltr"
+          error={fieldErrors.customer_email}
+          maxLength={120}
+        />
+      </fieldset>
+
+      {/* 3. Shared shipment fields */}
+      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field
+          label={cargoAr.originIataLabel}
+          name="origin_iata"
+          dir="ltr"
+          maxLength={4}
+          error={fieldErrors.origin_iata}
+        />
+        <Field
+          label={cargoAr.originFreeformLabel}
+          name="origin_freeform"
+          error={fieldErrors.origin_freeform}
+        />
+        <Field
+          label={cargoAr.destinationIataLabel}
+          name="destination_iata"
+          dir="ltr"
+          maxLength={4}
+          error={fieldErrors.destination_iata}
+        />
+        <Field
+          label={cargoAr.destinationFreeformLabel}
+          name="destination_freeform"
+          error={fieldErrors.destination_freeform}
+        />
+        <Field
+          label={cargoAr.pickupDateLabel}
+          name="pickup_date"
+          type="date"
+          required
+          error={fieldErrors.pickup_date}
+        />
+        <Field
+          label={cargoAr.deliveryDateTargetLabel}
+          name="delivery_date_target"
+          type="date"
+          error={fieldErrors.delivery_date_target}
+        />
+        <Field
+          label={cargoAr.flexibilityDaysLabel}
+          name="flexibility_days"
+          type="number"
+          min={0}
+          max={7}
+          defaultValue="0"
+          error={fieldErrors.flexibility_days}
+        />
+        <Field
+          label={cargoAr.estimatedValueLabel}
+          name="estimated_value_sar"
+          type="number"
+          min={1}
+          required
+          dir="ltr"
+          error={fieldErrors.estimated_value_sar}
+        />
+      </fieldset>
+
+      <Toggle
+        label={cargoAr.insuranceRequiredLabel}
+        name="insurance_required"
+      />
+
+      <TextArea
+        label={cargoAr.handlingNotesLabel}
+        name="handling_notes"
+        error={fieldErrors.handling_notes}
+      />
+
+      {/* 4. Per-category conditional fields */}
+      {cargoType === 'horse' && <HorseFields fieldErrors={fieldErrors} />}
+      {cargoType === 'luxury_car' && (
+        <LuxuryCarFields fieldErrors={fieldErrors} />
+      )}
+      {cargoType === 'valuables' && (
+        <ValuablesFields fieldErrors={fieldErrors} />
+      )}
+      {cargoType === 'other' && <OtherFields fieldErrors={fieldErrors} />}
+
+      <button
+        type="submit"
+        disabled={isPending}
+        className="font-ar w-full rounded-lg border border-gold/50 bg-gold/15 px-6 py-3 text-base font-medium text-gold-light transition-colors hover:bg-gold/25 disabled:opacity-60 sm:w-auto"
+      >
+        {isPending ? cargoAr.submittingButton : cargoAr.submitButton}
+      </button>
+    </form>
+  );
+}
+
+// ============================================================
+// Field primitives (lightweight; no shared library to keep
+// PR 1 scope tight)
+// ============================================================
+
+interface FieldProps {
+  label: string;
+  name: string;
+  type?: string;
+  required?: boolean;
+  dir?: 'ltr' | 'rtl';
+  maxLength?: number;
+  min?: number;
+  max?: number;
+  defaultValue?: string;
+  error?: string;
+}
+
+function Field({
+  label,
+  name,
+  type = 'text',
+  required,
+  dir,
+  maxLength,
+  min,
+  max,
+  defaultValue,
+  error,
+}: FieldProps) {
+  return (
+    <label className="font-ar block text-sm">
+      <span className="text-ink-muted">
+        {label}
+        {required ? <span className="ms-1 text-rose-300">*</span> : null}
+      </span>
+      <input
+        type={type}
+        name={name}
+        required={required}
+        dir={dir}
+        maxLength={maxLength}
+        min={min}
+        max={max}
+        defaultValue={defaultValue}
+        className="mt-1 block w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
+      />
+      {error ? (
+        <p className="mt-1 text-xs text-rose-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </label>
+  );
+}
+
+function TextArea({
+  label,
+  name,
+  error,
+}: {
+  label: string;
+  name: string;
+  error?: string;
+}) {
+  return (
+    <label className="font-ar block text-sm">
+      <span className="text-ink-muted">{label}</span>
+      <textarea
+        name={name}
+        rows={3}
+        className="mt-1 block w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
+      />
+      {error ? (
+        <p className="mt-1 text-xs text-rose-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </label>
+  );
+}
+
+function Toggle({ label, name }: { label: string; name: string }) {
+  return (
+    <label className="font-ar flex items-center gap-2 text-sm text-ink">
+      <input
+        type="checkbox"
+        name={name}
+        className="h-5 w-5 rounded border-border bg-navy-secondary text-gold accent-gold focus:ring-2 focus:ring-gold/40"
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function Select({
+  label,
+  name,
+  options,
+  required,
+  error,
+}: {
+  label: string;
+  name: string;
+  options: { value: string; label: string }[];
+  required?: boolean;
+  error?: string;
+}) {
+  return (
+    <label className="font-ar block text-sm">
+      <span className="text-ink-muted">
+        {label}
+        {required ? <span className="ms-1 text-rose-300">*</span> : null}
+      </span>
+      <select
+        name={name}
+        required={required}
+        className="mt-1 block w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
+        defaultValue=""
+      >
+        <option value="">—</option>
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      {error ? (
+        <p className="mt-1 text-xs text-rose-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </label>
+  );
+}
+
+// ============================================================
+// Per-category field groups
+// ============================================================
+
+function HorseFields({ fieldErrors }: { fieldErrors: Record<string, string> }) {
+  return (
+    <fieldset className="space-y-4 rounded-xl border border-border bg-navy-secondary/30 p-5">
+      <legend className="font-ar px-2 text-sm font-medium text-gold-light">
+        {cargoAr.cargoTypes.horse}
+      </legend>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field
+          label={cargoAr.horseCountLabel}
+          name="horse_count"
+          type="number"
+          min={1}
+          max={30}
+          required
+          error={fieldErrors.horse_count}
+        />
+        <Select
+          label={cargoAr.horseCitesStatusLabel}
+          name="horse_cites_status"
+          options={Object.entries(cargoAr.horseCitesStatusOptions).map(
+            ([value, label]) => ({ value, label })
+          )}
+          error={fieldErrors.horse_cites_status}
+        />
+      </div>
+      <Toggle
+        label={cargoAr.horseGroomRequiredLabel}
+        name="horse_groom_required"
+      />
+      <TextArea
+        label={cargoAr.horseStallRequirementsLabel}
+        name="horse_stall_requirements"
+        error={fieldErrors.horse_stall_requirements}
+      />
+    </fieldset>
+  );
+}
+
+function LuxuryCarFields({
+  fieldErrors,
+}: {
+  fieldErrors: Record<string, string>;
+}) {
+  return (
+    <fieldset className="space-y-4 rounded-xl border border-border bg-navy-secondary/30 p-5">
+      <legend className="font-ar px-2 text-sm font-medium text-gold-light">
+        {cargoAr.cargoTypes.luxury_car}
+      </legend>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Field
+          label={cargoAr.carMakeLabel}
+          name="car_make"
+          required
+          error={fieldErrors.car_make}
+        />
+        <Field
+          label={cargoAr.carModelLabel}
+          name="car_model"
+          required
+          error={fieldErrors.car_model}
+        />
+        <Field
+          label={cargoAr.carYearLabel}
+          name="car_year"
+          type="number"
+          min={1900}
+          max={2100}
+          dir="ltr"
+          error={fieldErrors.car_year}
+        />
+      </div>
+      <Toggle
+        label={cargoAr.carRunningConditionLabel}
+        name="car_running_condition"
+      />
+      <Toggle
+        label={cargoAr.carEnclosedRequiredLabel}
+        name="car_enclosed_required"
+      />
+    </fieldset>
+  );
+}
+
+function ValuablesFields({
+  fieldErrors,
+}: {
+  fieldErrors: Record<string, string>;
+}) {
+  return (
+    <fieldset className="space-y-4 rounded-xl border border-border bg-navy-secondary/30 p-5">
+      <legend className="font-ar px-2 text-sm font-medium text-gold-light">
+        {cargoAr.cargoTypes.valuables}
+      </legend>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field
+          label={cargoAr.valuablesDeclaredValueLabel}
+          name="valuables_declared_value_sar"
+          type="number"
+          min={1}
+          required
+          dir="ltr"
+          error={fieldErrors.valuables_declared_value_sar}
+        />
+        <Select
+          label={cargoAr.valuablesSecurityLevelLabel}
+          name="valuables_security_level"
+          options={Object.entries(cargoAr.valuablesSecurityLevelOptions).map(
+            ([value, label]) => ({ value, label })
+          )}
+          error={fieldErrors.valuables_security_level}
+        />
+      </div>
+      <Toggle
+        label={cargoAr.valuablesClimateControlledLabel}
+        name="valuables_climate_controlled"
+      />
+      <TextArea
+        label={cargoAr.valuablesItemDescriptionLabel}
+        name="valuables_item_description"
+        error={fieldErrors.valuables_item_description}
+      />
+    </fieldset>
+  );
+}
+
+function OtherFields({
+  fieldErrors,
+}: {
+  fieldErrors: Record<string, string>;
+}) {
+  return (
+    <fieldset className="space-y-4 rounded-xl border border-border bg-navy-secondary/30 p-5">
+      <legend className="font-ar px-2 text-sm font-medium text-gold-light">
+        {cargoAr.cargoTypes.other}
+      </legend>
+      <TextArea
+        label={cargoAr.otherDescriptionLabel}
+        name="other_description"
+        error={fieldErrors.other_description}
+      />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field
+          label={cargoAr.otherDimensionsLabel}
+          name="other_dimensions_lwh_cm"
+          dir="ltr"
+          error={fieldErrors.other_dimensions_lwh_cm}
+        />
+        <Field
+          label={cargoAr.otherWeightLabel}
+          name="other_weight_kg"
+          type="number"
+          min={0}
+          dir="ltr"
+          error={fieldErrors.other_weight_kg}
+        />
+      </div>
+      <TextArea
+        label={cargoAr.otherSpecialHandlingLabel}
+        name="other_special_handling"
+        error={fieldErrors.other_special_handling}
+      />
+    </fieldset>
+  );
+}
+
+function cargoErrorMessage(code: string): string {
+  return cargoAr.errors[code] ?? cargoAr.errors.server_error;
+}

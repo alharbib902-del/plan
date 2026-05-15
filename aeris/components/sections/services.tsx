@@ -58,7 +58,17 @@ const SERVICES: Service[] = [
       'سيارات وعربات نادرة',
       'مقتنيات حساسة الوقت والقيمة',
     ],
-    cta: { href: '/request', label: 'اطلب عرض شحن' },
+    // Round 2 PR #65 P2 #1 — when ENABLE_CARGO=true, route to the
+    // real /cargo intake (Phase 11 PR 1 §4.1 create_cargo_request_guest);
+    // otherwise fall back to /request so the CTA is never broken if
+    // the cargo flag is off in any environment. process.env is read
+    // at module load (Server Component → build-time substitution by
+    // Next.js), matching the gating discipline used by the
+    // /cargo page itself and the /admin/cargo pages.
+    cta:
+      process.env.ENABLE_CARGO === 'true'
+        ? { href: '/cargo', label: 'اطلب عرض شحن' }
+        : { href: '/request', label: 'اطلب عرض شحن' },
   },
   {
     icon: Handshake,
