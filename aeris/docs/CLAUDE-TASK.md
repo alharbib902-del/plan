@@ -210,15 +210,37 @@ These are settled before spec acceptance:
     `bookings.payment_status = 'pending_offline'` (Phase
     6/9 default) until that final phase ships HyperPay +
     Moyasar + ZATCA.
-13. **Match scoring weights:** identical to Phase 7
-    lead-inquiry weights for round 1. The
-    `score_empty_leg_match_for_client` helper inside the
-    dispatcher reuses the lead-side scoring function
-    `_score_empty_leg_match` with `client_id` substituted
-    for `lead_inquiry_id`. Per-client preferences
-    (favourite routes, preferred timing) deferred to
-    Phase 10.x or later — the JSONB shape allows
-    forward extension.
+13. **Match scoring data sources for clients** (Codex round
+    1 PR #61 P2 #6 fix). Phase 7's `scoreCandidateAgainstLeg`
+    consumes a `CandidateRow` shape with explicit
+    `origin_iata` / `destination_iata` / `passengers` /
+    `travel_window_start` / `travel_window_end` / `route_pairs`
+    fields — these are read from `lead_inquiries` columns
+    (which collect the inquiry intent at submit time).
+    Clients have no equivalent intent columns; the spec
+    therefore pins the **client signal sources** as follows:
+    - `origin_iata` ← latest non-cancelled `trip_requests.departure_airport`
+      where `client_id = client.id`. NULL → no geo signal.
+    - `destination_iata` ← latest non-cancelled
+      `trip_requests.arrival_airport`. NULL → no geo signal.
+    - `passengers` ← latest `trip_requests.passengers_count`.
+      NULL → defaults to 2 (median family size).
+    - `travel_window_start` / `travel_window_end` ← derived
+      from latest `trip_requests.departure_date` ±3 days.
+      NULL → wide window (no time score).
+    - `route_pairs` ← DISTINCT `(departure_airport, arrival_airport)`
+      pairs across the client's full `trip_requests` history
+      (used for the existing route-affinity factor).
+    A client with **zero** trip_requests history has all
+    signals NULL → scores zero on geo + time factors but
+    still receives matches via the discount + capacity
+    factors (Phase 7 weights). The `listEligibleClientCandidates`
+    query (§4.2 step 1) is the single source of truth for
+    this projection — implemented as a CTE join with the
+    same shape as `CandidateRow`. PR 1 ships this projection
+    + a unit test fixing the mapping. Per-client booking
+    history boost + manual saved-preference inputs deferred
+    to Phase 10.x (the projection is the extension point).
 14. **Codex 100/100 mandatory** before any merge to main.
     Branch protection enforces CI passing too. (Carries
     forward from Phase 9 conventions playbook.)
@@ -226,6 +248,34 @@ These are settled before spec acceptance:
     for new RPCs. Mirror of Phase 8 PR 2e #48 + Phase 9
     PR 1 convention #1 — the `looseClient()` cast pattern
     is the only way new code calls RPCs.
+16. **Confirmation flow: ship a NEW dedicated RPC for
+    client reservations** (Codex round 1 PR #61 P1 #4
+    fix). The existing Phase 7 `confirm_empty_leg_reservation`
+    requires a reservation `token_hash` + guest snapshot
+    fields, INSERTs `bookings.client_id = NULL`, and the
+    admin form asks for a guest token. Authenticated
+    reservations carry NONE of these. PR 1 ships a parallel
+    `confirm_empty_leg_reservation_for_client(p_leg_id,
+    p_admin_user_id)` RPC (§4.3) that:
+    - Reads the leg's `reservation_client_id` (NOT the
+      token hash) + verifies it is still within TTL
+    - Pulls `bookings.client_id` + `customer_name` +
+      `customer_phone` from the `clients` table (NOT from
+      reservation snapshot columns — they are NULL for
+      State C reservations)
+    - INSERTs the booking with
+      `source_discriminator = 'empty_leg'` +
+      `source_offer_table = 'phase7_empty_leg'` +
+      `client_id = empty_legs.reservation_client_id`
+    - Clears `empty_legs.reservation_client_id` +
+      `reservation_expires_at` + flips `status='sold'`
+    The existing Phase 7 `confirm_empty_leg_reservation`
+    (guest path) stays untouched. PR 2 wires a new admin
+    UI affordance ("تأكيد حجز عميل مسجّل") that calls
+    the new RPC; the existing guest-token confirm UI is
+    unaffected. **Both confirm paths now write
+    `bookings.source_discriminator='empty_leg'` so unified
+    /me/bookings renders correctly per Decision #10.**
 
 ---
 
@@ -248,36 +298,53 @@ CREATE INDEX IF NOT EXISTS idx_empty_legs_reservation_client
   ON empty_legs (reservation_client_id)
   WHERE reservation_client_id IS NOT NULL;
 
--- Extend the pair check.
--- Before (Phase 7): all 4 of (token_hash, expires_at, name, phone)
---                   must be either all-NULL or all-NOT-NULL.
--- After (Phase 10): same 4-pair rule, AND additionally
---                   reservation_client_id MUST be NULL when
---                   reservation_token_hash IS NOT NULL (i.e.
---                   guest reservation cannot also be a client
---                   reservation), AND when client_id IS NOT NULL
---                   the 4 guest snapshot columns may be NULL
---                   (the client's snapshots come from the clients
---                   table at read time).
+-- Replace the Phase 7 pair-check with explicit valid-states
+-- (Codex round 1 PR #61 P1 #1 fix). The Phase 7 rule
+-- `(token_hash IS NULL) = (expires_at IS NULL)` rejects the
+-- valid client-reservation state where token_hash is NULL but
+-- expires_at is NOT NULL — so the new RPC's happy path would
+-- have violated the constraint. Three valid states only:
+--
+--   State A — NO reservation: all 5 columns NULL
+--   State B — GUEST reservation: 4-pair NOT NULL, client_id NULL
+--   State C — CLIENT reservation: client_id + expires_at NOT NULL,
+--            token_hash + 2 snapshots NULL (client snapshots come
+--            from the clients table at read time)
+--
+-- The 4-pair semantics for guest rows are preserved inside
+-- State B; the XOR between guest and client is implicit in the
+-- three-state OR.
 
 ALTER TABLE empty_legs
   DROP CONSTRAINT IF EXISTS empty_legs_reservation_pair_check;
 
 ALTER TABLE empty_legs
   ADD CONSTRAINT empty_legs_reservation_pair_check CHECK (
-    -- guest reservation: 4-pair rule still in force
-    (reservation_token_hash IS NULL) = (reservation_expires_at IS NULL)
-    AND (reservation_token_hash IS NULL) = (reservation_customer_name_snapshot IS NULL)
-    AND (reservation_token_hash IS NULL) = (reservation_customer_phone_snapshot IS NULL)
-    -- guest XOR client: cannot have both
-    AND NOT (
-      reservation_token_hash IS NOT NULL
-      AND reservation_client_id IS NOT NULL
+    -- State A: NO reservation
+    (
+      reservation_token_hash               IS NULL
+      AND reservation_expires_at           IS NULL
+      AND reservation_customer_name_snapshot  IS NULL
+      AND reservation_customer_phone_snapshot IS NULL
+      AND reservation_client_id            IS NULL
     )
-    -- client reservation needs expires_at (TTL still required)
-    AND (
-      reservation_client_id IS NULL
-      OR reservation_expires_at IS NOT NULL
+    OR
+    -- State B: GUEST reservation
+    (
+      reservation_token_hash               IS NOT NULL
+      AND reservation_expires_at           IS NOT NULL
+      AND reservation_customer_name_snapshot  IS NOT NULL
+      AND reservation_customer_phone_snapshot IS NOT NULL
+      AND reservation_client_id            IS NULL
+    )
+    OR
+    -- State C: CLIENT reservation
+    (
+      reservation_token_hash               IS NULL
+      AND reservation_expires_at           IS NOT NULL
+      AND reservation_customer_name_snapshot  IS NULL
+      AND reservation_customer_phone_snapshot IS NULL
+      AND reservation_client_id            IS NOT NULL
     )
   );
 ```
@@ -288,10 +355,27 @@ Allows the matching engine to write a match row keyed on a
 client (not just a lead). XOR check ensures exactly one of
 `client_id` or `lead_inquiry_id` is populated per row.
 
+**Codex round 1 PR #61 P1 #2 fix:** Phase 7 created the table
+with `lead_inquiry_id UUID NOT NULL`. The XOR check below
+expects client-keyed rows to set `lead_inquiry_id = NULL`, so
+PR 1 migration MUST drop the NOT NULL constraint BEFORE adding
+the XOR check, otherwise every client INSERT raises
+`null_value_not_allowed` before the XOR predicate even
+evaluates. The `types/database.ts` regen must reflect the
+nullable shape.
+
 ```sql
 ALTER TABLE empty_leg_notifications
   ADD COLUMN IF NOT EXISTS client_id UUID
     REFERENCES clients(id) ON DELETE CASCADE;
+
+-- Drop the legacy NOT NULL on lead_inquiry_id so client-keyed
+-- rows can set it to NULL (Codex round 1 PR #61 P1 #2 fix).
+-- The XOR check below enforces "exactly one of {client, lead}
+-- is populated" so the column-level NOT NULL becomes
+-- redundant + harmful.
+ALTER TABLE empty_leg_notifications
+  ALTER COLUMN lead_inquiry_id DROP NOT NULL;
 
 -- XOR check
 ALTER TABLE empty_leg_notifications
@@ -348,25 +432,48 @@ export function isClientOptedIn(
 ### §3.4 — `bookings.source_discriminator`
 
 Distinguishes Phase 9 charter bookings from Phase 10 empty-leg
-bookings. Backfill on existing rows: all Phase 9 bookings
-get `'charter'` (their `accept_offer` flow) — empty-leg
-bookings only appear after Phase 10 ships.
+bookings.
+
+**Codex round 1 PR #61 P2 #5 fix:** the prior draft defaulted
+every existing row to `'charter'`, but Phase 7 already creates
+empty-leg bookings tagged `source_offer_table = 'phase7_empty_leg'`
+(Phase 6/7 admin confirmation flow). Defaulting to `'charter'`
+would mislabel those historical empty-leg bookings on the
+unified `/me/bookings` view. Backfill via a `CASE` on the
+existing `source_offer_table` column instead, then make the
+column NOT NULL after the backfill is verified.
 
 ```sql
+-- Step 1: add the column NULLABLE (so we can backfill correctly
+-- before flipping NOT NULL).
 ALTER TABLE bookings
   ADD COLUMN IF NOT EXISTS source_discriminator TEXT
-    NOT NULL DEFAULT 'charter'
     CHECK (source_discriminator IN ('charter', 'empty_leg'));
 
--- Backfill is a no-op (DEFAULT covers existing rows automatically
--- because PostgreSQL adds the column with the default value);
--- the explicit UPDATE below is a defensive idempotent re-write
--- for DR/replay safety (mirrors Phase 9 PR 2 §1 NOT VALID
--- discipline — no harm if it runs twice).
-
+-- Step 2: backfill from source_offer_table (Phase 6/7 column).
+-- Idempotent: WHERE source_discriminator IS NULL ensures replay
+-- safety. The CASE pins each historical row to its true origin
+-- (Phase 6 charter → 'charter'; Phase 7 empty-leg → 'empty_leg';
+-- legacy NULLs default to 'charter' since pre-Phase-6 data
+-- preceded the empty-leg flow).
 UPDATE bookings
-   SET source_discriminator = 'charter'
+   SET source_discriminator = CASE
+     WHEN source_offer_table = 'phase7_empty_leg' THEN 'empty_leg'
+     ELSE 'charter'
+   END
  WHERE source_discriminator IS NULL;
+
+-- Step 3: set NOT NULL + DEFAULT for forward writes. The DEFAULT
+-- only matters for rows inserted by code paths that omit the
+-- column (Phase 9 accept_offer is one such path until PR 1
+-- code change adds the explicit value); Phase 10 PR 1's
+-- new admin confirmation RPC for client reservations will
+-- always set 'empty_leg' explicitly.
+ALTER TABLE bookings
+  ALTER COLUMN source_discriminator SET NOT NULL;
+
+ALTER TABLE bookings
+  ALTER COLUMN source_discriminator SET DEFAULT 'charter';
 
 CREATE INDEX IF NOT EXISTS idx_bookings_client_source
   ON bookings (client_id, source_discriminator, created_at DESC)
@@ -541,33 +648,243 @@ GRANT EXECUTE ON FUNCTION reserve_empty_leg_authenticated(UUID, UUID, INET) TO s
 | `leg_already_reserved` | another reservation already in place |
 | `auction_window_closed` | auction_window_end_at <= NOW |
 
-### §4.2 — `dispatch_empty_leg_matches` extension (Phase 7 RPC)
+### §4.2 — TS matching-pipeline extension (NOT a SQL RPC)
 
-Existing Phase 7 RPC writes matches to `empty_leg_notifications`
-keyed on `lead_inquiry_id`. PR 1 extends it to ALSO write
-client-keyed rows when `ENABLE_CLIENT_EMPTY_LEGS_PORTAL = 'true'`.
+**Codex round 1 PR #61 P1 #3 fix.** The prior draft proposed
+extending a SQL RPC named `dispatch_empty_leg_matches`. That RPC
+does not exist — Phase 7 matching is a **TypeScript pipeline**
+driven by outbox + cron routes:
 
-The flag is read at the **route handler boundary** (matching the
-trigger fire), NOT inside the RPC body — keeps the RPC pure +
-testable (mirror of Phase 9 PR 4 `auto_dispatch_trip_request`
-pattern). The flag is passed in as `p_include_clients BOOLEAN
-DEFAULT FALSE` argument.
+- `lib/empty-legs/matching.ts` (`matchLeg`, `scoreCandidateAgainstLeg`)
+- `lib/empty-legs/candidate-pool.ts` (`listEligibleCandidates`)
+- `lib/empty-legs/frequency-cap.ts` (`isLeadOverFrequencyCap`,
+  `hasNotifiedLeadOnLeg`, `shouldSkipCandidate`)
+- `lib/empty-legs/notifications.ts` (Resend + wa.me link build)
+- Outbox routes: `app/api/empty-legs/internal/match-trigger/`
+  + `app/api/cron/empty-legs/match-drain/`
 
-When `p_include_clients = TRUE`:
-1. Build list of eligible clients:
-   - `signup_status = 'active'`
-   - NOT opted out via `notification_preferences.empty_legs.{email,wa_link}` for **at least one** channel
-   - NOT already received a match for this leg (unique
-     constraint check)
-   - Frequency cap: < 5 matches in last 24h
-2. For each eligible client: INSERT
-   `empty_leg_notifications (client_id, leg_id, event_type,
-   channel, wa_url, …)` row.
-3. Return updated count: `{ok, leads_notified, clients_notified}`.
+PR 1 ships the client-aware extension as TS code changes (NOT
+a migration), with Phase 9 conventions #1, #15, #19 carried
+forward. Concretely:
 
-The Server Action layer (the cron + match-trigger callers)
-reads `process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`
-+ passes the boolean through.
+1. **`candidate-pool.ts`** gains a sibling
+   `listEligibleClientCandidates(leg)` returning a `ClientCandidateRow`
+   shape (mirror of `CandidateRow` but sourced from `clients`
+   joined with the per-client signal sources defined in
+   Decision #13). Existing `listEligibleCandidates` (lead path)
+   stays untouched.
+2. **`frequency-cap.ts`** gains `isClientOverFrequencyCap`
+   + `hasNotifiedClientOnLeg` + `shouldSkipClientCandidate`
+   helpers, querying the new `idx_empty_leg_notifications_client_24h`
+   + `idx_empty_leg_notifications_client_leg_unique` indexes
+   from §3.2. The 5/24h cap is the same constant
+   (`FREQUENCY_CAP_PER_24H`).
+3. **`matching.ts`** `matchLeg(legId)` is extended:
+   - Existing lead-loop runs unchanged.
+   - When `process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`,
+     a NEW client-loop runs after the lead-loop: list eligible
+     client candidates → score with the same
+     `scoreCandidateAgainstLeg` function (signal substitutions
+     per Decision #13) → for each client passing the
+     frequency-cap helpers, INSERT a `client_id`-keyed row
+     into `empty_leg_notifications` + dispatch the email +
+     wa.me link via `notifications.ts` (extended to read
+     `clients.notification_preferences` + skip channels the
+     client opted out of).
+   - The `MatchOutcome` discriminated union gains
+     `clients_notified: number` alongside the existing
+     `leads_notified: number`. `shouldMarkOutboxProcessed` is
+     extended to consider both counts.
+4. **`notifications.ts`** gains
+   `sendClientEmptyLegMatchEmail(client, leg, event_type)`
+   + `buildClientWaMeUrl(client, leg)` — mirror of the existing
+   lead-side helpers but reading `clients.contact_phone` +
+   `clients.full_name` instead of the lead snapshot fields.
+5. **`outboxes`** require no schema change. The match-drain
+   cron route at `/api/cron/empty-legs/match-drain` calls
+   `matchLeg(legId)` per leg — the new client-loop runs
+   transparently when the flag is on.
+
+**Tests** added in PR 1 alongside the code changes:
+
+- `lib/empty-legs/__tests__/matching-clients.test.ts` —
+  scores for clients with various signal-source profiles
+  (per Decision #13).
+- `lib/empty-legs/__tests__/frequency-cap-clients.test.ts` —
+  5/24h cap behavior across `client_id`-keyed rows.
+- Existing 7 Phase 7 empty-legs test suites must continue
+  to pass unchanged.
+
+**Backwards compatibility is non-negotiable.** When
+`ENABLE_CLIENT_EMPTY_LEGS_PORTAL` is unset or `false`, the
+extension code path is dead. No existing Phase 7 test or
+production behaviour changes.
+
+### §4.3 — `confirm_empty_leg_reservation_for_client` (NEW)
+
+Codex round 1 PR #61 P1 #4 fix. Parallel to the existing
+Phase 7 `confirm_empty_leg_reservation` (guest path), this
+RPC handles the admin-confirmation step for reservations
+created by `reserve_empty_leg_authenticated` (State C in
+§3.1). The existing guest RPC stays unchanged.
+
+```sql
+CREATE OR REPLACE FUNCTION confirm_empty_leg_reservation_for_client(
+  p_leg_id        UUID,
+  p_admin_user_id UUID
+) RETURNS JSON
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_leg_row     RECORD;
+  v_client_row  RECORD;
+  v_booking_id  UUID;
+  v_now         TIMESTAMPTZ := NOW();
+BEGIN
+  -- 1. Lock the leg row + verify it is in State C
+  SELECT id, status, reservation_client_id,
+         reservation_expires_at, current_price,
+         operator_id, aircraft_id,
+         operator_name_snapshot, operator_phone_snapshot
+    INTO v_leg_row
+    FROM empty_legs
+   WHERE id = p_leg_id
+   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  IF v_leg_row.status <> 'reserved' THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_reserved');
+  END IF;
+
+  IF v_leg_row.reservation_client_id IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'not_a_client_reservation');
+  END IF;
+
+  IF v_leg_row.reservation_expires_at <= v_now THEN
+    RETURN json_build_object('ok', false, 'error', 'reservation_expired');
+  END IF;
+
+  -- 2. Pull live client snapshot from the clients table
+  --    (State C reservations don't carry snapshot columns —
+  --    Decision #1 + §3.1 State C definition).
+  SELECT id, full_name, contact_phone, signup_status
+    INTO v_client_row
+    FROM clients
+   WHERE id = v_leg_row.reservation_client_id;
+
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'client_not_found');
+  END IF;
+
+  -- We do NOT block on client_not_active here: a client
+  -- whose status flipped to 'suspended' between reserve
+  -- and confirm should still get the booking row (they
+  -- already paid the reservation hold cost — flipping the
+  -- account doesn't void a confirmed transaction). Admin
+  -- can manually cancel via existing booking-cancel flow.
+
+  -- 3. INSERT the booking row with explicit source markers
+  INSERT INTO bookings (
+    -- Direct linkage
+    client_id,
+    operator_id,
+    aircraft_id,
+    -- Snapshots from the clients table
+    customer_name,
+    customer_phone,
+    -- Operator snapshot from the leg
+    operator_name_snapshot,
+    operator_phone_snapshot,
+    -- Pricing
+    base_amount,
+    total_amount,
+    payment_status,
+    -- Source discriminators (Decision #10 + Decision #16)
+    source_discriminator,
+    source_offer_table,
+    -- Linkage back to the empty leg
+    source_empty_leg_id
+  ) VALUES (
+    v_client_row.id,
+    v_leg_row.operator_id,
+    v_leg_row.aircraft_id,
+    v_client_row.full_name,
+    v_client_row.contact_phone,
+    v_leg_row.operator_name_snapshot,
+    v_leg_row.operator_phone_snapshot,
+    v_leg_row.current_price,
+    v_leg_row.current_price,
+    'pending_offline',  -- Decision #12: payment deferred
+    'empty_leg',        -- Decision #10
+    'phase7_empty_leg', -- Decision #16: matches Phase 7 historical tag
+    v_leg_row.id
+  ) RETURNING id INTO v_booking_id;
+
+  -- 4. Clear reservation + flip leg status to sold
+  UPDATE empty_legs
+     SET reservation_client_id  = NULL,
+         reservation_expires_at = NULL,
+         status                 = 'sold',
+         customer_booking_id    = v_booking_id
+   WHERE id = p_leg_id;
+
+  -- 5. Audit log entry (admin who confirmed, for traceability)
+  INSERT INTO audit_logs (
+    entity_type, entity_id, action, new_value, actor_id
+  ) VALUES (
+    'booking', v_booking_id, 'empty_leg_client_confirmed',
+    jsonb_build_object(
+      'leg_id', v_leg_row.id,
+      'client_id', v_client_row.id,
+      'admin_user_id', p_admin_user_id,
+      'confirmed_at', v_now
+    ),
+    p_admin_user_id
+  );
+
+  RETURN json_build_object(
+    'ok', true,
+    'booking_id', v_booking_id,
+    'leg_id', v_leg_row.id,
+    'client_id', v_client_row.id,
+    'confirmed_at', v_now
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION confirm_empty_leg_reservation_for_client(UUID, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION confirm_empty_leg_reservation_for_client(UUID, UUID) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION confirm_empty_leg_reservation_for_client(UUID, UUID) TO service_role;
+```
+
+**Schema dependency:** the RPC writes to a `bookings.source_empty_leg_id`
+column. If Phase 7 didn't already add it (audit needed in
+PR 1), the migration adds it as part of §3.4:
+
+```sql
+ALTER TABLE bookings
+  ADD COLUMN IF NOT EXISTS source_empty_leg_id UUID
+    REFERENCES empty_legs(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_bookings_source_empty_leg
+  ON bookings (source_empty_leg_id)
+  WHERE source_empty_leg_id IS NOT NULL;
+```
+
+**Structured contracts:**
+
+| Code | Trigger |
+|---|---|
+| `leg_not_found` | leg_id invalid |
+| `leg_not_reserved` | leg.status not 'reserved' |
+| `not_a_client_reservation` | reservation_client_id IS NULL (guest reservation — wrong RPC) |
+| `reservation_expired` | reservation TTL elapsed before admin confirmed |
+| `client_not_found` | reservation_client_id no longer exists in clients table |
 
 ---
 
@@ -576,15 +893,30 @@ reads `process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`
 ### PR 1 — Migration + RPC + Server Actions + tests (~700 lines)
 
 **Migration** `20260516000029_phase_10_pr_1_empty_legs_client_portal.sql`:
-- §3.1 `empty_legs.reservation_client_id` + extended pair check
-- §3.2 `empty_leg_notifications.client_id` + XOR check + indexes
+- §3.1 `empty_legs.reservation_client_id` + valid-states CHECK
+  (3-state: NO / GUEST / CLIENT — Codex round 1 P1 #1 fix)
+- §3.2 `empty_leg_notifications.client_id` + DROP NOT NULL on
+  `lead_inquiry_id` + XOR check + indexes (Codex round 1 P1 #2 fix)
 - §3.3 `clients.notification_preferences` JSONB column
-- §3.4 `bookings.source_discriminator` + idempotent backfill
+- §3.4 `bookings.source_discriminator` (3-step: add nullable +
+  CASE-based backfill from `source_offer_table` + flip NOT NULL —
+  Codex round 1 P2 #5 fix) + `bookings.source_empty_leg_id` FK
 - §3.5 `cleanup_expired_empty_leg_reservations` CREATE OR REPLACE
 - §4.1 `reserve_empty_leg_authenticated` RPC
-- §4.2 `dispatch_empty_leg_matches` extension (CREATE OR REPLACE
-  with new `p_include_clients` argument)
+- §4.2 (NOT a migration — TS pipeline changes; see below)
+- §4.3 `confirm_empty_leg_reservation_for_client` RPC
+  (NEW — Codex round 1 P1 #4 fix)
 - REVOKE/GRANT for all new + modified functions
+
+**TS pipeline changes (NOT in the migration — Codex round 1
+P1 #3 fix)**, alongside the migration in PR 1:
+- `lib/empty-legs/candidate-pool.ts` — `listEligibleClientCandidates`
+- `lib/empty-legs/frequency-cap.ts` — client-keyed helpers
+- `lib/empty-legs/matching.ts` — extended `matchLeg` with
+  client-loop guarded by `ENABLE_CLIENT_EMPTY_LEGS_PORTAL`
+- `lib/empty-legs/notifications.ts` — client email + wa.me builders
+- `types/database.ts` regen reflects the nullable
+  `lead_inquiry_id` shape
 
 **Server Actions** (`app/actions/clients-empty-legs.ts`):
 - `reserveAuthenticatedEmptyLeg` — wraps §4.1 RPC; on success
@@ -639,6 +971,16 @@ reads `process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`
 - `notifications/page.tsx` — preferences form
 - `bookings/page.tsx` (modified) — application-level merge
   of charter + empty_leg bookings
+
+**Admin UI extension** (Codex round 1 P1 #4 fix):
+- New affordance on the existing admin reservation card
+  (in `/admin/empty-legs/<leg>` detail) labelled
+  "تأكيد حجز عميل مسجّل" — visible ONLY when
+  `empty_legs.reservation_client_id IS NOT NULL`. Calls
+  the §4.3 `confirm_empty_leg_reservation_for_client`
+  RPC (NOT the existing guest confirm RPC). The existing
+  guest-token confirm UI stays exactly as-is for State B
+  reservations.
 
 **Components** (under `components/clients/`):
 - `empty-leg-table.tsx` — list rows for browse + matches
@@ -819,45 +1161,41 @@ within milliseconds of each other.
 
 ---
 
-## Open questions for Codex round 1
+## Open questions for Codex round 2
 
-These are intentionally NOT pre-decided; the spec PR review
-is the right forum:
+Round 1 closed Decisions #1 / #2 / #3 / #5 (P1 #1 / P1 #2 /
+P1 #3 / P1 #4) plus #6 (P2 #5) plus Decision #13 scoring
+sources (P2 #6). Two open questions carry forward to
+round 2:
 
-1. **`empty_legs.status='reserved'`** — Phase 7 schema has
-   `empty_leg_status ENUM ('available','reserved','sold','expired')`.
-   The Phase 10 RPC sets `status='reserved'` on successful
-   reserve. Does this conflict with any existing Phase 7
-   admin flow that assumes `status='reserved'` only for
-   guest reservations? (Spot-check: admin "ركبتي حجز" badge in
-   `/admin/leads` reads from `status` directly. Phase 10
+1. **`empty_legs.status='reserved'` semantics** — Phase 7
+   schema has `empty_leg_status ENUM ('available','reserved',
+   'sold','expired')`. The Phase 10 RPC sets `status='reserved'`
+   on successful reserve. Does this conflict with any existing
+   Phase 7 admin UI flow that assumes `status='reserved'` only
+   for guest reservations? Spot-check: admin "ركبتي حجز" chip
+   in `/admin/leads` reads from `status` directly. Phase 10
    reservations would render the same chip — likely OK
-   semantically, but worth Codex confirmation.)
-2. **Confirmation flow ownership** — Phase 7 admin
-   confirmation creates a `bookings` row (probably via
-   existing admin Server Action). Phase 10 needs that
-   same flow to set `bookings.source_discriminator='empty_leg'`
-   + `bookings.client_id = empty_legs.reservation_client_id`
-   when present (instead of the snapshot fields). PR 1
-   migration should NOT modify the admin confirmation
-   RPC — that needs a separate confirmation path or a
-   Phase 10 hotfix PR. Codex should call out the cleanest
-   split (modify Phase 7 admin RPC vs. ship a new
-   `confirm_empty_leg_reservation_for_client` RPC).
-3. **Scoring weights** — Decision #13 says "identical to
-   leads". But leads have `customer_phone` for routing
-   prior matches; clients have a richer profile (history
-   of trip_requests + bookings). Should client-side scoring
-   incorporate booking history (e.g. boost legs near
-   client's past departure cities)? Codex round 1 P1 vs
-   P2 boundary.
-4. **Email opt-out token interplay** — Phase 7 guests opt
-   out via signed token URL. Authenticated clients opt
-   out via `/me/notifications`. Should the PR 1 migration
-   add a one-way sync (when client matches a previously-
-   opted-out lead by email, propagate the opt-out)? Codex
-   to scope.
+   semantically (a reservation is a reservation regardless of
+   source), and the new admin "تأكيد حجز عميل مسجّل"
+   affordance from §5 PR 2 visually disambiguates the two
+   confirmation paths. But worth Codex confirmation that no
+   downstream Phase 7 query/UI silently breaks.
+2. **Email opt-out token interplay** — Phase 7 guests opt
+   out via signed token URL keyed on `lead_inquiries`.
+   Authenticated clients opt out via `/me/notifications`.
+   Should the PR 1 migration add a one-way sync (when client
+   account is created with `auth_email` matching a previously-
+   opted-out `lead_inquiries.email`, propagate the opt-out
+   into the new client's `notification_preferences`)? Probably
+   yes (UX continuity), but the implementation has trade-offs:
+   - Eager backfill at PR 1 deploy time (one-shot SQL UPDATE
+     joining lead_inquiries to clients on lower(email)).
+   - Lazy sync on next client login (Server Action in
+     `validateClientSession` checks + reconciles).
+   - Or both (backfill at deploy + lazy sync for late
+     signups). Codex to recommend.
 
 ---
 
-**Spec ready for Codex round 1 review.**
+**Spec ready for Codex round 2 review.**
