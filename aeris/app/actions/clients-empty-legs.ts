@@ -152,10 +152,12 @@ export async function reserveAuthenticatedEmptyLeg(input: {
 
   if (!result.ok) return { ok: false, error: result.error };
 
-  // 5. Send confirmation email (fire-and-forget; alert wiring
-  //    inside the helper records §3.6 singleton state). We
-  //    pull route + leg_number from a separate read because
-  //    the §4.1 RPC return shape is intentionally minimal.
+  // 5. Read leg_number + client display fields once for both
+  //    the confirmation email + revalidatePath (Codex round 1
+  //    P2 #3 fix — the public detail URL is keyed on leg_number,
+  //    not the UUID, so revalidating /me/empty-legs/<UUID> was
+  //    a no-op leaving the real detail page stale).
+  let legNumber: string | null = null;
   try {
     const admin = createAdminClient();
     const { data: legData } = await admin
@@ -182,6 +184,8 @@ export async function reserveAuthenticatedEmptyLeg(input: {
       full_name?: string;
       auth_email?: string;
     } | null;
+
+    if (leg?.leg_number) legNumber = leg.leg_number;
 
     if (leg && cli && cli.auth_email) {
       const routeFrom =
@@ -213,9 +217,16 @@ export async function reserveAuthenticatedEmptyLeg(input: {
     );
   }
 
-  // 6. Revalidate the portal pages so the UI updates
+  // 6. Revalidate the portal pages so the UI updates. The detail
+  //    URL is /me/empty-legs/<leg_number> (NOT UUID). If the
+  //    leg_number lookup above failed, fall back to the listing
+  //    pages only — the detail page's data fetch will stay stale
+  //    until the next manual reload, which is preferable to
+  //    revalidating a wrong path.
   revalidatePath('/me/empty-legs');
-  revalidatePath(`/me/empty-legs/${parsed.data.leg_id}`);
+  if (legNumber) {
+    revalidatePath(`/me/empty-legs/${legNumber}`);
+  }
   revalidatePath('/me/empty-legs/matches');
 
   return {
@@ -276,8 +287,30 @@ export async function cancelMyEmptyLegReservation(input: {
 
   if (!result.ok) return { ok: false, error: result.error };
 
+  // Codex round 1 PR #62 P2 #3 fix — revalidate the leg_number-keyed
+  // detail path (NOT the UUID path), because /me/empty-legs/[leg_number]
+  // is the public route. Read leg_number once for the revalidate.
+  let legNumber: string | null = null;
+  try {
+    const admin = createAdminClient();
+    const { data: legData } = await admin
+      .from('empty_legs')
+      .select('leg_number')
+      .eq('id', parsed.data.leg_id)
+      .maybeSingle();
+    const ln = (legData as { leg_number?: string } | null)?.leg_number;
+    if (typeof ln === 'string' && ln.length > 0) legNumber = ln;
+  } catch (err) {
+    console.error(
+      '[clients-empty-legs.cancel] leg_number lookup failed (non-fatal)',
+      err
+    );
+  }
+
   revalidatePath('/me/empty-legs');
-  revalidatePath(`/me/empty-legs/${parsed.data.leg_id}`);
+  if (legNumber) {
+    revalidatePath(`/me/empty-legs/${legNumber}`);
+  }
   revalidatePath('/me/empty-legs/matches');
 
   return {

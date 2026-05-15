@@ -403,9 +403,43 @@ export async function enqueueClientLegNotifications({
         );
       }
     }
-    // wa.me: no dispatch — wa_url is the founder's batch
-    // alert payload (founder messages clients manually like
+    // wa.me: no per-row dispatch — the wa_url is collected
+    // into the founder's batch alert below (founder messages
+    // clients manually from the admin outreach queue, mirroring
     // the lead path).
+  }
+
+  // Codex round 1 PR #62 P1 #2 fix — fire the founder batch
+  // alert for client rows too. Without this, clients opted into
+  // wa_link only (or email_and_wa) get an empty_leg_notifications
+  // row but the founder never gets a "new client matches pending"
+  // surface, so the wa.me URLs sit in the table without delivery.
+  // Mirrors the Phase 7 lead-path call at the bottom of
+  // enqueueLegNotifications. Two emails per matching cycle (one
+  // for the lead batch, one for the client batch) is intentional —
+  // they summarise different recipient pools and surface in the
+  // same /admin/empty-legs/outreach-queue page where the founder
+  // dispatches both manually.
+  if (writtenRows.length > 0) {
+    try {
+      await sendFounderBatchAlert({
+        legId: leg.id,
+        legNumber: leg.leg_number,
+        rowCount: writtenRows.length,
+      });
+    } catch (err) {
+      // sendFounderBatchAlert is fail-tolerant: it logs +
+      // updates the alert-status singleton on its own. Re-thrown
+      // errors here would back the matcher into client_loop_failed
+      // (round 1 P1 #1 fix) and trigger an outbox retry that
+      // would re-fire the founder alert — undesirable since the
+      // empty_leg_notifications rows ARE already written and
+      // visible in the outreach queue.
+      console.error(
+        '[notifications] founder batch alert (client) failed (non-fatal)',
+        err
+      );
+    }
   }
 
   return {

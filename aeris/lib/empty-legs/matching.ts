@@ -368,6 +368,18 @@ export async function matchLeg(
   // enqueueClientLegNotifications (which handles per-client
   // channel selection per opt-in prefs + match-email Resend
   // dispatch + alert wiring).
+  //
+  // Codex round 1 PR #62 P1 #1 fix: client-loop failures used
+  // to be swallowed (logged + non-fatal) and the outcome still
+  // returned matched, which marked the outbox processed and
+  // permanently lost client matches for that leg event. Now a
+  // failure returns a retryable {ok: false} so the outbox row
+  // stays pending and the next drain tick retries. Both lead
+  // INSERTs (unique on lead+leg) and client INSERTs (unique on
+  // client+leg) are idempotent on retry — no double notifications.
+  // The cost is an extra dispatch attempt for any leg that hit
+  // a transient client-loop error, which is the right trade vs
+  // silently dropping client matches.
   let clientsWritten: number | undefined;
   let clientsSkippedPreferences: number | undefined;
   if (isClientPortalFlagEnabled()) {
@@ -392,12 +404,12 @@ export async function matchLeg(
       clientsWritten = clientResult.written.length;
       clientsSkippedPreferences = clientResult.skipped_preferences;
     } catch (err) {
-      // Non-fatal: lead-loop already succeeded; log the
-      // client-loop error but still return the matched outcome
-      // so the outbox gets marked processed (the lead-loop
-      // work is real + idempotent on retry would be wasteful).
-      console.error('[matching] client-loop failed (non-fatal)', err);
-      // clientsWritten + clientsSkippedPreferences stay undefined
+      console.error('[matching] client-loop failed', err);
+      return {
+        ok: false,
+        leg_id: legId,
+        error: 'client_loop_failed',
+      };
     }
   }
 
