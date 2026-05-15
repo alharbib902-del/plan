@@ -62,9 +62,24 @@ export default async function AdminEmptyLegDetailPage({ params }: PageProps) {
   // State C reservation → pre-load the client display fields.
   // Other states leave reservationClient null (the component
   // falls back to the snapshot columns or skips the section).
+  //
+  // Codex round 1 PR #63 P1 #1 fix — positive string check.
+  // The Phase 10 §3.1 migration adds reservation_client_id as a
+  // new column; before it's applied, `select('*')` returns leg
+  // rows WITHOUT the property and the truthy check on
+  // `leg.reservation_client_id` (= undefined) is false here so
+  // the bug surface is narrower than the leg-detail.tsx case,
+  // but we still apply the same positive-string guard for
+  // discipline + future-proofing (a downstream change that
+  // accidentally short-circuits could re-introduce the misread).
+  const reservationClientId =
+    typeof leg.reservation_client_id === 'string' &&
+    leg.reservation_client_id.length > 0
+      ? leg.reservation_client_id
+      : null;
   const reservationClient =
-    leg.status === 'reserved' && leg.reservation_client_id
-      ? await loadReservationClient(leg.reservation_client_id)
+    leg.status === 'reserved' && reservationClientId !== null
+      ? await loadReservationClient(reservationClientId)
       : null;
 
   return (

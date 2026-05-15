@@ -332,7 +332,24 @@ export async function updateMyNotificationPreferences(input: {
   empty_legs: { email: boolean; wa_link: boolean };
   marketing: boolean;
 }): Promise<UpdateMyNotificationPreferencesResult> {
-  if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
+  // Codex round 1 PR #63 P2 #2 fix — do NOT gate behind
+  // ENABLE_CLIENT_EMPTY_LEGS_PORTAL. The /me/notifications page
+  // (in app/(client)/me/notifications/page.tsx) intentionally
+  // stays available pre-activation so clients can set their
+  // empty-leg preferences early — the matcher's client-loop
+  // (which reads these prefs) is dead code until the flag flips,
+  // so writing prefs in advance is harmless + improves UX
+  // continuity at flip time. Only the base Phase 9 portal flag
+  // + session guard apply here. (The §3.3 column was added in
+  // PR 1's migration which is applied BEFORE PR 2 deploys per
+  // the runbook §1+§2, so the UPDATE never hits a missing
+  // column.)
+  //
+  // The two empty-leg-specific Server Actions above
+  // (reserveAuthenticatedEmptyLeg + cancelMyEmptyLegReservation)
+  // STILL gate behind ENABLE_CLIENT_EMPTY_LEGS_PORTAL because
+  // they exercise the live RPCs + reservation flow which must
+  // not run pre-flag-flip.
 
   // 1. Session guard
   const session = await requireClientSession();

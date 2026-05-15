@@ -38,7 +38,14 @@ export function ReservationActions({
   const [error, setError] = useState<string | null>(null);
   const [showConfirmInput, setShowConfirmInput] = useState(false);
 
-  const isClientReservation = reservationClientId !== null;
+  // Codex round 1 PR #63 P1 #1 fix — positive string check
+  // mirrors the parent leg-detail.tsx. Defense-in-depth: even if
+  // a future caller forgets the `?? null` coercion, this check
+  // still rejects undefined / empty-string and only fires on a
+  // real UUID-shape value.
+  const isClientReservation =
+    typeof reservationClientId === 'string' &&
+    reservationClientId.length > 0;
 
   const waUrl = customerPhone
     ? `https://wa.me/${customerPhone.replace(/[^0-9]/g, '')}`

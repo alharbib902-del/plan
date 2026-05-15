@@ -42,7 +42,19 @@ export function EmptyLegDetail({
   // fields with the live client display fields. State B keeps
   // the original snapshot fields (which are populated for guest
   // reservations).
-  const isClientReservation = leg.reservation_client_id !== null;
+  //
+  // Codex round 1 PR #63 P1 #1 fix — positive string check
+  // instead of `!== null`. The Phase 10 §3.1 migration adds
+  // `reservation_client_id` as a new column; before it's applied
+  // (e.g. PR 2 deployed but PR 1 migration not yet run on
+  // Supabase), `select('*')` returns leg rows WITHOUT the
+  // property, and `undefined !== null` evaluates to true. That
+  // would silently misclassify every guest reservation as State
+  // C and swap the admin UI to a button that calls a non-existent
+  // RPC. The positive UUID-shape check avoids that misread.
+  const isClientReservation =
+    typeof leg.reservation_client_id === 'string' &&
+    leg.reservation_client_id.length > 0;
   const displayCustomerName = isClientReservation
     ? reservationClient?.full_name ?? null
     : leg.reservation_customer_name_snapshot;
@@ -150,7 +162,11 @@ export function EmptyLegDetail({
             customerName={displayCustomerName}
             customerPhone={displayCustomerPhone}
             expiresAt={leg.reservation_expires_at}
-            reservationClientId={leg.reservation_client_id}
+            // Codex round 1 PR #63 P1 #1 fix — coerce undefined
+            // (pre-migration row shape) to null so the child's
+            // `reservationClientId !== null` check stays correct.
+            // Belt-and-braces with the positive string check above.
+            reservationClientId={leg.reservation_client_id ?? null}
           />
         </section>
       ) : null}
