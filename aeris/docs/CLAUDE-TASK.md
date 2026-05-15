@@ -177,13 +177,38 @@ These are settled before spec acceptance:
    `client_signup` pattern — defense-in-depth against
    two clients racing the same leg.
 8. **Authenticated reserve email confirmation:** the RPC
-   does NOT send an email itself. The Server Action
-   wraps the RPC + on success calls
-   `sendClientEmptyLegReservationEmail` (NEW Resend
-   helper, mirror of Phase 9 password-reset email). On
-   failure, `recordClientEmailAlertStatus` writes degraded
-   alert to the existing canary singleton (no NEW
-   singleton needed; Phase 9 PR 1 §3.7 covers it).
+   does NOT send an email itself. The Server Action wraps
+   the RPC + on success calls
+   `sendClientEmptyLegReservationEmail` (NEW Resend helper,
+   mirror of Phase 9 password-reset email).
+   **Alert channel separation (Codex round 2 PR #61 P2 #5
+   fix).** Empty-leg reservation email is a different
+   operational channel from client auth/password-reset,
+   so failure DOES NOT write to the existing
+   `client_notification_alert_status` singleton (which
+   would mislabel `/admin/operators/canary` "client auth
+   unhealthy" when only the empty-leg reservation channel
+   is degraded). Two options scoped for Codex round 3
+   selection:
+   - **(A) New singleton** `client_empty_leg_alert_status`
+     (table + helper `recordClientEmptyLegAlertStatus`)
+     + 5th `<ChannelHealth>` card on the canary page.
+     Mirror of Phase 8 PR 2e singleton + Phase 9 PR 1
+     §3.7 + the existing `empty_leg_outreach_alert_status`
+     (Phase 7) discipline. ~30 lines migration + ~80 lines
+     helper + ~40 lines canary card.
+   - **(B) Extend `empty_leg_outreach_alert_status`**
+     (Phase 7 singleton already covers empty-leg
+     dispatcher health) + add a `category` column or
+     parallel row to distinguish "outreach send" from
+     "client reservation confirm". Cheaper schema, but
+     muddies Phase 7's existing semantics.
+   The spec's recommendation is **option (A)** — clean
+   separation matches the Phase 8/9 alert-singleton
+   pattern + keeps the canary cards 1-to-1 with Resend
+   email channels (the operator never has to read a
+   composite "category" field). PR 1 ships option (A)
+   unless Codex round 3 prefers (B).
 9. **Reserve TTL:** 24 hours (matches Phase 7 guest
    default). Cron `cleanup_expired_empty_leg_reservations`
    already exists from Phase 7 — extends to also clear
@@ -364,27 +389,65 @@ the XOR check, otherwise every client INSERT raises
 evaluates. The `types/database.ts` regen must reflect the
 nullable shape.
 
+**Replay-safe XOR add (Codex round 2 PR #61 P1 #3 fix).**
+A previous failed migration run (e.g. partial replay where
+`client_id` got added + NOT NULL got dropped, then ADD
+CONSTRAINT failed mid-flight) could leave malformed rows
+(`both NULL` or `both populated`) that abort `ADD CONSTRAINT`
+on retry. Use Phase 9 PR 2 §1 discipline: audit-then-add as
+NOT VALID, then VALIDATE in a separate statement so any
+legacy violations surface as a structured failure rather
+than silently corrupting forward writes.
+
 ```sql
 ALTER TABLE empty_leg_notifications
   ADD COLUMN IF NOT EXISTS client_id UUID
     REFERENCES clients(id) ON DELETE CASCADE;
 
--- Drop the legacy NOT NULL on lead_inquiry_id so client-keyed
--- rows can set it to NULL (Codex round 1 PR #61 P1 #2 fix).
--- The XOR check below enforces "exactly one of {client, lead}
--- is populated" so the column-level NOT NULL becomes
--- redundant + harmful.
+-- Drop the legacy NOT NULL on lead_inquiry_id (Codex round 1
+-- PR #61 P1 #2 fix). The XOR below enforces "exactly one of
+-- {client, lead} is populated" so the column-level NOT NULL
+-- becomes redundant + harmful.
 ALTER TABLE empty_leg_notifications
   ALTER COLUMN lead_inquiry_id DROP NOT NULL;
 
--- XOR check
+-- Audit + cleanup pass: any pre-existing row that violates
+-- the XOR (both NULL or both populated) is a partial-replay
+-- artifact. Phase 7 production rows are guaranteed to have
+-- exactly lead_inquiry_id populated (the column was NOT NULL
+-- and client_id didn't exist), so this audit should report
+-- zero rows in healthy production. We RAISE (rather than
+-- auto-clean) to surface DR-replay state for a human review
+-- before the constraint enforces forward.
+DO $$
+DECLARE
+  v_offending_count INT;
+BEGIN
+  SELECT COUNT(*) INTO v_offending_count
+    FROM empty_leg_notifications
+   WHERE NOT ((client_id IS NULL) <> (lead_inquiry_id IS NULL));
+  IF v_offending_count > 0 THEN
+    RAISE EXCEPTION 'PR 1 migration: empty_leg_notifications has % rows that violate the recipient XOR (both NULL or both populated); manual cleanup required before the constraint can be added',
+      v_offending_count;
+  END IF;
+END $$;
+
+-- XOR check — added NOT VALID so a clean Phase-7 production
+-- DB never blocks forward dispatch on the constraint addition,
+-- then VALIDATE separately. Forward INSERTs are gated as soon
+-- as the constraint exists (Postgres applies NOT VALID to new
+-- writes); the VALIDATE pass just confirms historical rows
+-- comply.
 ALTER TABLE empty_leg_notifications
   DROP CONSTRAINT IF EXISTS empty_leg_notifications_recipient_xor_check;
 
 ALTER TABLE empty_leg_notifications
   ADD CONSTRAINT empty_leg_notifications_recipient_xor_check CHECK (
     (client_id IS NULL) <> (lead_inquiry_id IS NULL)
-  );
+  ) NOT VALID;
+
+ALTER TABLE empty_leg_notifications
+  VALIDATE CONSTRAINT empty_leg_notifications_recipient_xor_check;
 
 -- Sibling unique index for client+leg dedupe
 CREATE UNIQUE INDEX IF NOT EXISTS idx_empty_leg_notifications_client_leg_unique
@@ -524,6 +587,55 @@ GRANT EXECUTE ON FUNCTION cleanup_expired_empty_leg_reservations() TO service_ro
 The cron route at `/api/cron/empty-legs/expire-reservations`
 (Phase 7) needs no code change — it already calls this RPC
 every 5 minutes.
+
+### §3.6 — `client_empty_leg_alert_status` singleton (NEW)
+
+Codex round 2 PR #61 P2 #5 fix (option A). Tracks the
+operational health of the **empty-leg client reservation
+confirmation email** channel separately from the Phase 9
+client auth singleton. Mirrors Phase 8 PR 2e
+`operator_email_alert_status` + Phase 9 PR 1 §3.7
+`client_notification_alert_status` + Phase 7 §16
+`empty_leg_outreach_alert_status` patterns.
+
+```sql
+CREATE TABLE IF NOT EXISTS client_empty_leg_alert_status (
+  id                   INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  status               TEXT NOT NULL DEFAULT 'healthy'
+    CHECK (status IN ('healthy', 'config_missing', 'send_failed')),
+  last_failure_at      TIMESTAMPTZ,
+  last_failure_reason  TEXT,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO client_empty_leg_alert_status (id, status)
+  VALUES (1, 'healthy')
+  ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE client_empty_leg_alert_status ENABLE ROW LEVEL SECURITY;
+```
+
+App-side helper (TypeScript, mirror of Phase 9 PR 1
+`recordClientEmailAlertStatus`):
+
+```typescript
+// lib/notifications/client-empty-leg-alert-status.ts
+export async function recordClientEmptyLegAlertStatus(
+  client: AdminClient,
+  result: ClientEmailDeliveryResult,
+  contextLabel: string
+): Promise<void> {
+  // Same UPDATE pattern as Phase 9 PR 1 — singleton row
+  // (id=1) gets `status` flipped to 'healthy' on success
+  // or 'config_missing'/'send_failed' on failure with the
+  // contextLabel + Resend reason joined into
+  // `last_failure_reason`.
+}
+```
+
+Admin canary extension: a 5th `<ChannelHealth>` card on
+`/admin/operators/canary` reads from this singleton with
+the verbatim Arabic title "بريد العملاء — عرض رحلة فارغة (Resend)".
 
 ---
 
@@ -691,10 +803,33 @@ forward. Concretely:
      wa.me link via `notifications.ts` (extended to read
      `clients.notification_preferences` + skip channels the
      client opted out of).
-   - The `MatchOutcome` discriminated union gains
-     `clients_notified: number` alongside the existing
-     `leads_notified: number`. `shouldMarkOutboxProcessed` is
-     extended to consider both counts.
+   - **`MatchOutcome` shape change (Codex round 2 PR #61
+     P2 #4 fix).** The actual current shape is
+     `{ ok: true; matched: { leg_id: string; rows_written:
+     number } } | <skipped variants>`. **`rows_written`
+     stays as the lead count** (no rename — preserves
+     backwards-compat with all existing call sites +
+     outbox-processed semantics). A NEW optional sibling
+     `clients_written?: number` is added inside `matched`,
+     populated only when the client-loop actually ran (i.e.
+     when `ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`).
+     Concretely:
+     ```typescript
+     export type MatchOutcome =
+       | { ok: true;
+           matched: {
+             leg_id: string;
+             rows_written: number;          // existing — leads
+             clients_written?: number;       // NEW — Phase 10
+           };
+         }
+       | <skipped variants unchanged>;
+     ```
+     `shouldMarkOutboxProcessed` is extended to consider
+     `(rows_written + (clients_written ?? 0)) > 0` so the
+     outbox row gets marked processed when the client-loop
+     succeeded even if the lead-loop wrote zero (and vice-
+     versa).
 4. **`notifications.ts`** gains
    `sendClientEmptyLegMatchEmail(client, leg, event_type)`
    + `buildClientWaMeUrl(client, leg)` — mirror of the existing
@@ -722,11 +857,31 @@ production behaviour changes.
 
 ### §4.3 — `confirm_empty_leg_reservation_for_client` (NEW)
 
-Codex round 1 PR #61 P1 #4 fix. Parallel to the existing
-Phase 7 `confirm_empty_leg_reservation` (guest path), this
-RPC handles the admin-confirmation step for reservations
-created by `reserve_empty_leg_authenticated` (State C in
-§3.1). The existing guest RPC stays unchanged.
+Codex round 1 PR #61 P1 #4 fix + round 2 P1 #1+#2 fixes.
+Parallel to the existing Phase 7 `confirm_empty_leg_reservation`
+(guest path), this RPC handles the admin-confirmation step
+for reservations created by `reserve_empty_leg_authenticated`
+(State C in §3.1). The existing guest RPC stays unchanged.
+
+**Column shape mirrors Phase 7 `confirm_empty_leg_reservation`
+exactly** (Codex round 2 PR #61 P1 #1 + P1 #2 fix). The only
+divergences from the guest RPC are:
+- No token-hash check (replaced by `reservation_client_id IS
+  NOT NULL` guard).
+- `customer_name_snapshot` + `customer_phone_snapshot` come
+  from the **clients table** (live snapshot at confirm time),
+  NOT from the leg's reservation snapshot columns (which are
+  NULL for State C reservations).
+- `bookings.client_id` populated (NOT NULL — this is the
+  authenticated path's whole point).
+- New `source_discriminator = 'empty_leg'` (Phase 10 §3.4).
+- `source_offer_table = 'phase7_empty_leg'` + `source_offer_id
+  = v_leg.id` reuse the **existing** Phase 6.2 / Phase 7
+  source-offer linkage; **NO** new `source_empty_leg_id`
+  column is added (the prior round-1 spec proposed one — it
+  was redundant with `source_offer_id` and the existing
+  `bookings_source_offer_check` constraint already allows
+  `'phase7_empty_leg'`, see Phase 7 reshape migration §1).
 
 ```sql
 CREATE OR REPLACE FUNCTION confirm_empty_leg_reservation_for_client(
@@ -738,44 +893,50 @@ CREATE OR REPLACE FUNCTION confirm_empty_leg_reservation_for_client(
   SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_leg_row     RECORD;
+  v_now         TIMESTAMPTZ := NOW();
+  v_leg         empty_legs%ROWTYPE;
   v_client_row  RECORD;
   v_booking_id  UUID;
-  v_now         TIMESTAMPTZ := NOW();
 BEGIN
-  -- 1. Lock the leg row + verify it is in State C
-  SELECT id, status, reservation_client_id,
-         reservation_expires_at, current_price,
-         operator_id, aircraft_id,
-         operator_name_snapshot, operator_phone_snapshot
-    INTO v_leg_row
-    FROM empty_legs
-   WHERE id = p_leg_id
-   FOR UPDATE;
-
+  -- 1. Lock the leg row + verify State C
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN json_build_object('ok', false, 'error', 'leg_not_found');
   END IF;
 
-  IF v_leg_row.status <> 'reserved' THEN
+  SELECT * INTO v_leg FROM empty_legs WHERE id = p_leg_id;
+
+  IF v_leg.status <> 'reserved' THEN
     RETURN json_build_object('ok', false, 'error', 'leg_not_reserved');
   END IF;
 
-  IF v_leg_row.reservation_client_id IS NULL THEN
+  IF v_leg.reservation_client_id IS NULL THEN
+    -- Guest reservation: caller used the wrong RPC.
     RETURN json_build_object('ok', false, 'error', 'not_a_client_reservation');
   END IF;
 
-  IF v_leg_row.reservation_expires_at <= v_now THEN
+  IF v_leg.reservation_expires_at IS NOT NULL
+     AND v_leg.reservation_expires_at <= v_now THEN
     RETURN json_build_object('ok', false, 'error', 'reservation_expired');
   END IF;
 
-  -- 2. Pull live client snapshot from the clients table
-  --    (State C reservations don't carry snapshot columns —
-  --    Decision #1 + §3.1 State C definition).
+  -- Route presence guard (mirrors Phase 7 confirm RPC).
+  IF v_leg.departure_airport IS NULL
+     AND v_leg.departure_airport_freeform_snapshot IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_route_origin_missing');
+  END IF;
+
+  IF v_leg.arrival_airport IS NULL
+     AND v_leg.arrival_airport_freeform_snapshot IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_route_destination_missing');
+  END IF;
+
+  -- 2. Live client snapshot (State C reservations don't carry
+  --    snapshot columns — Decision #1 + §3.1 State C).
   SELECT id, full_name, contact_phone, signup_status
     INTO v_client_row
     FROM clients
-   WHERE id = v_leg_row.reservation_client_id;
+   WHERE id = v_leg.reservation_client_id;
 
   IF NOT FOUND THEN
     RETURN json_build_object('ok', false, 'error', 'client_not_found');
@@ -783,63 +944,96 @@ BEGIN
 
   -- We do NOT block on client_not_active here: a client
   -- whose status flipped to 'suspended' between reserve
-  -- and confirm should still get the booking row (they
-  -- already paid the reservation hold cost — flipping the
-  -- account doesn't void a confirmed transaction). Admin
-  -- can manually cancel via existing booking-cancel flow.
+  -- and confirm still gets the booking row (they already
+  -- paid the reservation hold cost — flipping the account
+  -- doesn't void a confirmed transaction). Admin can
+  -- manually cancel via existing booking-cancel flow.
 
-  -- 3. INSERT the booking row with explicit source markers
+  -- 3. INSERT bookings row — column shape mirrors Phase 7
+  --    confirm_empty_leg_reservation EXACTLY. Only divergences
+  --    (vs guest RPC) noted with `-- *DIFF*` comments.
   INSERT INTO bookings (
-    -- Direct linkage
-    client_id,
+    offer_id,
+    trip_request_id,
+    route_origin_iata,
+    route_destination_iata,
+    route_origin_freeform_snapshot,
+    route_destination_freeform_snapshot,
+    passengers_count_snapshot,
+    return_scheduled,
+    source_offer_table,
+    source_offer_id,
+    source_discriminator,             -- *DIFF*: Phase 10 §3.4 column
+    client_id,                         -- *DIFF*: NOT NULL (auth path)
+    customer_name_snapshot,            -- *DIFF*: from clients table
+    customer_phone_snapshot,           -- *DIFF*: from clients table
     operator_id,
-    aircraft_id,
-    -- Snapshots from the clients table
-    customer_name,
-    customer_phone,
-    -- Operator snapshot from the leg
     operator_name_snapshot,
     operator_phone_snapshot,
-    -- Pricing
+    operator_email_snapshot,
+    aircraft_id,
+    aircraft_snapshot,
     base_amount,
+    addons_amount,
+    vat_amount,
     total_amount,
+    commission_amount,
+    operator_payout,
     payment_status,
-    -- Source discriminators (Decision #10 + Decision #16)
-    source_discriminator,
-    source_offer_table,
-    -- Linkage back to the empty leg
-    source_empty_leg_id
+    flight_status,
+    departure_scheduled,
+    checkout_token_hash,
+    checkout_token_expires_at
   ) VALUES (
-    v_client_row.id,
-    v_leg_row.operator_id,
-    v_leg_row.aircraft_id,
-    v_client_row.full_name,
-    v_client_row.contact_phone,
-    v_leg_row.operator_name_snapshot,
-    v_leg_row.operator_phone_snapshot,
-    v_leg_row.current_price,
-    v_leg_row.current_price,
-    'pending_offline',  -- Decision #12: payment deferred
-    'empty_leg',        -- Decision #10
-    'phase7_empty_leg', -- Decision #16: matches Phase 7 historical tag
-    v_leg_row.id
-  ) RETURNING id INTO v_booking_id;
+    NULL,                                            -- offer_id
+    NULL,                                            -- trip_request_id
+    v_leg.departure_airport,
+    v_leg.arrival_airport,
+    v_leg.departure_airport_freeform_snapshot,
+    v_leg.arrival_airport_freeform_snapshot,
+    v_leg.max_passengers,
+    NULL,                                            -- return_scheduled (one-way)
+    'phase7_empty_leg',                              -- source_offer_table (existing Phase 7 tag)
+    v_leg.id,                                        -- source_offer_id (leg id as discriminator target)
+    'empty_leg',                                     -- *DIFF* source_discriminator
+    v_client_row.id,                                 -- *DIFF* client_id NOT NULL
+    v_client_row.full_name,                          -- *DIFF* customer_name_snapshot from clients
+    v_client_row.contact_phone,                      -- *DIFF* customer_phone_snapshot from clients
+    v_leg.operator_id,
+    v_leg.operator_name_snapshot,
+    v_leg.operator_phone_snapshot,
+    v_leg.operator_email_snapshot,
+    v_leg.aircraft_id,
+    v_leg.aircraft_snapshot,
+    v_leg.current_price,                             -- base_amount
+    0,                                               -- addons_amount
+    NULL,                                            -- vat_amount (Decision #12: payment phase)
+    v_leg.current_price,                             -- total_amount
+    NULL,                                            -- commission_amount (Decision #12)
+    NULL,                                            -- operator_payout (Decision #12)
+    'pending_offline'::booking_payment_status,
+    'confirmed'::booking_flight_status,
+    v_leg.departure_window_start,                    -- departure_scheduled
+    NULL,                                            -- checkout_token_hash
+    NULL                                             -- checkout_token_expires_at
+  )
+  RETURNING id INTO v_booking_id;
 
-  -- 4. Clear reservation + flip leg status to sold
+  -- 4. Clear reservation + flip leg to sold + link booking back
   UPDATE empty_legs
-     SET reservation_client_id  = NULL,
-         reservation_expires_at = NULL,
-         status                 = 'sold',
-         customer_booking_id    = v_booking_id
+     SET status                 = 'sold',
+         customer_booking_id    = v_booking_id,
+         reservation_client_id  = NULL,
+         reservation_expires_at = NULL
    WHERE id = p_leg_id;
 
-  -- 5. Audit log entry (admin who confirmed, for traceability)
+  -- 5. Audit log entry
   INSERT INTO audit_logs (
     entity_type, entity_id, action, new_value, actor_id
   ) VALUES (
     'booking', v_booking_id, 'empty_leg_client_confirmed',
     jsonb_build_object(
-      'leg_id', v_leg_row.id,
+      'leg_id', v_leg.id,
       'client_id', v_client_row.id,
       'admin_user_id', p_admin_user_id,
       'confirmed_at', v_now
@@ -850,7 +1044,7 @@ BEGIN
   RETURN json_build_object(
     'ok', true,
     'booking_id', v_booking_id,
-    'leg_id', v_leg_row.id,
+    'leg_id', v_leg.id,
     'client_id', v_client_row.id,
     'confirmed_at', v_now
   );
@@ -862,19 +1056,14 @@ REVOKE ALL ON FUNCTION confirm_empty_leg_reservation_for_client(UUID, UUID) FROM
 GRANT EXECUTE ON FUNCTION confirm_empty_leg_reservation_for_client(UUID, UUID) TO service_role;
 ```
 
-**Schema dependency:** the RPC writes to a `bookings.source_empty_leg_id`
-column. If Phase 7 didn't already add it (audit needed in
-PR 1), the migration adds it as part of §3.4:
-
-```sql
-ALTER TABLE bookings
-  ADD COLUMN IF NOT EXISTS source_empty_leg_id UUID
-    REFERENCES empty_legs(id) ON DELETE SET NULL;
-
-CREATE INDEX IF NOT EXISTS idx_bookings_source_empty_leg
-  ON bookings (source_empty_leg_id)
-  WHERE source_empty_leg_id IS NOT NULL;
-```
+**Existing Phase 6.2 + Phase 7 schema dependencies (no new
+columns added by this section):**
+- `bookings.source_offer_table` (VARCHAR(20)) — already
+  exists, allows `'phase7_empty_leg'` per Phase 7 reshape
+  migration §1's extended `bookings_source_offer_check`.
+- `bookings.source_offer_id` (UUID) — already exists.
+- `bookings.client_id` — exists, FK retargeted to
+  `clients(id)` in Phase 9 PR 2 §2.
 
 **Structured contracts:**
 
@@ -884,6 +1073,8 @@ CREATE INDEX IF NOT EXISTS idx_bookings_source_empty_leg
 | `leg_not_reserved` | leg.status not 'reserved' |
 | `not_a_client_reservation` | reservation_client_id IS NULL (guest reservation — wrong RPC) |
 | `reservation_expired` | reservation TTL elapsed before admin confirmed |
+| `leg_route_origin_missing` | both `departure_airport` AND `departure_airport_freeform_snapshot` NULL |
+| `leg_route_destination_missing` | both `arrival_airport` AND `arrival_airport_freeform_snapshot` NULL |
 | `client_not_found` | reservation_client_id no longer exists in clients table |
 
 ---
@@ -900,8 +1091,14 @@ CREATE INDEX IF NOT EXISTS idx_bookings_source_empty_leg
 - §3.3 `clients.notification_preferences` JSONB column
 - §3.4 `bookings.source_discriminator` (3-step: add nullable +
   CASE-based backfill from `source_offer_table` + flip NOT NULL —
-  Codex round 1 P2 #5 fix) + `bookings.source_empty_leg_id` FK
+  Codex round 1 P2 #5 fix). **NO** `source_empty_leg_id` column
+  (Codex round 2 P1 #1 fix — the existing
+  `bookings.source_offer_id` already serves the linkage when
+  `source_offer_table='phase7_empty_leg'`).
 - §3.5 `cleanup_expired_empty_leg_reservations` CREATE OR REPLACE
+- §3.6 `client_empty_leg_alert_status` singleton + RLS
+  (Codex round 2 P2 #5 fix — separate channel from Phase 9
+  client auth alert singleton)
 - §4.1 `reserve_empty_leg_authenticated` RPC
 - §4.2 (NOT a migration — TS pipeline changes; see below)
 - §4.3 `confirm_empty_leg_reservation_for_client` RPC
@@ -935,6 +1132,10 @@ P1 #3 fix)**, alongside the migration in PR 1:
 - `lib/notifications/client-empty-leg-email.ts` — Resend
   sender for "تأكيد الحجز" email (mirrors Phase 9
   password-reset email shape).
+- `lib/notifications/client-empty-leg-alert-status.ts` —
+  `recordClientEmptyLegAlertStatus` helper writing to the
+  §3.6 singleton (Codex round 2 P2 #5 fix; mirror of
+  Phase 9 PR 1 `recordClientEmailAlertStatus` shape).
 - `lib/clients/notification-preferences.ts` — `isClientOptedIn`
   helper (signature in §3.3).
 - `lib/clients/queries/me-empty-legs.ts` — read helpers for
@@ -972,7 +1173,8 @@ P1 #3 fix)**, alongside the migration in PR 1:
 - `bookings/page.tsx` (modified) — application-level merge
   of charter + empty_leg bookings
 
-**Admin UI extension** (Codex round 1 P1 #4 fix):
+**Admin UI extensions** (Codex PR #61 round 1 P1 #4 +
+round 2 P2 #5 fixes):
 - New affordance on the existing admin reservation card
   (in `/admin/empty-legs/<leg>` detail) labelled
   "تأكيد حجز عميل مسجّل" — visible ONLY when
@@ -981,6 +1183,13 @@ P1 #3 fix)**, alongside the migration in PR 1:
   RPC (NOT the existing guest confirm RPC). The existing
   guest-token confirm UI stays exactly as-is for State B
   reservations.
+- 5th `<ChannelHealth>` card on `/admin/operators/canary`
+  reading from §3.6 `client_empty_leg_alert_status`,
+  Arabic title "بريد العملاء — عرض رحلة فارغة (Resend)"
+  (Codex round 2 P2 #5 fix — distinct from the existing
+  Phase 9 client-auth Resend card so a degraded
+  empty-leg reservation channel doesn't mislabel client
+  auth as unhealthy).
 
 **Components** (under `components/clients/`):
 - `empty-leg-table.tsx` — list rows for browse + matches
