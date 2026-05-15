@@ -1,6 +1,17 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 1).
+> **Status:** Draft for Codex review (round 2).
+> **Codex history:** round 1 closed 4 P1 + 1 P2 (5 findings):
+> P1 #1 (§3.4 extended bookings_source_offer_check too —
+> not just source_discriminator), P1 #2 (§4.3 column
+> business_name → company_name), P1 #3 (§4.1 + §4.2 text
+> allowlist before ENUM cast to avoid raw 22P02 escape),
+> P1 #4 (§3.2 aircraft_id NOT NULL + §4.3 capability check
+> unconditional — close the bypass), P2 #5 (§3.1 + §3.2
+> wrap CREATE TYPE in pg_type DO block guards).
+> Round 2 should verify Probe 28 covers all 12 schema
+> checks + the 2 new structured-error contracts
+> (cargo_type_invalid + aircraft_id_required) are exposed.
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -212,15 +223,45 @@ These are settled before spec acceptance:
 
 The intake table for both J1 (guest) + J2 (authed) flows.
 
+**Codex round 1 PR #64 P2 #5 fix — replay-safe ENUM creation.**
+PostgreSQL does NOT support `CREATE TYPE IF NOT EXISTS` for
+ENUMs. A raw `CREATE TYPE` fails with `type "..." already
+exists` on any replay (staging restore, partial rollback,
+re-applied migration). Wrap each ENUM in a `pg_type` lookup
+DO block, mirroring the Phase 8 ENUM discipline.
+
 ```sql
-CREATE TYPE cargo_type AS ENUM ('horse', 'luxury_car', 'valuables', 'other');
-CREATE TYPE cargo_request_status AS ENUM (
-  'pending',           -- waiting for offers
-  'offers_received',   -- ≥1 offer in
-  'accepted',          -- offer accepted → booking created
-  'cancelled',         -- client/admin cancelled before acceptance
-  'expired'            -- 14-day TTL hit without acceptance
-);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE t.typname = 'cargo_type'
+       AND n.nspname = 'public'
+  ) THEN
+    CREATE TYPE cargo_type AS ENUM (
+      'horse', 'luxury_car', 'valuables', 'other'
+    );
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE t.typname = 'cargo_request_status'
+       AND n.nspname = 'public'
+  ) THEN
+    CREATE TYPE cargo_request_status AS ENUM (
+      'pending',           -- waiting for offers
+      'offers_received',   -- ≥1 offer in
+      'accepted',          -- offer accepted → booking created
+      'cancelled',         -- client/admin cancelled before acceptance
+      'expired'            -- 14-day TTL hit without acceptance
+    );
+  END IF;
+END $$;
 
 CREATE TABLE cargo_requests (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -338,13 +379,25 @@ CREATE INDEX idx_cargo_requests_pickup
 ### §3.2 — `cargo_offers` table (NEW)
 
 ```sql
-CREATE TYPE cargo_offer_status AS ENUM (
-  'pending',     -- operator submitted, awaiting client/admin decision
-  'accepted',    -- client/admin accepted → booking created
-  'declined',    -- client/admin explicitly declined
-  'withdrawn',   -- operator pulled the offer
-  'expired'      -- offer's TTL hit before accept/decline
-);
+-- Codex round 1 PR #64 P2 #5 fix — replay-safe ENUM creation
+-- (mirror of §3.1 pattern).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE t.typname = 'cargo_offer_status'
+       AND n.nspname = 'public'
+  ) THEN
+    CREATE TYPE cargo_offer_status AS ENUM (
+      'pending',     -- operator submitted, awaiting client/admin decision
+      'accepted',    -- client/admin accepted → booking created
+      'declined',    -- client/admin explicitly declined
+      'withdrawn',   -- operator pulled the offer
+      'expired'      -- offer's TTL hit before accept/decline
+    );
+  END IF;
+END $$;
 
 CREATE TABLE cargo_offers (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -352,8 +405,22 @@ CREATE TABLE cargo_offers (
     REFERENCES cargo_requests(id) ON DELETE CASCADE,
   operator_id UUID NOT NULL
     REFERENCES operators(id) ON DELETE RESTRICT,
-  aircraft_id UUID
-    REFERENCES aircraft(id) ON DELETE SET NULL,
+  -- Codex round 1 PR #64 P1 #4 fix — aircraft_id NOT NULL.
+  -- The prior nullable shape allowed an operator to submit
+  -- an offer without an aircraft_id; §4.3's capability check
+  -- only fires when v_aircraft_id IS NOT NULL, so an operator
+  -- could bypass the cargo_aircraft_capabilities matrix
+  -- entirely by simply omitting aircraft_id from the offer
+  -- payload. NOT NULL forces every cargo offer to declare
+  -- which specific aircraft will fly it, which the §4.3
+  -- capability check then verifies against the §3.5 matrix.
+  --
+  -- ON DELETE RESTRICT on the FK so an operator cannot
+  -- silently delete a referenced aircraft and orphan the
+  -- offer's audit trail. Phase 11 ops PR (PR 3) may extend
+  -- with admin-side aircraft retirement workflow if needed.
+  aircraft_id UUID NOT NULL
+    REFERENCES aircraft(id) ON DELETE RESTRICT,
 
   -- Snapshots (Phase 9 PR 2 Decision #4 immutability)
   operator_name_snapshot VARCHAR(120) NOT NULL,
@@ -425,15 +492,20 @@ BEGIN
 END $$;
 ```
 
-### §3.4 — `bookings.source_discriminator` extension
+### §3.4 — `bookings` constraint extensions
 
-Phase 10 §3.4 created the column with CHECK
+**Two constraints must be extended for cargo bookings to land
+without violations** (Codex round 1 PR #64 P1 #1 fix — the
+prior draft only extended `source_discriminator` and forgot
+`bookings_source_offer_check`; the first cargo accept would
+have failed with `check_violation` at INSERT time).
+
+**§3.4.1 — `bookings.source_discriminator` CHECK extension.**
+Phase 10 §3.4 created the named CHECK with
 `source_discriminator IN ('charter', 'empty_leg')`. Phase 11
 extends to add `'cargo'`:
 
 ```sql
--- Drop + recreate the named CHECK with the extended set.
--- Replay-safe pg_constraint guard mirrors Phase 10 §3.4 step 3.
 ALTER TABLE bookings
   DROP CONSTRAINT IF EXISTS bookings_source_discriminator_check;
 
@@ -451,9 +523,51 @@ BEGIN
 END $$;
 ```
 
+**§3.4.2 — `bookings.source_offer_table` CHECK extension
+(Codex round 1 P1 #1 fix).** The pre-Phase-11 constraint
+was set by Phase 7 reshape migration §5
+(`20260509000010_phase_7_empty_legs_reshape.sql:139`):
+
+```sql
+-- Pre-Phase-11 state (DO NOT RE-RUN):
+ALTER TABLE bookings
+  ADD CONSTRAINT bookings_source_offer_check CHECK (
+    source_offer_table IN ('phase4', 'phase5', 'phase7_empty_leg')
+    OR source_offer_table IS NULL
+  );
+```
+
+Phase 11 §4.4 `accept_cargo_offer` writes
+`source_offer_table = 'cargo_offers'`. Without extending the
+constraint, the first accept would fail with
+`check_violation`. Extend with the same DROP + replay-safe DO
+block recreate pattern:
+
+```sql
+ALTER TABLE bookings
+  DROP CONSTRAINT IF EXISTS bookings_source_offer_check;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'bookings_source_offer_check'
+       AND conrelid = 'bookings'::regclass
+  ) THEN
+    ALTER TABLE bookings
+      ADD CONSTRAINT bookings_source_offer_check CHECK (
+        source_offer_table IN ('phase4', 'phase5', 'phase7_empty_leg', 'cargo_offers')
+        OR source_offer_table IS NULL
+      );
+  END IF;
+END $$;
+```
+
 The Phase 10 `idx_bookings_client_source` partial index
 needs no change — it's keyed on `client_id` + `source_discriminator`
 + `created_at` and works for all 3 discriminator values.
+
+**Probe 28 verifies BOTH extended CHECKs.**
 
 ### §3.5 — `cargo_aircraft_capabilities` table (NEW)
 
@@ -556,11 +670,21 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'ip_required');
   END IF;
 
-  -- Pull cargo_type out for category-required-fields validation
-  v_cargo_type := (p_payload->>'cargo_type')::cargo_type;
-  IF v_cargo_type IS NULL THEN
+  -- Pull cargo_type out for category-required-fields validation.
+  -- Codex round 1 PR #64 P1 #3 fix — validate the text against
+  -- the allowed set BEFORE casting to ENUM. Direct ::cargo_type
+  -- cast on a bad value (e.g. 'boat') raises Postgres's raw
+  -- "invalid input value for enum cargo_type: ..." error
+  -- (sqlstate 22P02), which would surface to the user instead
+  -- of our structured contract. Allowlist + cast keeps the
+  -- contract clean.
+  IF p_payload->>'cargo_type' IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'cargo_type_required');
   END IF;
+  IF (p_payload->>'cargo_type') NOT IN ('horse', 'luxury_car', 'valuables', 'other') THEN
+    RETURN json_build_object('ok', false, 'error', 'cargo_type_invalid');
+  END IF;
+  v_cargo_type := (p_payload->>'cargo_type')::cargo_type;
 
   -- Other guards (rate limit per IP, etc.) handled by app layer.
   -- DB layer enforces structural integrity via the §3.1
@@ -664,8 +788,12 @@ GRANT EXECUTE ON FUNCTION create_cargo_request_guest(JSONB, INET)
 |---|---|
 | `ip_required` | Server Action passed null IP |
 | `cargo_type_required` | payload missing `cargo_type` |
+| `cargo_type_invalid` | `cargo_type` not in allowed set (round 1 P1 #3 fix) |
 | `validation_failed` | DB CHECK constraint rejected (per-category required + identity + route) |
 | `malformed_input` | numeric/date parsing failed |
+
+§4.2 (`create_cargo_request_authenticated`) returns the same
+contract set above plus `client_not_found` + `client_not_active`.
 
 ### §4.2 — `create_cargo_request_authenticated` (NEW)
 
@@ -707,10 +835,15 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'client_not_active');
   END IF;
 
-  v_cargo_type := (p_payload->>'cargo_type')::cargo_type;
-  IF v_cargo_type IS NULL THEN
+  -- Codex round 1 PR #64 P1 #3 fix (mirror of §4.1) — text
+  -- allowlist before ENUM cast.
+  IF p_payload->>'cargo_type' IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'cargo_type_required');
   END IF;
+  IF (p_payload->>'cargo_type') NOT IN ('horse', 'luxury_car', 'valuables', 'other') THEN
+    RETURN json_build_object('ok', false, 'error', 'cargo_type_invalid');
+  END IF;
+  v_cargo_type := (p_payload->>'cargo_type')::cargo_type;
 
   BEGIN
     INSERT INTO cargo_requests (
@@ -812,8 +945,12 @@ DECLARE
   v_offer_id UUID;
   v_aircraft_id UUID;
 BEGIN
-  -- Load + lock operator
-  SELECT id, business_name, contact_phone, contact_email, signup_status
+  -- Load + lock operator. Codex round 1 PR #64 P1 #2 fix —
+  -- the Phase 8 operators table column is `company_name`, not
+  -- `business_name`. The prior draft would have crashed with
+  -- `column "business_name" does not exist` on the first
+  -- offer submission.
+  SELECT id, company_name, contact_phone, contact_email, signup_status
     INTO v_op_row
     FROM operators
    WHERE id = p_operator_id
@@ -843,22 +980,36 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'request_expired');
   END IF;
 
-  -- Aircraft capability check (Decision #7)
+  -- Aircraft capability check (Decision #7 + Codex round 1
+  -- PR #64 P1 #4 fix). aircraft_id is now NOT NULL on
+  -- cargo_offers (§3.2), so the capability check fires on
+  -- EVERY offer submission — no more bypass via omitted
+  -- aircraft_id.
   v_aircraft_id := NULLIF(p_payload->>'aircraft_id', '')::UUID;
-  IF v_aircraft_id IS NOT NULL THEN
-    PERFORM 1 FROM cargo_aircraft_capabilities cac
-      JOIN aircraft a ON a.id = cac.aircraft_id
-     WHERE cac.aircraft_id = v_aircraft_id
-       AND a.operator_id = p_operator_id
-       AND CASE v_req_row.cargo_type
-             WHEN 'horse'       THEN cac.supports_horse
-             WHEN 'luxury_car'  THEN cac.supports_luxury_car
-             WHEN 'valuables'   THEN cac.supports_valuables
-             WHEN 'other'       THEN cac.supports_other
-           END;
-    IF NOT FOUND THEN
-      RETURN json_build_object('ok', false, 'error', 'aircraft_not_capable');
-    END IF;
+  IF v_aircraft_id IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'aircraft_id_required');
+  END IF;
+
+  PERFORM 1 FROM cargo_aircraft_capabilities cac
+    JOIN aircraft a ON a.id = cac.aircraft_id
+   WHERE cac.aircraft_id = v_aircraft_id
+     AND a.operator_id = p_operator_id
+     AND CASE v_req_row.cargo_type
+           WHEN 'horse'       THEN cac.supports_horse
+           WHEN 'luxury_car'  THEN cac.supports_luxury_car
+           WHEN 'valuables'   THEN cac.supports_valuables
+           WHEN 'other'       THEN cac.supports_other
+         END;
+  IF NOT FOUND THEN
+    -- One of three cases:
+    --  1. aircraft_id doesn't belong to this operator
+    --  2. aircraft_id has no row in cargo_aircraft_capabilities
+    --  3. aircraft has the row but the cargo_type-specific
+    --     supports_* flag is false
+    -- All three collapse to one opaque error to avoid
+    -- leaking which aircraft the operator owns or which
+    -- capabilities are seeded.
+    RETURN json_build_object('ok', false, 'error', 'aircraft_not_capable');
   END IF;
 
   BEGIN
@@ -871,7 +1022,7 @@ BEGIN
       operator_notes
     ) VALUES (
       p_cargo_request_id, p_operator_id, v_aircraft_id,
-      v_op_row.business_name, v_op_row.contact_phone, v_op_row.contact_email,
+      v_op_row.company_name, v_op_row.contact_phone, v_op_row.contact_email,
       NULLIF(p_payload->>'aircraft_snapshot', ''),
       (p_payload->>'base_price_sar')::DECIMAL,
       COALESCE((p_payload->>'insurance_price_sar')::DECIMAL, 0),
@@ -909,6 +1060,20 @@ REVOKE ALL ON FUNCTION submit_cargo_offer(UUID, UUID, JSONB)
 GRANT EXECUTE ON FUNCTION submit_cargo_offer(UUID, UUID, JSONB)
   TO service_role;
 ```
+
+**Structured contracts:**
+
+| Code | Trigger |
+|---|---|
+| `operator_not_found` | `p_operator_id` invalid |
+| `operator_not_approved` | `operators.signup_status` != 'approved' |
+| `request_not_found` | `p_cargo_request_id` invalid |
+| `request_not_open` | request status not in {pending, offers_received} |
+| `request_expired` | request `expires_at` elapsed |
+| `aircraft_id_required` | payload missing `aircraft_id` (round 1 P1 #4 fix) |
+| `aircraft_not_capable` | aircraft owned by different operator OR no `cargo_aircraft_capabilities` row OR cargo-type-specific flag false |
+| `validation_failed` | DB CHECK constraint rejected (e.g. delivery_date < pickup_date) |
+| `malformed_input` | numeric/date parsing failed |
 
 ### §4.4 — `accept_cargo_offer` (NEW)
 
@@ -1237,22 +1402,47 @@ SELECT
   -- Singleton seeded healthy
   EXISTS (SELECT 1 FROM cargo_email_alert_status
     WHERE id = 1 AND status = 'healthy') AS singleton_healthy,
-  -- Extended bookings.source_discriminator CHECK
+  -- §3.4.1 Extended bookings.source_discriminator CHECK
   EXISTS (SELECT 1 FROM pg_constraint
     WHERE conname = 'bookings_source_discriminator_check'
       AND conrelid = 'bookings'::regclass
-      AND pg_get_constraintdef(oid) ILIKE '%cargo%') AS source_check_extended,
-  -- ENUMs exist
-  EXISTS (SELECT 1 FROM pg_type WHERE typname = 'cargo_type') AS has_cargo_type_enum,
-  EXISTS (SELECT 1 FROM pg_type WHERE typname = 'cargo_request_status') AS has_request_status_enum,
-  EXISTS (SELECT 1 FROM pg_type WHERE typname = 'cargo_offer_status') AS has_offer_status_enum,
+      AND pg_get_constraintdef(oid) ILIKE '%cargo%') AS source_disc_check_extended,
+  -- §3.4.2 Extended bookings.source_offer_check (Codex round 1
+  -- P1 #1 fix). Without this check the first cargo offer accept
+  -- would fail with check_violation at INSERT time.
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'bookings_source_offer_check'
+      AND conrelid = 'bookings'::regclass
+      AND pg_get_constraintdef(oid) ILIKE '%cargo_offers%') AS source_offer_check_extended,
+  -- ENUMs exist (created via DO block guards per round 1 P2 #5)
+  EXISTS (SELECT 1 FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'cargo_type'
+      AND n.nspname = 'public') AS has_cargo_type_enum,
+  EXISTS (SELECT 1 FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'cargo_request_status'
+      AND n.nspname = 'public') AS has_request_status_enum,
+  EXISTS (SELECT 1 FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'cargo_offer_status'
+      AND n.nspname = 'public') AS has_offer_status_enum,
   -- accepted_offer_id FK exists
   EXISTS (SELECT 1 FROM pg_constraint
     WHERE conname = 'cargo_requests_accepted_offer_fkey'
-      AND conrelid = 'cargo_requests'::regclass) AS has_accepted_offer_fkey;
+      AND conrelid = 'cargo_requests'::regclass) AS has_accepted_offer_fkey,
+  -- §3.2 cargo_offers.aircraft_id NOT NULL (round 1 P1 #4 fix)
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'cargo_offers'
+      AND column_name = 'aircraft_id'
+      AND is_nullable = 'NO') AS aircraft_id_not_null;
 ```
 
-**Expected:** all 10 = `true`.
+**Expected:** all 12 = `true` (extended from 10 → 12 in
+Codex round 1 P1 #1 + P1 #4 + P2 #5 fixes:
+`source_offer_check_extended` + `aircraft_id_not_null` + the
+ENUM checks now use the same `pg_type + pg_namespace` schema-
+scoped guard as the migration's DO blocks).
 
 ### Probe 29 — Guest cargo request appears in admin queue
 
@@ -1334,10 +1524,27 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 2
+## Open questions for Codex round 3
 
-(Spec reviewer to flag during round 1 → addressed here in
-round 2 + onwards.)
+Round 1 closed 4 P1 + 1 P2:
+- **P1 #1:** §3.4 now extends BOTH `bookings_source_discriminator_check`
+  AND `bookings_source_offer_check` (was only the first).
+- **P1 #2:** §4.3 reads `operators.company_name` (was the
+  non-existent `business_name`).
+- **P1 #3:** §4.1 + §4.2 validate `cargo_type` text against
+  the allowed set BEFORE the ENUM cast (avoids raw Postgres
+  22P02 surfacing instead of the structured contract).
+- **P1 #4:** §3.2 `cargo_offers.aircraft_id` is NOT NULL +
+  `ON DELETE RESTRICT` + §4.3 capability check is now
+  unconditional — closes the bypass where an operator could
+  submit an offer without an aircraft and skip the
+  `cargo_aircraft_capabilities` matrix entirely.
+- **P2 #5:** Both `CREATE TYPE` statements (3 ENUMs total)
+  wrapped in `pg_type + pg_namespace` DO block guards so
+  replay/staging-restore/partial migration doesn't fail
+  with `type already exists`.
+
+Three open questions carry forward (unchanged from round 1):
 
 1. **Snapshot freshness on cargo_requests.** Should
    `customer_*_snapshot` re-sync from `clients` table on
@@ -1358,4 +1565,4 @@ round 2 + onwards.)
 
 ---
 
-**Spec ready for Codex round 1 review.**
+**Spec ready for Codex round 2 review.**
