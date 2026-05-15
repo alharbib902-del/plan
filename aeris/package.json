@@ -34,6 +34,9 @@
     "test:empty-legs-frequency-cap-clients": "tsx lib/empty-legs/__tests__/frequency-cap-clients.test.ts",
     "test:notifications-client-empty-leg-alert-status": "tsx lib/notifications/__tests__/client-empty-leg-alert-status.test.ts",
     "test:cargo-request-validators": "tsx lib/cargo/__tests__/cargo-request-validators.test.ts",
+    "test:cargo-offer-validators": "tsx lib/cargo/__tests__/cargo-offer-validators.test.ts",
+    "test:cargo-accept-flow": "tsx lib/cargo/__tests__/accept-flow.test.ts",
+    "test:cargo-booking-shape": "tsx lib/cargo/__tests__/booking-shape.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

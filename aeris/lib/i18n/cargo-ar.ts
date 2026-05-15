@@ -6,7 +6,7 @@
  * UI surface can be reviewed in isolation.
  *
  * PR 1 ships the public form + admin intake strings;
- * PR 2 will add authed portal + offer/booking strings;
+ * PR 2 adds authed portal + operator portal + offer/booking strings;
  * PR 3 will add ops / canary / distribution strings.
  */
 
@@ -181,4 +181,147 @@ export const cargoAr = {
   capabilitiesTableSeed: 'تفعيل',
   capabilitiesTableUpdate: 'تحديث',
   capabilitiesSeedSuccess: 'تم تحديث القدرات.',
+
+  // ============================================================
+  // PR 2 — Client portal (/me/cargo-requests)
+  // ============================================================
+  meListPageTitle: 'طلبات الشحن الخاصة بك',
+  meListPageSubtitle: 'تابع طلبات الشحن النشطة + العروض المُستلَمة.',
+  meListEmpty: 'لا توجد لديك طلبات شحن بعد.',
+  meListNewRequestCta: 'طلب شحن جديد',
+  meListTableNumber: 'رقم الطلب',
+  meListTableType: 'النوع',
+  meListTableRoute: 'المسار',
+  meListTablePickup: 'تاريخ الاستلام',
+  meListTableStatus: 'الحالة',
+  meListTableActions: 'إجراءات',
+  meListViewDetails: 'عرض',
+
+  meNewPageTitle: 'طلب شحن جديد',
+  meNewPageSubtitle: 'املأ تفاصيل الشحنة وسنرسل لك عروض من المشغّلين.',
+  meNewBackToList: '← قائمة طلباتي',
+
+  meDetailPageTitle: 'تفاصيل طلب الشحن',
+  meDetailBackToList: '← قائمة طلباتي',
+  meDetailSectionRequest: 'بيانات الطلب',
+  meDetailSectionOffers: 'العروض المُستلمة',
+  meDetailSectionCategory: 'تفاصيل الفئة',
+  meDetailNoOffers: 'لم يصل أي عرض بعد. سنخبرك عند وصول أول عرض.',
+  meDetailOfferOperator: 'المشغّل',
+  meDetailOfferAircraft: 'الطائرة',
+  meDetailOfferTotalPrice: 'السعر الإجمالي',
+  meDetailOfferBasePrice: 'السعر الأساسي',
+  meDetailOfferInsurance: 'تأمين',
+  meDetailOfferCustoms: 'تخليص جمركي',
+  meDetailOfferProposedDates: 'الفترة المقترحة',
+  meDetailOfferExpiresAt: 'صلاحية العرض',
+  meDetailOfferStatus: 'الحالة',
+  meDetailOfferNotes: 'ملاحظات المشغّل',
+  meDetailOfferAcceptCta: 'قبول العرض',
+  meDetailOfferDeclineCta: 'رفض',
+  meDetailRequestCancelCta: 'إلغاء الطلب',
+  meDetailReasonLabel: 'سبب (اختياري)',
+  meDetailReasonPlaceholder: 'اذكر سبباً مختصراً (لا يتعدى 500 حرف)',
+  meDetailConfirmAcceptTitle: 'تأكيد قبول العرض',
+  meDetailConfirmAcceptBody:
+    'بقبولك، سيُنشأ حجز جديد ويُرفض باقي العروض على هذا الطلب.',
+  meDetailConfirmAcceptYes: 'نعم، اقبل',
+  meDetailConfirmAcceptNo: 'تراجع',
+  meDetailConfirmDeclineTitle: 'تأكيد رفض العرض',
+  meDetailConfirmDeclineYes: 'نعم، ارفض',
+  meDetailConfirmCancelTitle: 'تأكيد إلغاء الطلب',
+  meDetailConfirmCancelBody:
+    'سيُلغى الطلب نهائياً وتُرفض جميع العروض المعلَّقة عليه.',
+  meDetailConfirmCancelYes: 'نعم، ألغِ الطلب',
+
+  // ============================================================
+  // PR 2 — Operator portal (/operator/cargo)
+  // ============================================================
+  operatorListPageTitle: 'طلبات الشحن المتاحة',
+  operatorListPageSubtitle: 'الطلبات التي يمكنك تقديم عروض عليها.',
+  operatorListEmpty: 'لا توجد طلبات شحن متاحة حالياً.',
+  operatorListTableNumber: 'رقم الطلب',
+  operatorListTableType: 'النوع',
+  operatorListTableRoute: 'المسار',
+  operatorListTablePickup: 'تاريخ الاستلام',
+  operatorListTableValue: 'القيمة المُقدَّرة',
+  operatorListSubmitOfferCta: 'تقديم عرض',
+  operatorListMyOffersCta: 'عروضي المُقدَّمة',
+
+  operatorOfferPageTitle: 'تقديم عرض شحن',
+  operatorOfferBack: '← قائمة الطلبات',
+  operatorOfferAircraftLabel: 'الطائرة',
+  operatorOfferAircraftEmpty:
+    'لا توجد طائرات مسجَّلة لهذا النوع من الشحن. تواصل مع فريق Aeris.',
+  operatorOfferAircraftSnapshotLabel: 'وصف الطائرة (اختياري)',
+  operatorOfferBasePriceLabel: 'السعر الأساسي (ريال)',
+  operatorOfferInsurancePriceLabel: 'سعر التأمين (ريال، اختياري)',
+  operatorOfferCustomsPriceLabel: 'سعر التخليص الجمركي (ريال، اختياري)',
+  operatorOfferProposedPickupLabel: 'تاريخ الاستلام المقترح',
+  operatorOfferProposedDeliveryLabel: 'تاريخ التسليم المقترح',
+  operatorOfferNotesLabel: 'ملاحظات للعميل (اختياري)',
+  operatorOfferSubmitCta: 'تقديم العرض',
+  operatorOfferSubmitting: 'جارٍ التقديم…',
+
+  operatorMyOffersTitle: 'عروضي المُقدَّمة',
+  operatorMyOffersSubtitle: 'تابع حالة العروض التي قدَّمتها.',
+  operatorMyOffersEmpty: 'لم تقدّم أي عرض بعد.',
+  operatorMyOffersTableRequest: 'الطلب',
+  operatorMyOffersTableSubmittedAt: 'تاريخ التقديم',
+  operatorMyOffersTableTotal: 'الإجمالي',
+  operatorMyOffersTableStatus: 'الحالة',
+  operatorMyOffersWithdrawCta: 'سحب العرض',
+  operatorMyOffersConfirmWithdrawTitle: 'تأكيد سحب العرض',
+  operatorMyOffersConfirmWithdrawBody:
+    'سيُسحَب العرض ولن يكون متاحاً للعميل بعد ذلك.',
+  operatorMyOffersConfirmWithdrawYes: 'نعم، اسحب',
+
+  // ============================================================
+  // PR 2 — Admin extension buttons
+  // ============================================================
+  adminAcceptOnBehalfCta: 'قبول نيابة عن العميل',
+  adminDeclineOnBehalfCta: 'رفض نيابة عن العميل',
+  adminCancelRequestCta: 'إلغاء الطلب',
+  adminConfirmAcceptOnBehalfTitle: 'تأكيد قبول العرض نيابة',
+  adminConfirmAcceptOnBehalfBody:
+    'سيُنشأ حجز باسم العميل (الضيف) ويُرفض باقي العروض على هذا الطلب.',
+
+  // ============================================================
+  // PR 2 — Action results + error map
+  // ============================================================
+  actionAcceptSuccess: 'تم قبول العرض. تم إنشاء الحجز.',
+  actionDeclineSuccess: 'تم رفض العرض.',
+  actionDeclineAlready: 'العرض كان مرفوضاً مسبقاً.',
+  actionWithdrawSuccess: 'تم سحب العرض.',
+  actionWithdrawAlready: 'العرض كان مسحوباً مسبقاً.',
+  actionCancelSuccess: 'تم إلغاء الطلب.',
+  actionCancelAlready: 'الطلب كان ملغياً مسبقاً.',
+  actionSubmitOfferSuccess: 'تم تقديم العرض. سنُعلم العميل.',
+  actionSubmitRequestSuccess: 'تم إنشاء الطلب. سنرسل لك العروض قريباً.',
+
+  errorActorAmbiguous: 'تعارض في تحديد المنفّذ — أعد المحاولة.',
+  errorOfferNotFound: 'العرض غير موجود أو حُذف.',
+  errorOfferNotPending: 'لا يمكن تنفيذ الإجراء — العرض لم يعد قابلاً للتعديل.',
+  errorOfferExpired: 'انتهت صلاحية العرض.',
+  errorRequestNotFound: 'الطلب غير موجود.',
+  errorRequestNotOpen: 'الطلب لم يعد مفتوحاً للعروض.',
+  errorRequestExpired: 'انتهت صلاحية الطلب.',
+  errorForbidden: 'ليس لديك صلاحية تنفيذ هذا الإجراء.',
+  errorNotYourRequest: 'هذا الطلب ليس لك.',
+  errorAdminCannotAcceptAuthed:
+    'لا يمكن للأدمن قبول عرض على طلب لعميل مسجّل — يجب على العميل نفسه القبول.',
+  errorAdminCannotDeclineAuthed:
+    'لا يمكن للأدمن رفض عرض على طلب لعميل مسجّل.',
+  errorAdminCannotCancelAuthed:
+    'لا يمكن للأدمن إلغاء طلب لعميل مسجّل.',
+  errorRequestAccepted: 'تم قبول عرض على هذا الطلب — لا يمكن إلغاؤه.',
+  errorRequestNotCancellable: 'حالة الطلب لا تسمح بالإلغاء.',
+  errorFlagDisabled: 'خدمة الشحن غير مفعّلة حالياً.',
+  errorReasonTooLong: 'السبب لا يتعدى 500 حرف.',
+  errorMustChangePassword: 'يجب تعيين كلمة مرور جديدة قبل المتابعة.',
+  errorAircraftNotCapable: 'هذه الطائرة لا تدعم نوع الشحنة المطلوب.',
+  errorOperatorAlreadySubmitted: 'سبق أن قدَّمت عرضاً على هذا الطلب.',
+  errorServerError: 'حدث خطأ غير متوقع. حاول لاحقاً.',
+  errorValidation: 'بيانات الإدخال غير صحيحة.',
+  errorUnauthorized: 'يجب تسجيل الدخول أولاً.',
 } as const;

@@ -3,15 +3,26 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 
 import { getAdminCargoRequest } from '@/lib/cargo/queries/admin-queue';
+import {
+  AdminAcceptOnBehalfButton,
+  AdminDeclineOnBehalfButton,
+  AdminCancelRequestButton,
+} from '@/components/cargo/admin-actions';
 import { cargoAr } from '@/lib/i18n/cargo-ar';
 import type { CargoRequestRow, CargoOfferRow } from '@/lib/cargo/types';
 
 /**
- * Phase 11 PR 1 — admin cargo request detail.
+ * Phase 11 PR 1 + PR 2 — admin cargo request detail.
  *
- * Read-only in PR 1 (no accept/decline buttons). PR 2 will
- * add admin-side accept_cargo_offer + decline_cargo_offer
- * affordances + cargo_request cancellation.
+ * PR 1 was read-only; PR 2 adds accept/decline-on-behalf buttons
+ * for guest cargo requests (request.client_id IS NULL) plus a
+ * cancel-request button. The buttons render conditionally:
+ *   - Accept/Decline: only when offer.status='pending' AND request
+ *     is guest AND request.status IN ('pending', 'offers_received').
+ *   - Cancel: only when request is guest AND no accepted offer yet.
+ * The Server Actions also re-check via §4.4-§4.6 RPC guards
+ * (`admin_cannot_accept_for_authed_client` etc.) so the UI is
+ * defense-in-depth, not the only gate.
  */
 
 export const dynamic = 'force-dynamic';
@@ -60,6 +71,13 @@ export default async function AdminCargoRequestDetailPage({ params }: PageProps)
   if (!data) notFound();
 
   const { offers, ...request } = data;
+
+  // Admin actions visible only on guest path (request.client_id IS NULL).
+  const isGuestRequest = request.client_id === null;
+  const requestOpen =
+    request.status === 'pending' || request.status === 'offers_received';
+  const showCancel =
+    isGuestRequest && requestOpen && !request.accepted_offer_id;
 
   return (
     <section className="space-y-6">
@@ -151,11 +169,28 @@ export default async function AdminCargoRequestDetailPage({ params }: PageProps)
         ) : (
           <div className="space-y-3">
             {offers.map((offer) => (
-              <OfferCard key={offer.id} offer={offer} />
+              <OfferCard
+                key={offer.id}
+                offer={offer}
+                showAdminActions={isGuestRequest && requestOpen}
+              />
             ))}
           </div>
         )}
       </Section>
+
+      {/* Cancel request — guest path, not yet accepted */}
+      {showCancel ? (
+        <div className="rounded-xl border border-rose-400/30 bg-rose-500/5 p-5">
+          <h3 className="font-ar mb-2 text-base text-rose-100">
+            {cargoAr.adminCancelRequestCta}
+          </h3>
+          <p className="font-ar mb-4 text-xs text-ink-muted">
+            {cargoAr.meDetailConfirmCancelBody}
+          </p>
+          <AdminCancelRequestButton requestId={request.id} />
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -290,7 +325,18 @@ function CategorySection({ request }: { request: CargoRequestRow }) {
   );
 }
 
-function OfferCard({ offer }: { offer: CargoOfferRow }) {
+function OfferCard({
+  offer,
+  showAdminActions,
+}: {
+  offer: CargoOfferRow;
+  /** Render accept/decline buttons — set when request is guest +
+   *  open. The buttons themselves only run RPC if offer.status
+   *  is still 'pending' at action time (the §4.4/§4.5 RPCs reject
+   *  `offer_not_pending` otherwise). */
+  showAdminActions: boolean;
+}) {
+  const offerActionable = showAdminActions && offer.status === 'pending';
   return (
     <div className="rounded-lg border border-border bg-navy-secondary/30 p-4">
       <div className="font-ar flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -326,6 +372,12 @@ function OfferCard({ offer }: { offer: CargoOfferRow }) {
           </span>{' '}
           {offer.operator_notes}
         </p>
+      ) : null}
+      {offerActionable ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <AdminAcceptOnBehalfButton offerId={offer.id} />
+          <AdminDeclineOnBehalfButton offerId={offer.id} />
+        </div>
       ) : null}
     </div>
   );
