@@ -1,19 +1,22 @@
 # Phase 10 — Empty Legs Client-Side Portal
 
-> **Status:** Draft for Codex review (round 7).
-> **Codex history:** rounds 1-6 closed 13 P1 + 8 P2 findings
+> **Status:** Draft for Codex review (round 8).
+> **Codex history:** rounds 1-7 closed 15 P1 + 10 P2 findings
 > across §3.1 / §3.2 / §3.4 / §3.5 / §3.6 / §4.2 / §4.3 /
 > §4.4 / §4.5 / §4.6 + Decision #9 + Probe 21 + PR 1 Server
-> Actions manifest + accept_offer locked decision. Round 7
-> should verify §3.1 FK is `ON DELETE RESTRICT` (not SET
-> NULL — would corrupt valid-states CHECK on hard-delete),
-> §4.6 `release_empty_leg_reservation_for_client` is the
-> single source of truth for client cancel (Server Action
-> wrapper only), `MatchOutcome` carries both
-> `clients_written` + `clients_skipped_preferences` for
-> opt-out observability, and PR 1 manifest explicitly
-> states "do NOT patch accept_offer" (relies on §3.4
-> DEFAULT 'charter').
+> Actions manifest + accept_offer locked decision +
+> shouldMarkOutboxProcessed Phase-7-aligned + match-email
+> alerting wired + named FK with replay-safe DO block.
+> Round 8 should verify §4.2 step 3 `shouldMarkOutboxProcessed`
+> contract matches Phase 7 EXACTLY (matched branch always
+> marks processed, counts are observability only — NOT a
+> predicate input), §4.2 step 4 wires `recordClientEmptyLegAlertStatus`
+> to BOTH match-email and reservation-email surfaces, §3.1
+> uses 4-step replay-safe sequence (ADD COLUMN no inline FK
+> + DROP IF EXISTS old name + DO block + named constraint
+> with RESTRICT) + Probe 21 verifies FK action is `'r'`,
+> and §3.4 step 4 comment no longer mentions accept_offer
+> patch.
 > **Predecessor:** Phase 9 — Charter & Client Portal — closed
 > 2026-05-15 at sha `c1f975e` (PR #60). Phase 9 gave clients
 > first-class authenticated accounts + `/me/*` portal +
@@ -365,15 +368,66 @@ is purely defensive against accidental hard-delete from
 Supabase Studio or admin tooling that doesn't know about
 empty-leg reservations.
 
-```sql
--- Add column with ON DELETE RESTRICT (Codex round 6 P1 #1).
--- See spec text above for the rationale (SET NULL would
--- leave reservation_expires_at populated, violating the
--- valid-states CHECK and aborting the DELETE).
-ALTER TABLE empty_legs
-  ADD COLUMN IF NOT EXISTS reservation_client_id UUID
-    REFERENCES clients(id) ON DELETE RESTRICT;
+**Codex round 7 PR #61 P2 #3 fix — FK action must be
+replay-safe.** The prior round-6 sketch used `ADD COLUMN IF
+NOT EXISTS ... REFERENCES ... ON DELETE RESTRICT` inline.
+Two replay-unsafety problems:
 
+1. If a partial replay from the round-6 draft (or any earlier
+   spec version) already added the column with `ON DELETE SET
+   NULL`, the `IF NOT EXISTS` clause makes `ADD COLUMN` a no-op
+   — the wrong FK action stays in place. PostgreSQL does NOT
+   compare the FK action when deciding column existence.
+2. Anonymous FK constraints can't be inspected/dropped by name
+   in rollback; the name PG generates is implementation-defined
+   (`empty_legs_reservation_client_id_fkey` is the typical
+   convention but not guaranteed across major versions).
+
+Use a three-step idempotent sequence with a NAMED constraint,
+mirroring the §3.4 `bookings_source_discriminator_check`
+discipline established in round 4:
+
+```sql
+-- Step 1: add the column WITHOUT inline FK (replay-safe ADD
+--         COLUMN IF NOT EXISTS leaves any prior column shape
+--         intact, including a wrong-action inline FK if any).
+ALTER TABLE empty_legs
+  ADD COLUMN IF NOT EXISTS reservation_client_id UUID;
+
+-- Step 2: drop any prior FK constraint on the column (covers
+--         the replay-from-round-6-draft case where the prior
+--         spec wrote `ON DELETE SET NULL`). The pre-round-7
+--         conventional name from inline FK is
+--         `empty_legs_reservation_client_id_fkey`; we drop it
+--         explicitly + drop the new round-7 name too if it
+--         was partially applied. Both DROPs are IF EXISTS
+--         so the step is no-op on a fresh DB.
+ALTER TABLE empty_legs
+  DROP CONSTRAINT IF EXISTS empty_legs_reservation_client_id_fkey;
+ALTER TABLE empty_legs
+  DROP CONSTRAINT IF EXISTS empty_legs_reservation_client_fkey;
+
+-- Step 3: add the named FK constraint with the correct
+--         ON DELETE RESTRICT action. Replay-safe pg_constraint
+--         guard so a re-run on a freshly-applied DB is a no-op
+--         not a duplicate-constraint error. Named so future
+--         replays can look it up unambiguously.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'empty_legs_reservation_client_fkey'
+       AND conrelid = 'empty_legs'::regclass
+  ) THEN
+    ALTER TABLE empty_legs
+      ADD CONSTRAINT empty_legs_reservation_client_fkey
+      FOREIGN KEY (reservation_client_id)
+      REFERENCES clients(id)
+      ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- Step 4: index unchanged from round 6.
 CREATE INDEX IF NOT EXISTS idx_empty_legs_reservation_client
   ON empty_legs (reservation_client_id)
   WHERE reservation_client_id IS NOT NULL;
@@ -699,11 +753,14 @@ BEGIN
 END $$;
 
 -- Step 4: set NOT NULL + DEFAULT for forward writes. The DEFAULT
--- only matters for rows inserted by code paths that omit the
--- column (Phase 9 accept_offer is one such path until §4.4 below
--- patches it to set the explicit value); Phase 10 PR 1's
--- new admin confirmation RPC for client reservations will
--- always set 'empty_leg' explicitly.
+-- IS LOAD-BEARING for Phase 9 accept_offer (Codex round 6 P2 #4
+-- locked decision + round 7 P2 #4 comment fix): PR 1 does NOT
+-- patch accept_offer; new charter accept_offer rows fall through
+-- to this DEFAULT='charter'. Phase 10 PR 1's new admin
+-- confirmation RPCs (§4.3 confirm_empty_leg_reservation_for_client
+-- + §4.4 patches for Phase 7 confirm_empty_leg_reservation +
+-- admin_mark_empty_leg_sold) write the explicit 'empty_leg'
+-- value; the DEFAULT is the safety-net for accept_offer only.
 ALTER TABLE bookings
   ALTER COLUMN source_discriminator SET NOT NULL;
 
@@ -990,29 +1047,28 @@ forward. Concretely:
      + match-history work the same regardless of channel
      count.
    - **`MatchOutcome` shape change (Codex round 2 PR #61
-     P2 #4 fix + round 6 P2 #3 fix).** The actual current
-     shape is `{ ok: true; matched: { leg_id: string;
-     rows_written: number } } | <skipped variants>`.
-     **`rows_written` stays as the lead count** (no rename
-     — preserves backwards-compat with all existing call
-     sites + outbox-processed semantics). Two new optional
-     siblings are added inside `matched`, populated only
-     when the client-loop actually ran (i.e. when
+     P2 #4 fix + round 6 P2 #3 fix + round 7 P1 #1 fix).**
+     The actual current shape is `{ ok: true; matched: {
+     leg_id: string; rows_written: number } } | <skipped
+     variants>`. **`rows_written` stays as the lead count**
+     (no rename — preserves backwards-compat with all
+     existing call sites). Two new optional siblings are
+     added inside `matched`, populated only when the
+     client-loop actually ran (i.e. when
      `ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`):
-     - `clients_written?: number` — Phase 10 round 2 fix:
-       count of `empty_leg_notifications` rows successfully
-       inserted for opted-in clients
-     - `clients_skipped_preferences?: number` — Phase 10
-       round 6 P2 #3 fix: count of eligible clients (passed
-       candidate-pool + frequency-cap) but who opted out of
-       BOTH email AND wa.me channels in §3.3
-       `notification_preferences`. Useful for observability
-       (matching pipeline visibility into how many clients
-       the dispatcher would have notified but skipped per
-       preferences). Goes in the same `matched` branch
-       because a leg WAS matched even if some clients opted
-       out — it's a sibling counter, not a skipped-variant
-       reason.
+     - `clients_written?: number` — count of
+       `empty_leg_notifications` rows successfully inserted
+       for opted-in clients
+     - `clients_skipped_preferences?: number` — count of
+       eligible clients (passed candidate-pool +
+       frequency-cap) but who opted out of BOTH email AND
+       wa.me channels in §3.3 `notification_preferences`.
+       Useful for observability (matching pipeline visibility
+       into how many clients the dispatcher would have
+       notified but skipped per preferences). Goes in the
+       same `matched` branch because a leg WAS matched even
+       if some clients opted out — it's a sibling counter,
+       not a skipped-variant reason.
      Concretely:
      ```typescript
      export type MatchOutcome =
@@ -1026,18 +1082,75 @@ forward. Concretely:
          }
        | <skipped variants unchanged>;
      ```
-     `shouldMarkOutboxProcessed` is extended to consider
-     `(rows_written + (clients_written ?? 0)) > 0` so the
-     outbox row gets marked processed when the client-loop
-     succeeded even if the lead-loop wrote zero (and vice-
-     versa). `clients_skipped_preferences` does NOT
-     contribute to the processed predicate (skipped clients
-     are not "work done" — only written rows count).
+     **`shouldMarkOutboxProcessed` contract — UNCHANGED from
+     Phase 7** (Codex round 7 P1 #1 fix). The actual current
+     Phase 7 implementation marks the outbox processed
+     **whenever the `matched` branch fires, regardless of
+     the row counts** (see `lib/empty-legs/matching.ts:91-98`).
+     My round-2 spec text wrongly claimed the predicate was
+     `(rows_written + clients_written) > 0` and round 6 spec
+     added the further wrong constraint that
+     `clients_skipped_preferences` does not contribute.
+     Both were spec inventions that contradict the live
+     Phase 7 contract. The fields `rows_written` /
+     `clients_written` / `clients_skipped_preferences` are
+     **observability counters only** — they exist for
+     dashboards + tests + canary, not for the
+     outbox-processed branch decision. The matched branch
+     is already a TERMINAL outcome (the matcher considered
+     the leg, evaluated all eligible candidates, took the
+     correct action — writing rows where appropriate,
+     skipping where opted-out), so replaying it would be a
+     no-op anyway. Phase 7's existing `outcome.ok &&
+     ('matched' in outcome) → true` is the correct
+     contract; Phase 10 does NOT change it. This closes
+     the round-7 Finding 1 concern about preference-only
+     skips leaving outbox rows pending forever — `matched`
+     fires regardless of opt-out counts, so the outbox row
+     gets marked processed on the first drain tick.
 4. **`notifications.ts`** gains
    `sendClientEmptyLegMatchEmail(client, leg, event_type)`
    + `buildClientWaMeUrl(client, leg)` — mirror of the existing
    lead-side helpers but reading `clients.contact_phone` +
    `clients.full_name` instead of the lead snapshot fields.
+   - **Alert wiring (Codex round 7 PR #61 P1 #2 fix).** Both
+     match-email and reservation-email Resend dispatches MUST
+     route their delivery result through
+     `recordClientEmptyLegAlertStatus` (see §3.6 helper).
+     Without this, Resend/env failures during match dispatch
+     would silently create `empty_leg_notifications` rows with
+     no delivered emails while the canary card stays "healthy"
+     — exactly the failure mode Phase 8/9 alert singletons
+     exist to prevent. The §3.6 singleton covers BOTH email
+     surfaces by design (single canary card "بريد العملاء —
+     عرض رحلة فارغة (Resend)" represents Resend health for
+     all client empty-leg emails, mirroring Phase 7's
+     existing `empty_leg_outreach_alert_status` which covers
+     all guest empty-leg outreach emails through one card).
+     Concretely:
+     ```typescript
+     // lib/empty-legs/notifications.ts (extension)
+     export async function sendClientEmptyLegMatchEmail(
+       client: ClientRow,
+       leg: EmptyLegRow,
+       eventType: 'new_leg' | 'price_dropped'
+     ): Promise<ClientEmailDeliveryResult> {
+       const result = await sendViaResend(/* ... */);
+       await recordClientEmptyLegAlertStatus(
+         getServiceRoleClient(),
+         result,
+         `empty-leg-match:${eventType}`
+       );
+       return result;
+     }
+     ```
+     Same pattern as Phase 9 PR 1 `recordClientEmailAlertStatus`
+     — fire-and-forget after every Resend call, contextLabel
+     identifies the surface for `last_failure_reason`. PR 1
+     test `lib/notifications/__tests__/client-empty-leg-alert-status.test.ts`
+     verifies BOTH match and reservation surfaces flip the
+     singleton to `'send_failed'` on simulated Resend
+     failure.
 5. **`outboxes`** require no schema change. The match-drain
    cron route at `/api/cron/empty-legs/match-drain` calls
    `matchLeg(legId)` per leg — the new client-loop runs
@@ -2266,15 +2379,20 @@ expected result, mirroring the Phase 9 §6 format.
 
 ### Probe 21 — Schema state
 
-**Codex round 4 PR #61 P2 #4 fix.** Probe extended from 5 to 9
-checks: adds the new `email_url` column (§3.2 — Codex round 4
-P1 #1), the named `bookings_source_discriminator_check`
-constraint (§3.4 step 3 — Codex round 4 P2 #3 fix), the
-extended channel CHECK accepting `'email_and_wa'` (§3.2 —
-Codex round 4 P1 #1 multi-channel row model), and the §3.6
-alert singleton row (Codex round 2 P2 #5 fix). Without these
-four extra checks, replays or partial migrations could leave
-the schema half-applied without surfacing in Probe 21.
+**Codex round 4 PR #61 P2 #4 fix + round 7 P2 #3 extension.**
+Probe extended from 5 to 10 checks: adds the new `email_url`
+column (§3.2 — Codex round 4 P1 #1), the named
+`bookings_source_discriminator_check` constraint (§3.4 step 3
+— Codex round 4 P2 #3 fix), the extended channel CHECK
+accepting `'email_and_wa'` (§3.2 — Codex round 4 P1 #1
+multi-channel row model), the §3.6 alert singleton row
+(Codex round 2 P2 #5 fix), and the named FK on
+`reservation_client_id` with `RESTRICT` action (§3.1 — Codex
+round 7 P2 #3 fix; without this check a replay from the
+round-6 draft could leave the wrong `SET NULL` action in
+place silently). Without these five extra checks, replays
+or partial migrations could leave the schema half-applied
+without surfacing in Probe 21.
 
 ```sql
 SELECT
@@ -2313,13 +2431,26 @@ SELECT
       AND pg_get_constraintdef(oid) ILIKE '%email_and_wa%') AS channel_check_extended,
   -- alert singleton row exists + healthy (Codex round 4 P2 #4)
   EXISTS (SELECT 1 FROM client_empty_leg_alert_status
-    WHERE id = 1 AND status = 'healthy') AS alert_singleton_healthy;
+    WHERE id = 1 AND status = 'healthy') AS alert_singleton_healthy,
+  -- named FK on reservation_client_id with RESTRICT action
+  -- (Codex round 7 P2 #3). pg_constraint.confdeltype = 'r' means
+  -- ON DELETE RESTRICT; 'n' means SET NULL (the wrong round-6 action).
+  -- This check ensures a replay from the round-6 draft is detected.
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'empty_legs_reservation_client_fkey'
+      AND conrelid = 'empty_legs'::regclass
+      AND confdeltype = 'r') AS fk_action_is_restrict;
 ```
 
-**Expected:** all 9 columns = `true`. Any `false` indicates
+**Expected:** all 10 columns = `true`. Any `false` indicates
 PR 1 migration failed midway or was replayed without the
 named constraints binding — re-investigate before flipping
-`ENABLE_CLIENT_EMPTY_LEGS_PORTAL=true`.
+`ENABLE_CLIENT_EMPTY_LEGS_PORTAL=true`. In particular,
+`fk_action_is_restrict = false` with
+`has_reservation_client_id = true` means a replay-from-
+round-6 case slipped through; manually run §3.1 step 2 (DROP
+inline FK) + step 3 (ADD named FK RESTRICT) before flipping
+the flag.
 
 ### Probe 22 — Matching engine writes client rows
 
@@ -2446,9 +2577,9 @@ within milliseconds of each other.
 
 ---
 
-## Open questions for Codex round 7
+## Open questions for Codex round 8
 
-Rounds 1-6 closed:
+Rounds 1-7 closed:
 - **Round 1:** P1 #1 (3-state CHECK on `reservation_*`),
   P1 #2 (`lead_inquiry_id` DROP NOT NULL + XOR check),
   P1 #3 (TS pipeline scope correction), P1 #4 (new
@@ -2497,8 +2628,27 @@ Rounds 1-6 closed:
   PR 1 does NOT patch; relies on §3.4 DEFAULT `'charter'`;
   Phase 11 payment phase will revisit when accept_offer is
   touched anyway).
+- **Round 7:** P1 #1 (`shouldMarkOutboxProcessed` contract
+  alignment — Phase 7 marks processed whenever `matched`
+  branch fires regardless of counts; my round-2 + round-6
+  spec text wrongly invented a `(rows_written +
+  clients_written) > 0` predicate; counts are
+  observability-only), P1 #2 (match-email alert wiring —
+  `sendClientEmptyLegMatchEmail` must call
+  `recordClientEmptyLegAlertStatus` so Resend failures
+  during match dispatch flip the §3.6 canary card; without
+  this, match rows could be inserted without delivered
+  emails while canary stays green), P2 #3 (§3.1 FK is now
+  added in a replay-safe 4-step sequence with a named
+  constraint + Probe 21 verifies `confdeltype = 'r'` so a
+  partial replay from the round-6 draft doesn't leave the
+  wrong `SET NULL` action in place), P2 #4 (§3.4 step 4
+  comment fix — removed stale "until §4.4 below patches
+  accept_offer" wording; the DEFAULT='charter' is
+  load-bearing for accept_offer because PR 1 deliberately
+  does NOT patch it per round-6 P2 #4 lock).
 
-Two open questions carry forward to round 7 (unchanged from
+Two open questions carry forward to round 8 (unchanged from
 round 2 — scope is acknowledged but deferred to PR 1
 implementation phase):
 
@@ -2532,4 +2682,4 @@ implementation phase):
 
 ---
 
-**Spec ready for Codex round 7 review.**
+**Spec ready for Codex round 8 review.**
