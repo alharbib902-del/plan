@@ -7024,4 +7024,113 @@ spec scope (per the original roadmap):
 Estimated 5-7 PRs over the spec + implementation
 window.
 
+## Phase 9 — Charter & Client Portal — production activation closure (2026-05-15)
+
+Phase 9 is now live on production at `aeris-flax.vercel.app`.
+The client-facing charter portal, authenticated request flow,
+offer acceptance surface, and auto-distribution engine are
+activated end-to-end.
+
+### Closure summary
+
+| Item | Result |
+|---|---|
+| Implementation PRs | 4 merged to `main` (#55, #56, #57, #58) |
+| Spec PR | #54 merged after 7 Codex rounds |
+| Total Codex review rounds | 23 |
+| Findings closed | 27 total: 15 P1 + 12 P2 |
+| Production migrations applied | 3 |
+| Production env vars set | 5 |
+| Founder probes | 22/22 passed |
+| Auto-dispatch flag | `ENABLE_TRIP_AUTO_DISTRIBUTION=true` after probes 16 + 17 passed |
+
+### PR sequence
+
+| PR | Scope | Squash sha | Review result |
+|---|---|---|---|
+| #54 | Phase 9 spec — Charter & Client Portal | `62873b0` | 7 Codex rounds, accepted |
+| #55 | PR 1 — Client auth | `dfd14d1` | 5 Codex rounds, 9 findings closed (3 P1 + 6 P2) |
+| #56 | PR 2 — Authenticated charter form | `25f6c52` | 5 Codex rounds, 6 findings closed (5 P1 + 1 P2) |
+| #57 | PR 3 — Client portal requests/bookings | `05f5713` | 2 Codex rounds, 1 P2 closed |
+| #58 | PR 4 — Auto-distribution engine | `deb449b` | 4 Codex rounds, 11 findings closed (7 P1 + 4 P2) |
+
+### Production state
+
+#### Migrations applied
+
+- `20260520000026_phase_9_pr_1_client_auth.sql`
+- `20260521000027_phase_9_pr_2_create_authenticated_trip_request.sql`
+- `20260522000028_phase_9_pr_4_auto_distribution.sql`
+
+PR 3 shipped no migration.
+
+#### Env vars active
+
+- `ENABLE_CLIENT_PORTAL=true`
+- `CLIENT_PASSWORD_RESET_TOKEN_SECRET` set
+- `PHASE_9_MIN_DISPATCH_FANOUT=2`
+- `TRIP_REDISPATCH_STALE_HOURS=4`
+- `ENABLE_TRIP_AUTO_DISTRIBUTION=true`
+
+`ENABLE_TRIP_AUTO_DISTRIBUTION` stayed false through the
+pre-dispatch probes, then flipped true only after probes 16
+and 17 proved scoring, token issuance, and WhatsApp-link
+resolution.
+
+### Customer-visible surfaces now live
+
+- `/me/signup`, `/me/login`, forgot-password, and reset-password
+  client auth with opaque DB sessions and 7d/30d TTL.
+- `/me/charter` authenticated charter request submission using
+  Zod validation, SECURITY DEFINER RPC writes, and Asia/Riyadh
+  datetime discipline.
+- `/me/requests` and `/me/requests/<id>` with request filters,
+  offer cards, accept/decline actions, and cancel-trip flow.
+- `/me/bookings` and `/me/bookings/<id>` for confirmed-booking
+  review.
+- Auto-distribution from client trips to approved operators,
+  including scoring weights (rating 40, response 30, price 20,
+  location 10), phone dedupe, minimum fan-out, Phase 5 dispatch
+  link issuance, failure-safe redispatch, and Vercel Cron recovery.
+- Admin canary readout for client email, operator email,
+  operator WhatsApp, and cron tick history.
+
+### Probe accounting
+
+All **22** Phase 9 probes passed on production:
+
+- PR 1: 9 probes (client auth, grants, token shape, alert canary,
+  login/session/reset coverage).
+- PR 2: 3 probes (authenticated charter submit, FK-safe legacy
+  handoff, Riyadh-time conversion).
+- PR 3: 4 probes (request list/detail, offer accept/decline,
+  booking visibility, UUID not-found guard).
+- PR 4: 6 probes (operator eligibility, fan-out, phone dedupe,
+  insufficient-operator failure, redispatch cron, distribution-log
+  uniqueness).
+
+### Archived closure record
+
+The active resume document was archived to:
+
+`aeris/docs/archive/PHASE-9-CLOSURE.md`
+
+That file now holds the final activation snapshot, PR ledger,
+27 conventions/playbook notes, production runbook evidence, and
+deferred follow-ups.
+
+### Deferred follow-ups
+
+- **FK validation cleanup** — run a small migration to
+  `VALIDATE CONSTRAINT` on
+  `trip_requests_client_id_clients_fkey` and
+  `bookings_client_id_clients_fkey`. This is not launch-blocking:
+  PR 2 already inline-backfilled and cleared legacy orphan
+  pointers before adding the `NOT VALID` constraints.
+- **Auto-dispatch tuning** — keep `PHASE_9_MIN_DISPATCH_FANOUT=2`
+  and `TRIP_REDISPATCH_STALE_HOURS=4` until enough live traffic
+  exists to justify changing the thresholds.
+- **Next phase** — begin from a fresh spec. Do not reuse the
+  archived `PHASE-9-CLOSURE.md` as an active handoff doc.
+
 
