@@ -507,17 +507,40 @@ export const cancelRequestSchema = z.object({
 ### §3.2 `app/actions/cargo-operators.ts` (NEW)
 
 All actions:
-1. Call `requireOperatorSession()` (Phase 8 pattern) → resolves to
-   `operator_id` UUID.
-2. Cargo flag check (same pattern).
-3. Zod validate.
-4. RPC call.
-5. `revalidatePath('/operator/cargo')` + return.
+1. Call `await requireOperatorSession()` (Phase 8 pattern) →
+   resolves to `operator_id` + `password_must_change` flag.
+2. **Round 2 PR #66 P1 #1 — `password_must_change` guard.** Mirror
+   the Phase 8 / Phase 10 `operators-empty-legs-authed.ts` pattern:
+   immediately after `requireOperatorSession()`, reject sessions
+   whose `password_must_change` flag is true:
+   ```ts
+   if (session.password_must_change) {
+     return { ok: false, error: 'must_change_password_first' };
+   }
+   ```
+   The `/operator` authed layout already redirects such sessions
+   to `/operator/profile/password`, but Server Actions can be
+   invoked from any client surface (direct POST, stale tab, etc.)
+   so the action endpoint MUST also reject. This carries the
+   Codex round 1 PR #42 P1 #1 discipline forward to cargo. Without
+   it, an operator coming from welcome-flow / admin-reset could
+   `submitCargoOffer` or `withdrawMyCargoOffer` before setting a
+   new password.
+3. Cargo flag check (same `process.env.ENABLE_CARGO === 'true'` as §3.1).
+4. Zod validate.
+5. RPC call.
+6. `revalidatePath('/operator/cargo')` + return.
 
 | Action | Zod schema | RPC |
 |---|---|---|
 | `submitCargoOffer(input)` | `cargoOfferSchema` (NEW) | §4.3 `submit_cargo_offer` |
 | `withdrawMyCargoOffer({offer_id, reason?})` | `withdrawOfferSchema` (NEW; same shape as `declineOfferSchema`) | §4.5 `withdraw_cargo_offer` |
+
+**Error code addition** (extends §3.1 i18n map):
+
+| RPC error | i18n key | Arabic |
+|---|---|---|
+| `must_change_password_first` | `errorMustChangePassword` | "يجب تعيين كلمة مرور جديدة قبل المتابعة" |
 
 **`cargoOfferSchema`** (in `lib/cargo/validators/cargo-offer.ts`, NEW):
 
