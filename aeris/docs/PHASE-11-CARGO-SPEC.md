@@ -1,7 +1,7 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 3).
-> **Codex history:** rounds 1-2 closed 6 P1 + 3 P2 (9 findings):
+> **Status:** Draft for Codex review (round 4).
+> **Codex history:** rounds 1-3 closed 7 P1 + 6 P2 (13 findings):
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -19,11 +19,27 @@
 >   `cargo_requests_accepted_has_offer_check`), P2 #4 (§5
 >   PR 1 manifest now lists §3.4.2 explicitly).
 >
-> Round 3 should verify Probe 28 now covers 16 schema
-> checks (was 12), all 4 new structured-error contracts
+> - **Round 3 (1 P1 + 3 P2):** P1 #1 (§3.2 operator snapshot
+>   widths widened 120→200/255 to match source operators
+>   schema; prior widths would `value too long` on legitimate
+>   approved operators), P2 #2 (`IF NOT EXISTS` on every
+>   `CREATE TABLE` + `CREATE INDEX` — partial replay safety;
+>   complements round 1 ENUM DO block guards), P2 #3 (§3.1
+>   strict category CHECK rejects cross-category fields —
+>   each cargo_type branch now requires the OTHER 3
+>   categories' fields to be NULL), P2 #4 (§3.1 added
+>   `cargo_requests_value_positive_check` +
+>   `cargo_requests_date_order_check` named CHECKs +
+>   structured `value_invalid` + `date_invalid` errors via
+>   GET STACKED DIAGNOSTICS in §4.1 + §4.2).
+>
+> Round 4 should verify Probe 28 now covers 20 schema
+> checks (was 16), 6 new structured-error contracts total
 > are exposed (`cargo_type_invalid`, `aircraft_id_required`,
-> `aircraft_id_invalid`, `price_invalid`), and the PR 1
-> manifest lists every §3.x section explicitly.
+> `aircraft_id_invalid`, `price_invalid`, `value_invalid`,
+> `date_invalid`), and every CREATE statement in PR 1's
+> migration carries the appropriate replay-safety guard
+> (DO block for ENUMs + IF NOT EXISTS for tables/indexes).
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -275,7 +291,14 @@ BEGIN
   END IF;
 END $$;
 
-CREATE TABLE cargo_requests (
+-- Codex round 3 PR #64 P2 #2 fix — IF NOT EXISTS on every
+-- CREATE TABLE + CREATE INDEX in PR 1's migration. PostgreSQL
+-- does support these clauses for tables + indexes (unlike
+-- ENUM CREATE TYPE which needs the pg_type DO block guard
+-- per round 1 P2 #5). Mirrors Phase 8 + Phase 9 migration
+-- discipline; ensures partial replays + staging restores
+-- don't fail with "relation already exists".
+CREATE TABLE IF NOT EXISTS cargo_requests (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   cargo_request_number VARCHAR(20) NOT NULL UNIQUE
     DEFAULT ('CGO-' || SUBSTR(MD5(uuid_generate_v4()::TEXT), 1, 8)),
@@ -299,8 +322,15 @@ CREATE TABLE cargo_requests (
   flexibility_days INT NOT NULL DEFAULT 0
     CHECK (flexibility_days >= 0 AND flexibility_days <= 7),
 
-  -- Value + insurance
-  estimated_value_sar DECIMAL(14, 2) NOT NULL,
+  -- Value + insurance.
+  -- Codex round 3 PR #64 P2 #4 fix — `estimated_value_sar > 0`.
+  -- Mirrors §3.2 cargo_offers_base_price_positive_check; zero-
+  -- valued cargo doesn't make business sense + breaks
+  -- downstream insurance/pricing math. Named CHECK so §4.1 +
+  -- §4.2 can disambiguate via GET STACKED DIAGNOSTICS.
+  estimated_value_sar DECIMAL(14, 2) NOT NULL
+    CONSTRAINT cargo_requests_value_positive_check
+      CHECK (estimated_value_sar > 0),
   insurance_required BOOLEAN NOT NULL DEFAULT false,
 
   -- Free text
@@ -358,14 +388,91 @@ CREATE TABLE cargo_requests (
     AND customer_phone_snapshot IS NOT NULL
   ),
 
-  -- Per-category required-fields check (defense-in-depth;
-  -- app-level Zod is the primary line). Ensures every cargo_type
-  -- has its category-specific minimum populated.
+  -- Per-category required + exclusivity check (defense-in-depth;
+  -- app-level Zod is the primary line).
+  --
+  -- Codex round 3 PR #64 P2 #3 fix — strict category CHECK.
+  -- The prior draft only enforced the per-category minimum
+  -- (e.g. cargo_type='horse' AND horse_count IS NOT NULL),
+  -- but allowed cross-category fields to be populated alongside
+  -- (e.g. cargo_type='horse' + horse_count=2 + car_make='Ferrari'
+  -- → ambiguous audit + UI state). Each branch now also
+  -- requires the OTHER three categories' fields to be NULL,
+  -- ensuring every row has exactly one populated category
+  -- field block.
   CONSTRAINT cargo_requests_category_required_check CHECK (
-    (cargo_type = 'horse' AND horse_count IS NOT NULL)
-    OR (cargo_type = 'luxury_car' AND car_make IS NOT NULL AND car_model IS NOT NULL)
-    OR (cargo_type = 'valuables' AND valuables_declared_value_sar IS NOT NULL)
-    OR (cargo_type = 'other' AND other_description IS NOT NULL)
+    (cargo_type = 'horse'
+      AND horse_count IS NOT NULL
+      -- forbid luxury_car fields
+      AND car_make IS NULL
+      AND car_model IS NULL
+      AND car_year IS NULL
+      AND car_running_condition IS NULL
+      AND car_enclosed_required IS NULL
+      -- forbid valuables fields
+      AND valuables_declared_value_sar IS NULL
+      AND valuables_security_level IS NULL
+      AND valuables_climate_controlled IS NULL
+      AND valuables_item_description IS NULL
+      -- forbid other fields
+      AND other_description IS NULL
+      AND other_dimensions_lwh_cm IS NULL
+      AND other_weight_kg IS NULL
+      AND other_special_handling IS NULL)
+    OR (cargo_type = 'luxury_car'
+      AND car_make IS NOT NULL
+      AND car_model IS NOT NULL
+      -- forbid horse fields
+      AND horse_count IS NULL
+      AND horse_groom_required IS NULL
+      AND horse_cites_status IS NULL
+      AND horse_stall_requirements IS NULL
+      -- forbid valuables fields
+      AND valuables_declared_value_sar IS NULL
+      AND valuables_security_level IS NULL
+      AND valuables_climate_controlled IS NULL
+      AND valuables_item_description IS NULL
+      -- forbid other fields
+      AND other_description IS NULL
+      AND other_dimensions_lwh_cm IS NULL
+      AND other_weight_kg IS NULL
+      AND other_special_handling IS NULL)
+    OR (cargo_type = 'valuables'
+      AND valuables_declared_value_sar IS NOT NULL
+      -- forbid horse fields
+      AND horse_count IS NULL
+      AND horse_groom_required IS NULL
+      AND horse_cites_status IS NULL
+      AND horse_stall_requirements IS NULL
+      -- forbid luxury_car fields
+      AND car_make IS NULL
+      AND car_model IS NULL
+      AND car_year IS NULL
+      AND car_running_condition IS NULL
+      AND car_enclosed_required IS NULL
+      -- forbid other fields
+      AND other_description IS NULL
+      AND other_dimensions_lwh_cm IS NULL
+      AND other_weight_kg IS NULL
+      AND other_special_handling IS NULL)
+    OR (cargo_type = 'other'
+      AND other_description IS NOT NULL
+      -- forbid horse fields
+      AND horse_count IS NULL
+      AND horse_groom_required IS NULL
+      AND horse_cites_status IS NULL
+      AND horse_stall_requirements IS NULL
+      -- forbid luxury_car fields
+      AND car_make IS NULL
+      AND car_model IS NULL
+      AND car_year IS NULL
+      AND car_running_condition IS NULL
+      AND car_enclosed_required IS NULL
+      -- forbid valuables fields
+      AND valuables_declared_value_sar IS NULL
+      AND valuables_security_level IS NULL
+      AND valuables_climate_controlled IS NULL
+      AND valuables_item_description IS NULL)
   ),
 
   -- Route presence (mirrors Phase 6.2 +
@@ -375,15 +482,25 @@ CREATE TABLE cargo_requests (
   ),
   CONSTRAINT cargo_requests_destination_present_check CHECK (
     destination_iata IS NOT NULL OR destination_freeform IS NOT NULL
+  ),
+
+  -- Codex round 3 PR #64 P2 #4 fix — date order CHECK on
+  -- intake mirrors §3.2 cargo_offers_date_order_check. Allows
+  -- delivery_date_target to be NULL (client may leave it
+  -- open-ended for the operator to propose); when set, it
+  -- must be on or after pickup_date.
+  CONSTRAINT cargo_requests_date_order_check CHECK (
+    delivery_date_target IS NULL
+    OR delivery_date_target >= pickup_date
   )
 );
 
-CREATE INDEX idx_cargo_requests_client
+CREATE INDEX IF NOT EXISTS idx_cargo_requests_client
   ON cargo_requests (client_id, created_at DESC)
   WHERE client_id IS NOT NULL;
-CREATE INDEX idx_cargo_requests_status
+CREATE INDEX IF NOT EXISTS idx_cargo_requests_status
   ON cargo_requests (status, created_at DESC);
-CREATE INDEX idx_cargo_requests_pickup
+CREATE INDEX IF NOT EXISTS idx_cargo_requests_pickup
   ON cargo_requests (pickup_date)
   WHERE status IN ('pending', 'offers_received');
 ```
@@ -411,7 +528,7 @@ BEGIN
   END IF;
 END $$;
 
-CREATE TABLE cargo_offers (
+CREATE TABLE IF NOT EXISTS cargo_offers (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   cargo_request_id UUID NOT NULL
     REFERENCES cargo_requests(id) ON DELETE CASCADE,
@@ -434,10 +551,25 @@ CREATE TABLE cargo_offers (
   aircraft_id UUID NOT NULL
     REFERENCES aircraft(id) ON DELETE RESTRICT,
 
-  -- Snapshots (Phase 9 PR 2 Decision #4 immutability)
-  operator_name_snapshot VARCHAR(120) NOT NULL,
+  -- Snapshots (Phase 9 PR 2 Decision #4 immutability).
+  -- Codex round 3 PR #64 P1 #1 fix — widen to match the
+  -- source operators schema:
+  --   - operators.company_name = VARCHAR(200) — snapshot
+  --     was 120, would `value too long` on any operator
+  --     with company_name length 121-200 (the legitimate
+  --     range allowed by the source table)
+  --   - operators.contact_email = VARCHAR(255) — snapshot
+  --     was 120, would reject any RFC-compliant email
+  --     longer than 120 chars (which the operators table
+  --     accepts up to 255)
+  --   - operators.contact_phone = VARCHAR(20) — snapshot
+  --     already matches at 20
+  -- All 3 widened to source-schema width so EVERY approved
+  -- operator can submit a cargo offer without truncation
+  -- or rejection.
+  operator_name_snapshot VARCHAR(200) NOT NULL,
   operator_phone_snapshot VARCHAR(20) NOT NULL,
-  operator_email_snapshot VARCHAR(120) NOT NULL,
+  operator_email_snapshot VARCHAR(255) NOT NULL,
   aircraft_snapshot TEXT,
 
   -- Offer terms. Codex round 2 PR #64 P1 #2 fix — non-negative
@@ -493,11 +625,11 @@ CREATE TABLE cargo_offers (
   )
 );
 
-CREATE INDEX idx_cargo_offers_request
+CREATE INDEX IF NOT EXISTS idx_cargo_offers_request
   ON cargo_offers (cargo_request_id, status, created_at DESC);
-CREATE INDEX idx_cargo_offers_operator
+CREATE INDEX IF NOT EXISTS idx_cargo_offers_operator
   ON cargo_offers (operator_id, status, created_at DESC);
-CREATE INDEX idx_cargo_offers_pending
+CREATE INDEX IF NOT EXISTS idx_cargo_offers_pending
   ON cargo_offers (cargo_request_id, status)
   WHERE status = 'pending';
 ```
@@ -661,7 +793,7 @@ distribution engine (PR 3) joins via this table to filter
 operators that have at least one capable aircraft.
 
 ```sql
-CREATE TABLE cargo_aircraft_capabilities (
+CREATE TABLE IF NOT EXISTS cargo_aircraft_capabilities (
   aircraft_id UUID PRIMARY KEY
     REFERENCES aircraft(id) ON DELETE CASCADE,
   supports_horse BOOLEAN NOT NULL DEFAULT false,
@@ -684,13 +816,13 @@ CREATE TABLE cargo_aircraft_capabilities (
   )
 );
 
-CREATE INDEX idx_cargo_aircraft_caps_horse
+CREATE INDEX IF NOT EXISTS idx_cargo_aircraft_caps_horse
   ON cargo_aircraft_capabilities (aircraft_id) WHERE supports_horse;
-CREATE INDEX idx_cargo_aircraft_caps_car
+CREATE INDEX IF NOT EXISTS idx_cargo_aircraft_caps_car
   ON cargo_aircraft_capabilities (aircraft_id) WHERE supports_luxury_car;
-CREATE INDEX idx_cargo_aircraft_caps_valuables
+CREATE INDEX IF NOT EXISTS idx_cargo_aircraft_caps_valuables
   ON cargo_aircraft_capabilities (aircraft_id) WHERE supports_valuables;
-CREATE INDEX idx_cargo_aircraft_caps_other
+CREATE INDEX IF NOT EXISTS idx_cargo_aircraft_caps_other
   ON cargo_aircraft_capabilities (aircraft_id) WHERE supports_other;
 ```
 
@@ -708,7 +840,7 @@ offer-accepted confirmations + offer-declined notices +
 admin batch alerts to operators).
 
 ```sql
-CREATE TABLE cargo_email_alert_status (
+CREATE TABLE IF NOT EXISTS cargo_email_alert_status (
   id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   status TEXT NOT NULL DEFAULT 'healthy'
     CHECK (status IN ('healthy', 'config_missing', 'send_failed')),
@@ -847,7 +979,22 @@ BEGIN
     RETURNING id, cargo_request_number INTO v_request_id, v_request_number;
   EXCEPTION
     WHEN check_violation THEN
-      RETURN json_build_object('ok', false, 'error', 'validation_failed');
+      -- Codex round 3 PR #64 P2 #4 fix — disambiguate the new
+      -- value/date sanity CHECKs from the existing identity +
+      -- category + route CHECKs. Pattern mirrors §4.3
+      -- price_invalid disambiguation via GET STACKED DIAGNOSTICS.
+      DECLARE
+        v_constraint_name TEXT;
+      BEGIN
+        GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME;
+        IF v_constraint_name = 'cargo_requests_value_positive_check' THEN
+          RETURN json_build_object('ok', false, 'error', 'value_invalid');
+        ELSIF v_constraint_name = 'cargo_requests_date_order_check' THEN
+          RETURN json_build_object('ok', false, 'error', 'date_invalid');
+        END IF;
+        -- Default for identity + category + route + flexibility CHECKs
+        RETURN json_build_object('ok', false, 'error', 'validation_failed');
+      END;
     WHEN invalid_text_representation THEN
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
@@ -874,7 +1021,9 @@ GRANT EXECUTE ON FUNCTION create_cargo_request_guest(JSONB, INET)
 | `ip_required` | Server Action passed null IP |
 | `cargo_type_required` | payload missing `cargo_type` |
 | `cargo_type_invalid` | `cargo_type` not in allowed set (round 1 P1 #3 fix) |
-| `validation_failed` | DB CHECK constraint rejected (per-category required + identity + route) |
+| `value_invalid` | `estimated_value_sar <= 0` (round 3 P2 #4 fix; via `cargo_requests_value_positive_check`) |
+| `date_invalid` | `delivery_date_target < pickup_date` (round 3 P2 #4 fix; via `cargo_requests_date_order_check`) |
+| `validation_failed` | Other DB CHECK constraint rejected (identity + category exclusivity + route + flexibility range) |
 | `malformed_input` | numeric/date parsing failed |
 
 §4.2 (`create_cargo_request_authenticated`) returns the same
@@ -989,7 +1138,20 @@ BEGIN
     RETURNING id, cargo_request_number INTO v_request_id, v_request_number;
   EXCEPTION
     WHEN check_violation THEN
-      RETURN json_build_object('ok', false, 'error', 'validation_failed');
+      -- Codex round 3 PR #64 P2 #4 fix (mirror of §4.1) —
+      -- value_invalid + date_invalid disambiguation via
+      -- GET STACKED DIAGNOSTICS CONSTRAINT_NAME.
+      DECLARE
+        v_constraint_name TEXT;
+      BEGIN
+        GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME;
+        IF v_constraint_name = 'cargo_requests_value_positive_check' THEN
+          RETURN json_build_object('ok', false, 'error', 'value_invalid');
+        ELSIF v_constraint_name = 'cargo_requests_date_order_check' THEN
+          RETURN json_build_object('ok', false, 'error', 'date_invalid');
+        END IF;
+        RETURN json_build_object('ok', false, 'error', 'validation_failed');
+      END;
     WHEN invalid_text_representation THEN
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
@@ -1594,17 +1756,32 @@ SELECT
       AND conrelid = 'cargo_offers'::regclass) AS has_insurance_nonneg_check,
   EXISTS (SELECT 1 FROM pg_constraint
     WHERE conname = 'cargo_offers_customs_handling_nonneg_check'
-      AND conrelid = 'cargo_offers'::regclass) AS has_customs_nonneg_check;
+      AND conrelid = 'cargo_offers'::regclass) AS has_customs_nonneg_check,
+  -- §3.1 request sanity CHECKs (Codex round 3 P2 #4 fix —
+  -- mirror the offer-level price/date guards on the intake table)
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_requests_value_positive_check'
+      AND conrelid = 'cargo_requests'::regclass) AS has_request_value_check,
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_requests_date_order_check'
+      AND conrelid = 'cargo_requests'::regclass) AS has_request_date_order_check,
+  -- §3.2 widened operator snapshot widths (Codex round 3 P1 #1 fix)
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'cargo_offers'
+      AND column_name = 'operator_name_snapshot'
+      AND character_maximum_length = 200) AS operator_name_snapshot_width_200,
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'cargo_offers'
+      AND column_name = 'operator_email_snapshot'
+      AND character_maximum_length = 255) AS operator_email_snapshot_width_255;
 ```
 
-**Expected:** all 16 = `true` (extended from 12 → 16 in
-Codex round 2 P1 #2 + P2 #3 fixes:
-- `accepted_offer_fk_restrict` (was `has_accepted_offer_fkey`;
-  now also asserts `confdeltype = 'r'`)
-- `accepted_has_offer_check` (new §3.3 invariant)
-- `has_base_price_positive_check` (§3.2 price CHECK 1)
-- `has_insurance_nonneg_check` (§3.2 price CHECK 2)
-- `has_customs_nonneg_check` (§3.2 price CHECK 3)).
+**Expected:** all 20 = `true` (extended from 16 → 20 in
+Codex round 3 P1 #1 + P2 #4 fixes:
+- `has_request_value_check` (§3.1 estimated_value > 0)
+- `has_request_date_order_check` (§3.1 delivery >= pickup)
+- `operator_name_snapshot_width_200` (§3.2 widened from 120)
+- `operator_email_snapshot_width_255` (§3.2 widened from 120)).
 
 ### Probe 29 — Guest cargo request appears in admin queue
 
@@ -1686,9 +1863,9 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 4
+## Open questions for Codex round 5
 
-Rounds 1-2 closed 6 P1 + 3 P2:
+Rounds 1-3 closed 7 P1 + 6 P2:
 
 - **Round 1:**
   - **P1 #1:** §3.4 extends BOTH constraints
@@ -1719,6 +1896,28 @@ Rounds 1-2 closed 6 P1 + 3 P2:
     `status='accepted'` rows must keep their offer pointer).
   - **P2 #4:** §5 PR 1 manifest now lists §3.4.2 + §3.3
     invariant + the 3 named price CHECKs explicitly.
+- **Round 3:**
+  - **P1 #1:** §3.2 `operator_name_snapshot` widened
+    `VARCHAR(120)` → `VARCHAR(200)` + `operator_email_snapshot`
+    `VARCHAR(120)` → `VARCHAR(255)` to match source operators
+    schema. Prior widths would have rejected legitimate
+    approved operators with `value too long`.
+  - **P2 #2:** Every `CREATE TABLE` + `CREATE INDEX` (4 tables
+    + 11 indexes total in PR 1's migration) now uses
+    `IF NOT EXISTS`. Complements round 1 ENUM DO block guards
+    so the entire migration is replay-safe end to end.
+  - **P2 #3:** §3.1 `cargo_requests_category_required_check`
+    extended from "min required for current category" to
+    "min required + ALL OTHER 3 categories' fields are NULL".
+    Eliminates ambiguous cross-category state where a
+    horse request could carry car_make + valuables_security_level
+    populated alongside.
+  - **P2 #4:** §3.1 added `cargo_requests_value_positive_check`
+    (`estimated_value_sar > 0`) + `cargo_requests_date_order_check`
+    (`delivery_date_target IS NULL OR delivery_date_target >= pickup_date`)
+    + §4.1 + §4.2 disambiguate via GET STACKED DIAGNOSTICS
+    CONSTRAINT_NAME → structured `value_invalid` + `date_invalid`
+    contracts (mirror of §4.3 price_invalid pattern).
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -1741,4 +1940,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 3 review.**
+**Spec ready for Codex round 4 review.**
