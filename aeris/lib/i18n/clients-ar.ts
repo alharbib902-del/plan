@@ -18,6 +18,11 @@ export const clientsAr = {
   // Surfaced on the admin canary page (Phase 9 PR 1
   // 4th ChannelHealth card)
   canaryClientEmailChannel: 'بريد العملاء (Resend)',
+  // Phase 10 PR 2 §3.6 — 5th ChannelHealth card (round 7 P1 #2:
+  // covers BOTH empty-leg match emails AND reservation-confirmation
+  // emails through one card; mirrors Phase 7 outreach singleton).
+  canaryClientEmptyLegEmailChannel:
+    'بريد العملاء — عرض رحلة فارغة (Resend)',
 
   // ------------------------------------------------------------
   // Public auth pages
@@ -300,7 +305,7 @@ export const clientsAr = {
   } as Record<string, string>,
 
   // ------------------------------------------------------------
-  // Phase 10 PR 1 — Empty Legs portal
+  // Phase 10 PR 1+2 — Empty Legs portal
   // ------------------------------------------------------------
   emptyLegsPortalTitle: 'الرحلات الفارغة',
   emptyLegsTabMatches: 'مطابقاتي',
@@ -308,16 +313,29 @@ export const clientsAr = {
   emptyLegsEmptyMatches:
     'لم يصلك أي عرض رحلة فارغة بعد. سنبلغك عند ظهور رحلة مناسبة لرحلاتك السابقة.',
   emptyLegsEmptyBrowseAll: 'لا توجد رحلات فارغة متاحة حالياً.',
+  emptyLegsMatchesSubtitle:
+    'سجلّ كل المطابقات التي أرسلها نظام Aeris لك.',
   emptyLegsCardRoute: 'المسار',
   emptyLegsCardPrice: 'السعر الحالي',
   emptyLegsCardDiscount: 'الخصم',
   emptyLegsCardDeparture: 'موعد المغادرة',
   emptyLegsCardCountdownLabel: 'ينتهي العرض خلال',
+  emptyLegsCardCountdownExpired: 'انتهى العرض',
+  emptyLegsTableNumber: 'رقم الرحلة',
+  emptyLegsTableMatchedAt: 'وصل العرض',
+  emptyLegsViewDetails: 'عرض التفاصيل',
   emptyLegsReserveCta: 'احجز الآن',
+  emptyLegsReserving: 'جارٍ الحجز…',
   emptyLegsReservedBanner: 'تم الحجز — في انتظار تأكيد الإدارة',
   emptyLegsReservedExpires: 'ينتهي الحجز عند',
   emptyLegsCancelReservation: 'إلغاء الحجز',
+  emptyLegsCancelling: 'جارٍ الإلغاء…',
   emptyLegsCancelConfirm: 'متأكد من إلغاء الحجز؟',
+  emptyLegsCancelledBanner: 'تم إلغاء الحجز.',
+  emptyLegsUnavailableNow:
+    'هذه الرحلة محجوزة حالياً من عميل آخر. حاول لاحقاً.',
+  emptyLegsTerminalState:
+    'انتهت هذه الرحلة (مباعة أو منتهية أو ملغاة).',
 
   // /me/notifications page
   notificationsPageTitle: 'تفضيلات الإشعارات',
@@ -328,6 +346,7 @@ export const clientsAr = {
   notificationsChannelWaLink: 'رابط واتساب',
   notificationsCategoryMarketing: 'العروض الترويجية',
   notificationsSaveCta: 'حفظ التفضيلات',
+  notificationsSaving: 'جارٍ الحفظ…',
   notificationsSavedToast: 'تم حفظ التفضيلات.',
 
   // Server Action error contracts (opaque per spec §4.6 + §4.1)
@@ -349,4 +368,7 @@ export const clientsAr = {
   // Bookings page chips (Decision #10 unified /me/bookings)
   bookingsSourceCharter: 'طيران خاص',
   bookingsSourceEmptyLeg: 'رحلة فارغة',
+  // Phase 10 PR 2 — new "المصدر" column header in
+  // BookingsTable for the source_discriminator chip.
+  meBookingsTableSource: 'المصدر',
 } as const;

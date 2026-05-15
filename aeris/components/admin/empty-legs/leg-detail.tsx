@@ -14,13 +14,41 @@ import { CancelLegButton } from './cancel-button';
 import { MarkSoldManualForm } from './mark-sold-form';
 import { ReservationActions } from './reservation-actions';
 
-export function EmptyLegDetail({ leg }: { leg: EmptyLegRow }) {
+interface EmptyLegDetailProps {
+  leg: EmptyLegRow;
+  // Phase 10 PR 2 — when leg.reservation_client_id IS NOT NULL,
+  // the page server component pre-loads the client's display
+  // fields and passes them here. The reservation snapshot
+  // columns on the leg row are NULL for State C, so we display
+  // these instead.
+  reservationClient?: {
+    full_name: string;
+    contact_phone: string;
+  } | null;
+}
+
+export function EmptyLegDetail({
+  leg,
+  reservationClient,
+}: EmptyLegDetailProps) {
   const floor =
     leg.original_price !== null && leg.auction_floor_discount_pct !== null
       ? Math.round(
           leg.original_price * (1 - leg.auction_floor_discount_pct / 100)
         )
       : null;
+
+  // Phase 10 PR 2 — for State C reservations, swap the snapshot
+  // fields with the live client display fields. State B keeps
+  // the original snapshot fields (which are populated for guest
+  // reservations).
+  const isClientReservation = leg.reservation_client_id !== null;
+  const displayCustomerName = isClientReservation
+    ? reservationClient?.full_name ?? null
+    : leg.reservation_customer_name_snapshot;
+  const displayCustomerPhone = isClientReservation
+    ? reservationClient?.contact_phone ?? null
+    : leg.reservation_customer_phone_snapshot;
 
   return (
     <div className="space-y-6">
@@ -113,13 +141,16 @@ export function EmptyLegDetail({ leg }: { leg: EmptyLegRow }) {
       {leg.status === 'reserved' ? (
         <section className="space-y-3">
           <h2 className="font-ar text-base text-ink">
-            {emptyLegsAr.caseReservedTitle}
+            {isClientReservation
+              ? emptyLegsAr.caseReservedClientTitle
+              : emptyLegsAr.caseReservedTitle}
           </h2>
           <ReservationActions
             legId={leg.id}
-            customerName={leg.reservation_customer_name_snapshot}
-            customerPhone={leg.reservation_customer_phone_snapshot}
+            customerName={displayCustomerName}
+            customerPhone={displayCustomerPhone}
             expiresAt={leg.reservation_expires_at}
+            reservationClientId={leg.reservation_client_id}
           />
         </section>
       ) : null}
