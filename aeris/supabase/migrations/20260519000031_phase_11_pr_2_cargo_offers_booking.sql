@@ -85,6 +85,51 @@ BEGIN
   END IF;
 END $$;
 
+-- §1.4 bookings financial-column widening (Round 1 PR #67 P1 #1).
+--
+-- cargo_offers (PR 1 §3.2) chose DECIMAL(14,2) for all price
+-- columns to accommodate high-value cargo (e.g. luxury car +
+-- valuables shipments easily reach 8-figure SAR). The legacy
+-- bookings columns from initial_schema.sql (lines 313-318) are
+-- DECIMAL(12,2), which caps at 9,999,999,999.99. Any cargo offer
+-- accepted into accept_cargo_offer with base + insurance +
+-- customs > DECIMAL(12,2) would write fine into cargo_offers but
+-- explode at the bookings INSERT with `numeric_value_out_of_range`
+-- (sqlstate 22003) — the user sees a generic server_error after
+-- the entire flow appeared to succeed.
+--
+-- Fix: widen the 6 bookings financial columns to DECIMAL(14,2)
+-- so the source-of-truth on cargo_offers fits cleanly into
+-- bookings. This is a metadata-only change for PostgreSQL
+-- (DECIMAL precision-only widening is a no-op at storage layer);
+-- existing rows remain valid.
+--
+-- Replay-safe: each ALTER guarded by an information_schema check
+-- so re-running on a PR 2-applied DB is a no-op.
+DO $$
+DECLARE
+  v_col TEXT;
+  v_cols TEXT[] := ARRAY[
+    'base_amount', 'addons_amount', 'vat_amount',
+    'total_amount', 'commission_amount', 'operator_payout'
+  ];
+BEGIN
+  FOREACH v_col IN ARRAY v_cols LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'bookings'
+         AND column_name = v_col
+         AND numeric_precision = 12
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE bookings ALTER COLUMN %I TYPE DECIMAL(14, 2)',
+        v_col
+      );
+    END IF;
+  END LOOP;
+END $$;
+
 -- =============================================================
 -- §2 accept_cargo_offer (per parent spec §4.4)
 -- =============================================================

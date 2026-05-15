@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { isUuid } from '@/lib/utils/uuid';
 import type { CargoOfferRow, CargoRequestRow } from '@/lib/cargo/types';
 
 /**
@@ -37,6 +38,13 @@ export async function loadMyCargoRequestDetail(
   clientId: string,
   requestId: string
 ): Promise<MyCargoRequestDetail | null> {
+  // Round 1 PR #67 P2 #2 — UUID-shape guard.
+  // Without this, /me/cargo-requests/not-a-uuid would let
+  // PostgREST throw 22P02 invalid_text_representation on the
+  // .eq('id', requestId) and the page renders a 500 instead
+  // of notFound(). Mirrors getAdminCargoRequest discipline.
+  if (!isUuid(requestId)) return null;
+
   const admin = createAdminClient();
 
   const { data: requestData, error: requestError } = await admin
