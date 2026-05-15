@@ -1,7 +1,9 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 9).
-> **Codex history:** rounds 1-8 closed 17 P1 + 12 P2 (29 findings):
+> **Status:** Draft for Codex review (round 10).
+> **Codex history:** rounds 1-9 closed 17 P1 + 14 P2 (31 findings).
+> Round 9 was the first round with **zero P1** — sign of spec
+> approaching acceptance.
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -115,13 +117,26 @@
 >   inputs were attempting cast to INT/BOOLEAN/DECIMAL and
 >   failing as malformed_input instead of defaulting).
 >
-> Round 9 should verify the new length guards correctly
-> handle multi-byte Arabic input (PG `length()` returns
-> character count, not bytes — so a 120-char Arabic name
-> passes), and that the NULLIF-before-cast pattern is
-> applied consistently to every optional cast in PR 1's
-> migration (no remaining bare `(p_payload->>'...')::TYPE`
-> for non-required fields).
+> - **Round 9 (0 P1 + 2 P2):** P2 #1 (numeric overflow on
+>   DECIMAL(14,2) casts raises sqlstate 22003
+>   `numeric_value_out_of_range`, NOT 22P02 or 22007 — added
+>   `WHEN numeric_value_out_of_range` to all 3 EXCEPTION
+>   blocks; mapped to `malformed_input` since CHECKs only
+>   fire after the cast succeeds, so semantically the value
+>   is out of representable range), P2 #2 (signature comment
+>   on §4.4 `p_actor_admin_user_id` was contradicting Round
+>   6 — said "set for admin guest acceptance" but Round 6
+>   established the admin path passes both NULL after
+>   `requireAdminSession()`; comment now says "ALWAYS NULL
+>   today; reserved for future admin UUID" + explicit
+>   "DO NOT reintroduce actor_required" warning).
+>
+> Round 10 should verify the spec is operationally complete
+> for PR 1 implementation: every Postgres cast EXCEPTION
+> branch surveyed (22P02 + 22007 + 22003 — what else can
+> a normal cast raise?), every signature comment matches
+> the body contract, and the locked decisions still hold
+> (12 decisions in §2 unchanged since round 0).
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -1316,11 +1331,19 @@ BEGIN
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
     WHEN invalid_datetime_format THEN
       -- Sqlstate 22007 — Codex round 7 PR #64 P1 #1 fix.
-      -- Date casts (e.g. (p_payload->>'pickup_date')::DATE) raise
-      -- 22007 NOT 22P02 when the input is a malformed date like
-      -- 'not-a-date' or '2026-13-99'. The prior handler missed
-      -- this branch → raw PG error escaped instead of the
-      -- structured malformed_input contract.
+      -- Date casts raise 22007 NOT 22P02 on malformed input.
+      RETURN json_build_object('ok', false, 'error', 'malformed_input');
+    WHEN numeric_value_out_of_range THEN
+      -- Sqlstate 22003 — Codex round 9 PR #64 P2 #1 fix.
+      -- DECIMAL(14,2) casts on values larger than ~12 integer
+      -- digits raise 22003 (e.g. '999999999999999999999' →
+      -- numeric overflow), which neither 22P02 nor 22007
+      -- handlers catch. The CHECK constraints
+      -- (cargo_requests_value_positive_check, the 3 cargo_offers
+      -- price CHECKs) only fire AFTER the cast succeeds, so
+      -- they can't catch this either. Map to malformed_input —
+      -- semantically the value is out of representable range,
+      -- not a CHECK violation.
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
 
@@ -1541,11 +1564,19 @@ BEGIN
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
     WHEN invalid_datetime_format THEN
       -- Sqlstate 22007 — Codex round 7 PR #64 P1 #1 fix.
-      -- Date casts (e.g. (p_payload->>'pickup_date')::DATE) raise
-      -- 22007 NOT 22P02 when the input is a malformed date like
-      -- 'not-a-date' or '2026-13-99'. The prior handler missed
-      -- this branch → raw PG error escaped instead of the
-      -- structured malformed_input contract.
+      -- Date casts raise 22007 NOT 22P02 on malformed input.
+      RETURN json_build_object('ok', false, 'error', 'malformed_input');
+    WHEN numeric_value_out_of_range THEN
+      -- Sqlstate 22003 — Codex round 9 PR #64 P2 #1 fix.
+      -- DECIMAL(14,2) casts on values larger than ~12 integer
+      -- digits raise 22003 (e.g. '999999999999999999999' →
+      -- numeric overflow), which neither 22P02 nor 22007
+      -- handlers catch. The CHECK constraints
+      -- (cargo_requests_value_positive_check, the 3 cargo_offers
+      -- price CHECKs) only fire AFTER the cast succeeds, so
+      -- they can't catch this either. Map to malformed_input —
+      -- semantically the value is out of representable range,
+      -- not a CHECK violation.
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
 
@@ -1743,11 +1774,19 @@ BEGIN
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
     WHEN invalid_datetime_format THEN
       -- Sqlstate 22007 — Codex round 7 PR #64 P1 #1 fix.
-      -- Date casts (e.g. (p_payload->>'pickup_date')::DATE) raise
-      -- 22007 NOT 22P02 when the input is a malformed date like
-      -- 'not-a-date' or '2026-13-99'. The prior handler missed
-      -- this branch → raw PG error escaped instead of the
-      -- structured malformed_input contract.
+      -- Date casts raise 22007 NOT 22P02 on malformed input.
+      RETURN json_build_object('ok', false, 'error', 'malformed_input');
+    WHEN numeric_value_out_of_range THEN
+      -- Sqlstate 22003 — Codex round 9 PR #64 P2 #1 fix.
+      -- DECIMAL(14,2) casts on values larger than ~12 integer
+      -- digits raise 22003 (e.g. '999999999999999999999' →
+      -- numeric overflow), which neither 22P02 nor 22007
+      -- handlers catch. The CHECK constraints
+      -- (cargo_requests_value_positive_check, the 3 cargo_offers
+      -- price CHECKs) only fire AFTER the cast succeeds, so
+      -- they can't catch this either. Map to malformed_input —
+      -- semantically the value is out of representable range,
+      -- not a CHECK violation.
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
 
@@ -1834,7 +1873,11 @@ across all 5 business units).
 CREATE OR REPLACE FUNCTION accept_cargo_offer(
   p_offer_id UUID,
   p_actor_client_id UUID,        -- NULL for guest path; set for authed
-  p_actor_admin_user_id UUID     -- NULL for client path; set for admin guest acceptance
+  p_actor_admin_user_id UUID     -- ALWAYS NULL today (Aeris admins have no users row);
+                                 -- reserved for future admin UUID. Round 6 P1 #1: the
+                                 -- admin path passes both actor IDs as NULL after
+                                 -- requireAdminSession() at the Server Action layer.
+                                 -- DO NOT reintroduce actor_required guard.
 ) RETURNS JSON
   LANGUAGE plpgsql
   SECURITY DEFINER
@@ -2529,9 +2572,9 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 10
+## Open questions for Codex round 11
 
-Rounds 1-8 closed 17 P1 + 12 P2:
+Rounds 1-9 closed 17 P1 + 14 P2 (31 findings total):
 
 - **Round 1:**
   - **P1 #1:** §3.4 extends BOTH constraints
@@ -2702,6 +2745,28 @@ Rounds 1-8 closed 17 P1 + 12 P2:
     and raised 22P02 → caught as malformed_input → user
     saw a generic error instead of the intended default.
     New pattern: `COALESCE(NULLIF(p_payload->>'x', '')::TYPE, default)`.
+- **Round 9** (0 P1 + 2 P2 — first round with no P1):
+  - **P2 #1:** Numeric overflow on DECIMAL(14,2) casts
+    raises sqlstate 22003 `numeric_value_out_of_range`.
+    The prior handlers caught 22P02 + 22007 only — values
+    like `'999999999999999999999'` escaped as raw PG errors
+    before the named CHECK constraints could fire (CHECKs
+    run AFTER the cast succeeds). Added
+    `WHEN numeric_value_out_of_range THEN return malformed_input`
+    to all 3 RPC EXCEPTION blocks. Maps to malformed_input
+    (not value_invalid / price_invalid) because semantically
+    the value is out of representable range, not a CHECK
+    violation.
+  - **P2 #2:** §4.4 signature comment on `p_actor_admin_user_id`
+    contradicted Round 6 P1 #1's contract. The body comments
+    explained the new contract correctly (Aeris admins have
+    no UUID; admin path passes both actor IDs NULL after
+    requireAdminSession), but the signature line still said
+    "set for admin guest acceptance" — the first thing an
+    implementer would copy. Reworded to "ALWAYS NULL today;
+    reserved for future admin UUID" + explicit
+    "DO NOT reintroduce actor_required" warning so future
+    iterations don't regress on Round 6's settled decision.
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -2724,4 +2789,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 9 review.**
+**Spec ready for Codex round 10 review.**
