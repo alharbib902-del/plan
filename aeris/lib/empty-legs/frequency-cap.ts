@@ -103,3 +103,82 @@ export async function shouldSkipCandidate(
 }
 
 export const FREQUENCY_CAP_PER_24H = DEFAULT_CAP_PER_24H;
+
+// ============================================================
+// Phase 10 PR 1 — client-keyed frequency cap
+//
+// Mirrors the lead helpers above but keys on `client_id` instead
+// of `lead_inquiry_id`. Same 24h window + 1-per-cycle default cap.
+// Indexes from §3.2: idx_empty_leg_notifications_client_24h
+// (partial WHERE client_id IS NOT NULL) + the sibling unique
+// idx_empty_leg_notifications_client_leg_unique (per-leg dedupe).
+// ============================================================
+
+export interface CountClientInLast24hOptions {
+  clientId: string;
+  capPer24h?: number;
+}
+
+export async function countClientNotificationsInLast24h(
+  clientId: string
+): Promise<number> {
+  noStore();
+  const client = createAdminClient();
+  const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count, error } = await client
+    .from(NOTIFICATIONS_TABLE)
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId)
+    .gt('sent_at', cutoffIso);
+
+  if (error) {
+    console.error('[frequency-cap] client count failed', error);
+    throw new Error(
+      `countClientNotificationsInLast24h failed: ${error.message}`
+    );
+  }
+  return count ?? 0;
+}
+
+export async function isClientOverFrequencyCap({
+  clientId,
+  capPer24h = DEFAULT_CAP_PER_24H,
+}: CountClientInLast24hOptions): Promise<boolean> {
+  const recent = await countClientNotificationsInLast24h(clientId);
+  return recent >= capPer24h;
+}
+
+export async function hasNotifiedClientOnLeg(
+  clientId: string,
+  legId: string
+): Promise<boolean> {
+  noStore();
+  const client = createAdminClient();
+  const { count, error } = await client
+    .from(NOTIFICATIONS_TABLE)
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId)
+    .eq('leg_id', legId);
+
+  if (error) {
+    console.error('[frequency-cap] client dedupe lookup failed', error);
+    throw new Error(`hasNotifiedClientOnLeg failed: ${error.message}`);
+  }
+  return (count ?? 0) > 0;
+}
+
+/**
+ * Combined gate the matcher calls per (client, leg) pair before
+ * scoring it into the top-N. Returns `true` when the client should
+ * be EXCLUDED (over cap OR already notified on this leg).
+ */
+export async function shouldSkipClientCandidate(
+  clientId: string,
+  legId: string
+): Promise<boolean> {
+  const [overCap, alreadyOnLeg] = await Promise.all([
+    isClientOverFrequencyCap({ clientId }),
+    hasNotifiedClientOnLeg(clientId, legId),
+  ]);
+  return overCap || alreadyOnLeg;
+}

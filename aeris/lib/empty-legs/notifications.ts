@@ -3,11 +3,13 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { resolveSiteUrl } from '@/lib/checkout/site-url';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 
-import type { CandidateRow } from './candidate-pool';
+import type { CandidateRow, ClientCandidateRow } from './candidate-pool';
 import { mintOptOutToken } from './opt-out-token';
 import { buildLegPublishedWhatsAppBody } from './notification-templates/leg-published-whatsapp';
 import { buildLegPriceDroppedWhatsAppBody } from './notification-templates/leg-price-dropped-whatsapp';
 import { sendFounderBatchAlert } from './founder-batch-email';
+import { isClientOptedIn } from '@/lib/clients/notification-preferences';
+import { sendClientEmptyLegMatchEmail } from '@/lib/notifications/client-empty-leg-email';
 
 /**
  * Phase 7 PR 2e — wa.me URL emitter + outreach-queue
@@ -204,4 +206,286 @@ export async function enqueueLegNotifications({
   }
 
   return writtenRows;
+}
+
+// ============================================================
+// Phase 10 PR 1 — client-side dispatch
+//
+// Sibling of `enqueueLegNotifications` for the §4.2 client-loop.
+// Per-client channel selection rules (round 4 P1 #1):
+//   - opted in to BOTH → channel='email_and_wa', wa_url + email_url populated, dispatch both
+//   - opted in to email ONLY → channel='email', email_url populated, wa_url NULL
+//   - opted in to wa.me ONLY → channel='whatsapp_link', wa_url populated, email_url NULL
+//   - opted OUT of both → no row written, no dispatch (skipped count returned)
+//
+// Single-row-per-(client, leg) dedupe preserved by the §3.2
+// idx_empty_leg_notifications_client_leg_unique partial unique
+// index. 23505 unique-violation handled the same way as the lead
+// path (treated as successful skip).
+//
+// Match-email Resend dispatches route through
+// `sendClientEmptyLegMatchEmail` which writes to the §3.6
+// `client_empty_leg_alert_status` singleton via
+// `recordClientEmptyLegAlertStatus` (round 7 P1 #2).
+// ============================================================
+
+export interface EnqueueClientLegNotificationsOptions {
+  leg: EmptyLegRow;
+  eventType: 'published' | 'price_dropped';
+  candidates: ClientCandidateRow[];
+}
+
+export interface EnqueueClientLegNotificationsResult {
+  written: EnqueuedRow[];
+  /** Count of clients who passed candidate-pool + frequency-cap
+   *  but were opted OUT of both channels (no row written). */
+  skipped_preferences: number;
+}
+
+export function buildClientWaMeUrl(
+  phoneE164: string,
+  body: string
+): string {
+  return waMeUrl(phoneE164, body);
+}
+
+export async function enqueueClientLegNotifications({
+  leg,
+  eventType,
+  candidates,
+}: EnqueueClientLegNotificationsOptions): Promise<EnqueueClientLegNotificationsResult> {
+  if (candidates.length === 0) return { written: [], skipped_preferences: 0 };
+
+  const siteUrl = resolveSiteUrl();
+  const routeFrom = legRouteLabel(
+    leg.departure_airport,
+    leg.departure_airport_freeform_snapshot
+  );
+  const routeTo = legRouteLabel(
+    leg.arrival_airport,
+    leg.arrival_airport_freeform_snapshot
+  );
+  // Phase 10: clients land on /me/empty-legs/<leg_number> (NOT
+  // the public token URL — authenticated path per §1 J2).
+  const legUrl = `${siteUrl}/me/empty-legs/${leg.leg_number}`;
+  const currentPrice = leg.current_price ?? 0;
+  const currentDiscountPct = leg.current_discount_pct ?? 0;
+
+  const writtenRows: EnqueuedRow[] = [];
+  // Codex round 2 PR #62 P2 #1 fix — track wa.me-bound rows
+  // separately so the founder batch alert reports the count of
+  // rows that actually need manual dispatch (channel ∈
+  // {whatsapp_link, email_and_wa}). Email-only rows are
+  // dispatched inline by sendClientEmptyLegMatchEmail and
+  // marked outreach_sent_at=NOW(); they never appear in the
+  // admin outreach queue, so counting them in the founder
+  // alert would lie about pending work.
+  let waBoundCount = 0;
+  let skippedPreferencesCount = 0;
+  const dbClient = createAdminClient();
+
+  for (const cand of candidates) {
+    // 1. Read opt-in preferences via §3.3 helper
+    const wantsEmail = isClientOptedIn(
+      cand.notification_preferences,
+      'empty_legs',
+      'email'
+    );
+    const wantsWa = isClientOptedIn(
+      cand.notification_preferences,
+      'empty_legs',
+      'wa_link'
+    );
+
+    // 2. Channel selection per round 4 P1 #1 rules
+    if (!wantsEmail && !wantsWa) {
+      skippedPreferencesCount++;
+      continue;
+    }
+
+    // 3. Build body (same WhatsApp body templates as the lead
+    //    path; the email body is built inside sendClientEmptyLegMatchEmail).
+    const waBody =
+      eventType === 'price_dropped'
+        ? buildLegPriceDroppedWhatsAppBody({
+            legNumber: leg.leg_number,
+            routeFrom,
+            routeTo,
+            currentPrice,
+            currentDiscountPct,
+            legUrl,
+            optOutUrl: `${siteUrl}/me/notifications`,
+            customerName: cand.customer_name,
+          })
+        : buildLegPublishedWhatsAppBody({
+            legNumber: leg.leg_number,
+            routeFrom,
+            routeTo,
+            currentPrice,
+            currentDiscountPct,
+            legUrl,
+            optOutUrl: `${siteUrl}/me/notifications`,
+            customerName: cand.customer_name,
+          });
+
+    const waUrl = wantsWa
+      ? buildClientWaMeUrl(cand.customer_phone, waBody)
+      : null;
+
+    // 4. Determine channel + URLs per the multi-channel row model
+    let channel: 'whatsapp_link' | 'email' | 'email_and_wa';
+    let dbWaUrl: string | null;
+    let dbEmailUrl: string | null;
+    if (wantsEmail && wantsWa) {
+      channel = 'email_and_wa';
+      dbWaUrl = waUrl;
+      dbEmailUrl = legUrl;
+    } else if (wantsEmail) {
+      channel = 'email';
+      dbWaUrl = null;
+      dbEmailUrl = legUrl;
+    } else {
+      channel = 'whatsapp_link';
+      dbWaUrl = waUrl;
+      dbEmailUrl = null;
+    }
+
+    // 5. INSERT the empty_leg_notifications row (single
+    //    row per client+leg per §3.2 unique index).
+    //
+    // Codex round 2 PR #62 P2 #1 fix: email-only rows have NO
+    // manual outreach action. The Resend email below is dispatched
+    // inline (later in this loop), so the row's outreach_sent_at
+    // should be NOW() at INSERT time — otherwise the admin
+    // outreach queue (filters WHERE outreach_sent_at IS NULL)
+    // surfaces these as stale pending tasks with no wa.me URL
+    // for the founder to dispatch from.
+    //
+    //   - whatsapp_link → outreach_sent_at = NULL (founder
+    //     dispatches wa.me manually)
+    //   - email_and_wa  → outreach_sent_at = NULL (founder still
+    //     needs to dispatch wa.me; email auto-sent in parallel)
+    //   - email         → outreach_sent_at = NOW() (auto-sent
+    //     by sendClientEmptyLegMatchEmail below; no manual action)
+    const insertOutreachSentAt =
+      channel === 'email' ? new Date().toISOString() : null;
+
+    const { data, error } = await dbClient
+      .from(NOTIFICATIONS_TABLE)
+      .insert({
+        client_id: cand.client_id,
+        lead_inquiry_id: null, // XOR check requires exactly-one
+        leg_id: leg.id,
+        event_type: eventType,
+        channel,
+        wa_url: dbWaUrl,
+        email_url: dbEmailUrl,
+        outreach_sent_at: insertOutreachSentAt,
+        external_message_id: null,
+        sent_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      // 23505 = unique_violation. The §3.2 client_leg_unique
+      // index already has a row for this (client, leg) — treat
+      // as successful skip (mirrors lead path).
+      if (error.code === '23505') continue;
+      console.error('[notifications] client insert failed', {
+        client: cand.client_id,
+        leg: leg.id,
+        err: error,
+      });
+      continue;
+    }
+
+    writtenRows.push({
+      id: data.id,
+      lead_inquiry_id: cand.client_id, // best-effort EnqueuedRow re-use
+      leg_id: leg.id,
+      wa_url: dbWaUrl ?? '',
+    });
+
+    // Track wa.me-bound rows for the founder alert count
+    // (Codex round 2 P2 #1 — email-only rows are auto-sent and
+    // marked outreach_sent_at=NOW; they don't appear in the
+    // admin outreach queue, so don't count them as "pending").
+    if (channel === 'whatsapp_link' || channel === 'email_and_wa') {
+      waBoundCount++;
+    }
+
+    // 6. Dispatch the email if requested. Fire-and-forget (no
+    //    await on the alert recording — sendClientEmptyLegMatchEmail
+    //    handles its own structured-error contract internally).
+    if (wantsEmail) {
+      try {
+        await sendClientEmptyLegMatchEmail({
+          client: {
+            id: cand.client_id,
+            full_name: cand.customer_name ?? '',
+            auth_email: '', // resolved inside the helper from clients table
+            contact_phone: cand.customer_phone,
+          },
+          leg,
+          eventType,
+          legUrl,
+        });
+      } catch (err) {
+        console.error(
+          '[notifications] client email dispatch failed (non-fatal)',
+          { client: cand.client_id, leg: leg.id, err }
+        );
+      }
+    }
+    // wa.me: no per-row dispatch — the wa_url is collected
+    // into the founder's batch alert below (founder messages
+    // clients manually from the admin outreach queue, mirroring
+    // the lead path).
+  }
+
+  // Codex round 1 PR #62 P1 #2 fix — fire the founder batch
+  // alert for client rows too. Without this, clients opted into
+  // wa_link only (or email_and_wa) get an empty_leg_notifications
+  // row but the founder never gets a "new client matches pending"
+  // surface, so the wa.me URLs sit in the table without delivery.
+  // Mirrors the Phase 7 lead-path call at the bottom of
+  // enqueueLegNotifications. Two emails per matching cycle (one
+  // for the lead batch, one for the client batch) is intentional —
+  // they summarise different recipient pools and surface in the
+  // same /admin/empty-legs/outreach-queue page where the founder
+  // dispatches both manually.
+  //
+  // Codex round 2 PR #62 P2 #1 fix — only fire when there are
+  // actually wa.me-bound rows pending. If every written row was
+  // email-only (auto-sent + outreach_sent_at=NOW), the founder
+  // doesn't need a "new pending wa.me actions" alert because
+  // none are pending; the email auto-dispatch already happened
+  // and is tracked via §3.6 client_empty_leg_alert_status singleton.
+  if (waBoundCount > 0) {
+    try {
+      await sendFounderBatchAlert({
+        legId: leg.id,
+        legNumber: leg.leg_number,
+        rowCount: waBoundCount,
+      });
+    } catch (err) {
+      // sendFounderBatchAlert is fail-tolerant: it logs +
+      // updates the alert-status singleton on its own. Re-thrown
+      // errors here would back the matcher into client_loop_failed
+      // (round 1 P1 #1 fix) and trigger an outbox retry that
+      // would re-fire the founder alert — undesirable since the
+      // empty_leg_notifications rows ARE already written and
+      // visible in the outreach queue.
+      console.error(
+        '[notifications] founder batch alert (client) failed (non-fatal)',
+        err
+      );
+    }
+  }
+
+  return {
+    written: writtenRows,
+    skipped_preferences: skippedPreferencesCount,
+  };
 }

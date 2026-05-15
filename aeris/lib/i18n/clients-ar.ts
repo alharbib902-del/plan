@@ -298,4 +298,55 @@ export const clientsAr = {
     offer_expired:
       'انتهت صلاحية هذا العرض. اطلب جولة جديدة من الدعم.',
   } as Record<string, string>,
+
+  // ------------------------------------------------------------
+  // Phase 10 PR 1 — Empty Legs portal
+  // ------------------------------------------------------------
+  emptyLegsPortalTitle: 'الرحلات الفارغة',
+  emptyLegsTabMatches: 'مطابقاتي',
+  emptyLegsTabBrowseAll: 'تصفّح الكل',
+  emptyLegsEmptyMatches:
+    'لم يصلك أي عرض رحلة فارغة بعد. سنبلغك عند ظهور رحلة مناسبة لرحلاتك السابقة.',
+  emptyLegsEmptyBrowseAll: 'لا توجد رحلات فارغة متاحة حالياً.',
+  emptyLegsCardRoute: 'المسار',
+  emptyLegsCardPrice: 'السعر الحالي',
+  emptyLegsCardDiscount: 'الخصم',
+  emptyLegsCardDeparture: 'موعد المغادرة',
+  emptyLegsCardCountdownLabel: 'ينتهي العرض خلال',
+  emptyLegsReserveCta: 'احجز الآن',
+  emptyLegsReservedBanner: 'تم الحجز — في انتظار تأكيد الإدارة',
+  emptyLegsReservedExpires: 'ينتهي الحجز عند',
+  emptyLegsCancelReservation: 'إلغاء الحجز',
+  emptyLegsCancelConfirm: 'متأكد من إلغاء الحجز؟',
+
+  // /me/notifications page
+  notificationsPageTitle: 'تفضيلات الإشعارات',
+  notificationsPageSubtitle:
+    'اختر القنوات التي تريد استلام الرحلات الفارغة عبرها.',
+  notificationsCategoryEmptyLegs: 'الرحلات الفارغة',
+  notificationsChannelEmail: 'البريد الإلكتروني',
+  notificationsChannelWaLink: 'رابط واتساب',
+  notificationsCategoryMarketing: 'العروض الترويجية',
+  notificationsSaveCta: 'حفظ التفضيلات',
+  notificationsSavedToast: 'تم حفظ التفضيلات.',
+
+  // Server Action error contracts (opaque per spec §4.6 + §4.1)
+  emptyLegsErrors: {
+    leg_not_found: 'لم نجد هذه الرحلة. قد تكون أُلغيت أو حُذفت.',
+    leg_not_reservable:
+      'هذه الرحلة لم تعد متاحة للحجز (قد تكون محجوزة أو منتهية).',
+    leg_already_reserved: 'تم حجز هذه الرحلة من قبل عميل آخر للتو.',
+    auction_window_closed: 'انتهى موعد عرض هذه الرحلة.',
+    client_not_found: 'لم نجد حسابك. سجّل دخول مجدداً.',
+    client_not_active: 'حسابك غير نشط حالياً. تواصل مع الدعم.',
+    cancel_not_allowed:
+      'تعذّر الإلغاء — قد يكون الحجز قد انتهى أو تأكّد بالفعل.',
+    server_error: 'خطأ غير متوقع. حاول لاحقاً أو تواصل مع الدعم.',
+    invalid_input: 'البيانات المُرسلة غير صحيحة.',
+    unauthorized: 'يجب تسجيل الدخول أولاً.',
+  } as Record<string, string>,
+
+  // Bookings page chips (Decision #10 unified /me/bookings)
+  bookingsSourceCharter: 'طيران خاص',
+  bookingsSourceEmptyLeg: 'رحلة فارغة',
 } as const;

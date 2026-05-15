@@ -290,3 +290,65 @@ export const declineOfferSchema = z.object({
 });
 
 export type DeclineOfferInput = z.infer<typeof declineOfferSchema>;
+
+// ============================================================
+// 11. reserveAuthenticatedEmptyLeg (Phase 10 PR 1)
+// ============================================================
+//
+// Wraps the §4.1 RPC. The Server Action validates the leg_id
+// shape; the RPC enforces all the state guards (leg available,
+// not reserved, auction window open, client active).
+
+export const reserveEmptyLegSchema = z.object({
+  leg_id: z.string().uuid({
+    message: 'معرّف الرحلة غير صالح',
+  }),
+});
+
+export type ReserveEmptyLegInput = z.infer<typeof reserveEmptyLegSchema>;
+
+// ============================================================
+// 12. cancelMyEmptyLegReservation (Phase 10 PR 1)
+// ============================================================
+//
+// Wraps the §4.6 RPC. Only validates leg_id shape; the RPC
+// collapses ownership/status/TTL guards into a single opaque
+// cancel_not_allowed error (Phase 9 PR 3 P1 #2 pattern).
+
+export const cancelMyEmptyLegReservationSchema = z.object({
+  leg_id: z.string().uuid({
+    message: 'معرّف الرحلة غير صالح',
+  }),
+});
+
+export type CancelMyEmptyLegReservationInput = z.infer<
+  typeof cancelMyEmptyLegReservationSchema
+>;
+
+// ============================================================
+// 13. updateMyNotificationPreferences (Phase 10 PR 1)
+// ============================================================
+//
+// Validates the JSONB shape clients can submit via the
+// /me/notifications form. Strict object — any unknown key is
+// rejected so a buggy/forged client can't pollute the
+// notification_preferences column with arbitrary data.
+//
+// Phase 10 ships the empty_legs category; later phases extend
+// the schema with new categories under the same shape.
+
+export const notificationPreferencesSchema = z
+  .object({
+    empty_legs: z
+      .object({
+        email: z.boolean(),
+        wa_link: z.boolean(),
+      })
+      .strict(),
+    marketing: z.boolean(),
+  })
+  .strict();
+
+export type NotificationPreferencesInput = z.infer<
+  typeof notificationPreferencesSchema
+>;

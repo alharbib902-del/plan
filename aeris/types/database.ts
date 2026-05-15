@@ -636,6 +636,11 @@ export type BookingRow = {
   // Source-offer linkage (no FK; one-of-two target tables).
   source_offer_table: SourceOfferTable | null;
   source_offer_id: string | null;
+  // Phase 10 PR 1 §3.4: discriminator for unified /me/bookings.
+  // NOT NULL + DEFAULT 'charter'; populated explicitly by
+  // §4.3/§4.4 RPCs as 'empty_leg', falls through to DEFAULT for
+  // accept_offer (Phase 9 charter path; round 6 P2 #4 lock).
+  source_discriminator: 'charter' | 'empty_leg';
   // Customer checkout-prep token. Both NULL by default;
   // founder mints + writes both via the admin "Issue
   // checkout link" action. Paired CHECK enforces both-or-
@@ -962,6 +967,10 @@ export type EmptyLegRow = {
   reservation_expires_at: string | null;
   reservation_customer_name_snapshot: string | null;
   reservation_customer_phone_snapshot: string | null;
+  // Phase 10 PR 1 §3.1: State C (CLIENT) reservation column.
+  // ON DELETE RESTRICT FK; populated by reserve_empty_leg_authenticated
+  // RPC, cleared by §4.5 reservation-clearing patches + §4.6 client release.
+  reservation_client_id: string | null;
   // Phase 7 PR 1 §7: customer-booking link, set by
   // confirm_empty_leg_reservation (PR 2a).
   customer_booking_id: string | null;
@@ -993,15 +1002,31 @@ export type EmptyLegUpdate = Partial<Omit<EmptyLegRow, 'id' | 'created_at'>>;
 // --- empty_leg_notifications (PR 1 §13) ---
 
 export type EmptyLegNotificationEventType = 'published' | 'price_dropped';
-export type EmptyLegNotificationChannel = 'whatsapp_link';
+// Phase 10 PR 1 §3.2 round 4 P1 #1: multi-channel row model.
+// 'email' + 'email_and_wa' added; per-channel URL pair CHECK enforces
+// which URL columns are populated.
+export type EmptyLegNotificationChannel =
+  | 'whatsapp_link'
+  | 'email'
+  | 'email_and_wa';
 
 export type EmptyLegNotificationRow = {
   id: string;
-  lead_inquiry_id: string;
+  // Phase 10 PR 1 §3.2: lead_inquiry_id NOT NULL was dropped;
+  // recipient XOR check enforces exactly-one-of {client, lead}.
+  lead_inquiry_id: string | null;
+  // Phase 10 PR 1 §3.2: client-keyed match row.
+  client_id: string | null;
   leg_id: string;
   event_type: EmptyLegNotificationEventType;
   channel: EmptyLegNotificationChannel;
-  wa_url: string;
+  // Phase 10 PR 1 §3.2: NOT NULL on wa_url dropped; per-channel
+  // URL pair CHECK requires wa_url for whatsapp_link/email_and_wa
+  // channels (and forbids it for email-only rows).
+  wa_url: string | null;
+  // Phase 10 PR 1 §3.2: new email_url column. Populated for
+  // email/email_and_wa channels; NULL for whatsapp_link.
+  email_url: string | null;
   sent_at: string;
   // NULL = pending founder dispatch; non-NULL = founder
   // marked the wa.me URL as sent via the outreach queue.
@@ -1013,11 +1038,11 @@ export type EmptyLegNotificationRow = {
 };
 
 export type EmptyLegNotificationInsert = Partial<EmptyLegNotificationRow> & {
-  lead_inquiry_id: string;
   leg_id: string;
   event_type: EmptyLegNotificationEventType;
   channel: EmptyLegNotificationChannel;
-  wa_url: string;
+  // recipient XOR enforced at DB level; either client_id OR
+  // lead_inquiry_id must be populated, never both / never neither.
 };
 
 export type EmptyLegNotificationUpdate = Partial<
@@ -1466,6 +1491,9 @@ export type ClientRow = {
   signup_status: ClientSignupStatus;
   last_login_at: string | null;
   marketing_opt_in: boolean;
+  // Phase 10 PR 1 §3.3: per-client opt-in JSONB. Default '{}'.
+  // Missing keys → opt-in (see lib/clients/notification-preferences.ts).
+  notification_preferences: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
@@ -1564,6 +1592,33 @@ export type ClientNotificationAlertStatusRow = {
 
 export type ClientNotificationAlertStatusUpdate = Partial<
   Omit<ClientNotificationAlertStatusRow, 'id'>
+>;
+
+// --- client_empty_leg_alert_status (Phase 10 PR 1 §3.6) ---
+//
+// Singleton (id=1). Tracks Resend health for client empty-leg
+// match emails AND client empty-leg reservation-confirmation
+// emails (round 7 P1 #2 — single canary card covers both).
+// Mirrors the Phase 9 ClientNotificationAlertStatusRow shape;
+// distinct singleton + distinct table + distinct canary card so
+// a degraded empty-leg email channel doesn't mislabel client
+// auth as unhealthy.
+
+export type ClientEmptyLegAlertStatusValue =
+  | 'healthy'
+  | 'config_missing'
+  | 'send_failed';
+
+export type ClientEmptyLegAlertStatusRow = {
+  id: 1;
+  status: ClientEmptyLegAlertStatusValue;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+  updated_at: string;
+};
+
+export type ClientEmptyLegAlertStatusUpdate = Partial<
+  Omit<ClientEmptyLegAlertStatusRow, 'id'>
 >;
 
 // --- operator_notification_alert_status (Phase 8 §3.10) ---
@@ -2508,6 +2563,15 @@ export type Database = {
         Row: ClientNotificationAlertStatusRow;
         Insert: ClientNotificationAlertStatusRow;
         Update: ClientNotificationAlertStatusUpdate;
+        Relationships: [];
+      };
+      // Phase 10 PR 1 §3.6 — empty-leg client email alert singleton.
+      // Distinct from Phase 9's client_notification_alert_status so a
+      // failed empty-leg email doesn't mislabel client auth as unhealthy.
+      client_empty_leg_alert_status: {
+        Row: ClientEmptyLegAlertStatusRow;
+        Insert: ClientEmptyLegAlertStatusRow;
+        Update: ClientEmptyLegAlertStatusUpdate;
         Relationships: [];
       };
     };
