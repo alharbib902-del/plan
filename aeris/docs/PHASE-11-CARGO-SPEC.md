@@ -1,7 +1,7 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 8).
-> **Codex history:** rounds 1-7 closed 16 P1 + 11 P2 (27 findings):
+> **Status:** Draft for Codex review (round 9).
+> **Codex history:** rounds 1-8 closed 17 P1 + 12 P2 (29 findings):
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -99,13 +99,29 @@
 >   to ensure the round-3-strict form is in place, not any
 >   pre-round-3 lax form a partial replay might have left).
 >
-> Round 8 should verify the 22007 handler addition is correct
-> Postgres semantics (date + timestamp casts both raise 22007
-> on malformed input), and that Probe 28's category-check
-> ILIKE assertion correctly distinguishes the strict form
-> from any plausible drifted form (the strict form is the
-> only one that contains `horse_count IS NULL` as a forbid
-> clause).
+> - **Round 8 (1 P1 + 1 P2):** P1 #1 (DB-boundary length
+>   guards on bounded VARCHAR fields — the prior INSERTs hit
+>   raw `22001 string_data_right_truncation` when payload
+>   values exceeded VARCHAR(120/20/4) limits; added
+>   structured `customer_name_invalid` /
+>   `customer_phone_invalid` / `customer_email_invalid` /
+>   `origin_invalid` / `destination_invalid` contracts in
+>   §4.1, with §4.2 only adding the IATA guards since
+>   customer fields come from the clients table), P2 #2
+>   (NULLIF before COALESCE cast for 4 optional fields:
+>   flexibility_days + insurance_required in §4.1/§4.2 +
+>   insurance_price_sar + customs_handling_price_sar in
+>   §4.3; empty strings from blank HTML number/checkbox
+>   inputs were attempting cast to INT/BOOLEAN/DECIMAL and
+>   failing as malformed_input instead of defaulting).
+>
+> Round 9 should verify the new length guards correctly
+> handle multi-byte Arabic input (PG `length()` returns
+> character count, not bytes — so a 120-char Arabic name
+> passes), and that the NULLIF-before-cast pattern is
+> applied consistently to every optional cast in PR 1's
+> migration (no remaining bare `(p_payload->>'...')::TYPE`
+> for non-required fields).
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -1161,6 +1177,41 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'destination_required');
   END IF;
 
+  -- Codex round 8 PR #64 P1 #1 fix — DB-boundary length guards
+  -- on bounded VARCHAR fields. Without these, an over-long
+  -- value (e.g. customer_name = 121 chars from a public form)
+  -- hit the target VARCHAR(N) limit and raised raw `22001
+  -- string_data_right_truncation`, which neither check_violation,
+  -- invalid_text_representation, nor invalid_datetime_format
+  -- handlers catch. Structured `*_invalid` contracts let the
+  -- public form highlight the specific over-long field.
+  --
+  -- Width sources (mirror cargo_requests / clients schema):
+  --   customer_name_snapshot   VARCHAR(120)  -- §3.1
+  --   customer_phone_snapshot  VARCHAR(20)   -- §3.1
+  --   customer_email_snapshot  VARCHAR(120)  -- §3.1
+  --   origin_iata              VARCHAR(4)    -- §3.1
+  --   destination_iata         VARCHAR(4)    -- §3.1
+  -- (origin_freeform + destination_freeform are TEXT — no limit)
+  IF length(p_payload->>'customer_name') > 120 THEN
+    RETURN json_build_object('ok', false, 'error', 'customer_name_invalid');
+  END IF;
+  IF length(p_payload->>'customer_phone') > 20 THEN
+    RETURN json_build_object('ok', false, 'error', 'customer_phone_invalid');
+  END IF;
+  IF p_payload->>'customer_email' IS NOT NULL
+     AND length(p_payload->>'customer_email') > 120 THEN
+    RETURN json_build_object('ok', false, 'error', 'customer_email_invalid');
+  END IF;
+  IF NULLIF(p_payload->>'origin_iata', '') IS NOT NULL
+     AND length(p_payload->>'origin_iata') > 4 THEN
+    RETURN json_build_object('ok', false, 'error', 'origin_invalid');
+  END IF;
+  IF NULLIF(p_payload->>'destination_iata', '') IS NOT NULL
+     AND length(p_payload->>'destination_iata') > 4 THEN
+    RETURN json_build_object('ok', false, 'error', 'destination_invalid');
+  END IF;
+
   -- Other guards (rate limit per IP, etc.) handled by app layer.
   -- DB layer enforces structural integrity via the §3.1
   -- constraints (cargo_requests_identity_check +
@@ -1209,9 +1260,15 @@ BEGIN
       NULLIF(p_payload->>'destination_freeform', ''),
       (p_payload->>'pickup_date')::DATE,
       NULLIF(p_payload->>'delivery_date_target', '')::DATE,
-      COALESCE((p_payload->>'flexibility_days')::INT, 0),
+      -- Codex round 8 PR #64 P2 #2 fix — NULLIF before cast.
+      -- Without NULLIF, an empty-string payload (common from
+      -- HTML number inputs left blank) would attempt cast
+      -- '' → INT and raise 22P02 (caught as malformed_input)
+      -- instead of defaulting to 0.
+      COALESCE(NULLIF(p_payload->>'flexibility_days', '')::INT, 0),
       (p_payload->>'estimated_value_sar')::DECIMAL,
-      COALESCE((p_payload->>'insurance_required')::BOOLEAN, false),
+      -- Codex round 8 PR #64 P2 #2 fix — NULLIF before BOOLEAN cast.
+      COALESCE(NULLIF(p_payload->>'insurance_required', '')::BOOLEAN, false),
       NULLIF(p_payload->>'handling_notes', ''),
       -- horse
       NULLIF(p_payload->>'horse_count', '')::INT,
@@ -1295,6 +1352,11 @@ GRANT EXECUTE ON FUNCTION create_cargo_request_guest(JSONB, INET)
 | `estimated_value_required` | payload missing `estimated_value_sar` (round 4 P1 #2 fix; both) |
 | `origin_required` | both `origin_iata` AND `origin_freeform` empty/missing (round 5 P1 #2 fix — explicit field-specific contract instead of generic validation_failed; both §4.1 + §4.2) |
 | `destination_required` | both `destination_iata` AND `destination_freeform` empty/missing (round 5 P1 #2 fix; both) |
+| `customer_name_invalid` | `customer_name` length > 120 (round 8 P1 #1 fix; §4.1 only — §4.2 reads from clients which already enforces VARCHAR(120)) |
+| `customer_phone_invalid` | `customer_phone` length > 20 (round 8 P1 #1 fix; §4.1 only) |
+| `customer_email_invalid` | `customer_email` length > 120 (round 8 P1 #1 fix; §4.1 only) |
+| `origin_invalid` | `origin_iata` length > 4 (round 8 P1 #1 fix; both §4.1 + §4.2) |
+| `destination_invalid` | `destination_iata` length > 4 (round 8 P1 #1 fix; both) |
 | `value_invalid` | `estimated_value_sar <= 0` (round 3 P2 #4 fix; via `cargo_requests_value_positive_check`) |
 | `date_invalid` | `delivery_date_target < pickup_date` (round 3 P2 #4 fix; via `cargo_requests_date_order_check`) |
 | `validation_failed` | Other DB CHECK constraint rejected (identity + category exclusivity + flexibility range) |
@@ -1380,6 +1442,21 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'destination_required');
   END IF;
 
+  -- Codex round 8 PR #64 P1 #1 fix (mirror of §4.1) — DB-boundary
+  -- length guards on bounded VARCHAR fields. customer_name +
+  -- customer_phone + customer_email come from v_client_row
+  -- (clients table) which already enforces VARCHAR(120/20/120),
+  -- so no payload-side length guards needed for those — only
+  -- the IATA codes which the user enters via the form.
+  IF NULLIF(p_payload->>'origin_iata', '') IS NOT NULL
+     AND length(p_payload->>'origin_iata') > 4 THEN
+    RETURN json_build_object('ok', false, 'error', 'origin_invalid');
+  END IF;
+  IF NULLIF(p_payload->>'destination_iata', '') IS NOT NULL
+     AND length(p_payload->>'destination_iata') > 4 THEN
+    RETURN json_build_object('ok', false, 'error', 'destination_invalid');
+  END IF;
+
   BEGIN
     INSERT INTO cargo_requests (
       client_id,
@@ -1414,9 +1491,15 @@ BEGIN
       NULLIF(p_payload->>'destination_freeform', ''),
       (p_payload->>'pickup_date')::DATE,
       NULLIF(p_payload->>'delivery_date_target', '')::DATE,
-      COALESCE((p_payload->>'flexibility_days')::INT, 0),
+      -- Codex round 8 PR #64 P2 #2 fix — NULLIF before cast.
+      -- Without NULLIF, an empty-string payload (common from
+      -- HTML number inputs left blank) would attempt cast
+      -- '' → INT and raise 22P02 (caught as malformed_input)
+      -- instead of defaulting to 0.
+      COALESCE(NULLIF(p_payload->>'flexibility_days', '')::INT, 0),
       (p_payload->>'estimated_value_sar')::DECIMAL,
-      COALESCE((p_payload->>'insurance_required')::BOOLEAN, false),
+      -- Codex round 8 PR #64 P2 #2 fix — NULLIF before BOOLEAN cast.
+      COALESCE(NULLIF(p_payload->>'insurance_required', '')::BOOLEAN, false),
       NULLIF(p_payload->>'handling_notes', ''),
       NULLIF(p_payload->>'horse_count', '')::INT,
       NULLIF(p_payload->>'horse_groom_required', '')::BOOLEAN,
@@ -1621,8 +1704,13 @@ BEGIN
       v_op_row.company_name, v_op_row.contact_phone, v_op_row.contact_email,
       NULLIF(p_payload->>'aircraft_snapshot', ''),
       (p_payload->>'base_price_sar')::DECIMAL,
-      COALESCE((p_payload->>'insurance_price_sar')::DECIMAL, 0),
-      COALESCE((p_payload->>'customs_handling_price_sar')::DECIMAL, 0),
+      -- Codex round 8 PR #64 P2 #2 fix — NULLIF before DECIMAL
+      -- cast for the 2 optional offer prices (insurance + customs).
+      -- Empty string from a blank HTML number input would have
+      -- failed the cast as malformed_input instead of defaulting
+      -- to 0 as the spec text intended.
+      COALESCE(NULLIF(p_payload->>'insurance_price_sar', '')::DECIMAL, 0),
+      COALESCE(NULLIF(p_payload->>'customs_handling_price_sar', '')::DECIMAL, 0),
       (p_payload->>'proposed_pickup_date')::DATE,
       (p_payload->>'proposed_delivery_date')::DATE,
       NULLIF(p_payload->>'operator_notes', '')
@@ -2441,9 +2529,9 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 9
+## Open questions for Codex round 10
 
-Rounds 1-7 closed 16 P1 + 11 P2:
+Rounds 1-8 closed 17 P1 + 12 P2:
 
 - **Round 1:**
   - **P1 #1:** §3.4 extends BOTH constraints
@@ -2594,6 +2682,26 @@ Rounds 1-7 closed 16 P1 + 11 P2:
     is the only one that contains a cross-category NULL
     forbid clause, so this assertion catches a drifted
     pre-round-3 lax form.
+- **Round 8:**
+  - **P1 #1:** DB-boundary length guards added in §4.1
+    (full set: customer_name + customer_phone +
+    customer_email + origin_iata + destination_iata) +
+    §4.2 (IATA codes only — customer fields come from
+    clients which already enforces VARCHAR(120/20/120)).
+    Closes the raw `22001 string_data_right_truncation`
+    escape that no existing handler caught. 5 new
+    structured `*_invalid` contracts let the public form
+    highlight the specific over-long field.
+  - **P2 #2:** NULLIF-before-cast for 4 optional fields
+    that COALESCE to a default: flexibility_days (INT),
+    insurance_required (BOOLEAN), insurance_price_sar
+    (DECIMAL), customs_handling_price_sar (DECIMAL). The
+    prior pattern `COALESCE((p_payload->>'x')::TYPE, default)`
+    failed when the payload key was an empty string (common
+    from blank HTML inputs); the cast attempted '' → TYPE
+    and raised 22P02 → caught as malformed_input → user
+    saw a generic error instead of the intended default.
+    New pattern: `COALESCE(NULLIF(p_payload->>'x', '')::TYPE, default)`.
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -2616,4 +2724,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 8 review.**
+**Spec ready for Codex round 9 review.**
