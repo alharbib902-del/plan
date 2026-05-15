@@ -4,13 +4,22 @@ import { revalidatePath } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminSession } from '@/lib/admin/auth';
+import {
+  acceptOfferSchema,
+  declineOfferSchema,
+  cancelRequestSchema,
+} from '@/lib/cargo/validators/cargo-actions';
 import type { CargoAircraftCapabilityInsert } from '@/lib/cargo/types';
 
 /**
- * Phase 11 PR 1 — admin Server Actions for the cargo surface.
+ * Phase 11 PR 1 + PR 2 — admin Server Actions for the cargo
+ * surface.
  *
- * Currently 1 action (capability matrix upsert). PR 2 will
- * add accept/decline-on-behalf for guest cargo requests.
+ * 4 actions total:
+ *   - upsertCargoAircraftCapability (PR 1)
+ *   - adminAcceptCargoOfferOnBehalf (PR 2)
+ *   - adminDeclineCargoOfferOnBehalf (PR 2)
+ *   - adminCancelCargoRequestOnBehalf (PR 2)
  *
  * Auth (Codex round 1 PR #65 P1 #1 fix): every action calls
  * `requireAdminSession()` BEFORE any validation or write.
@@ -19,15 +28,48 @@ import type { CargoAircraftCapabilityInsert } from '@/lib/cargo/types';
  * via POST regardless of which page imported it. Mirrors
  * `app/actions/empty-legs.ts:123` discipline.
  *
- * The DB write goes through service-role; the
- * cargo_aircraft_capabilities table has RLS enabled (round 6
- * P1 #3) but service-role bypasses.
+ * Admin path on cargo RPCs (per Phase 11 spec §4.4 round 6
+ * P1 #1): pass BOTH p_actor_client_id AND p_actor_admin_user_id
+ * as NULL after requireAdminSession() at the Server Action
+ * layer. The RPCs accept this as the admin path; they reject
+ * `actor_ambiguous` only if both are non-NULL. Aeris admins
+ * have NO users row (Phase 8 cookie + ENV auth), so there's no
+ * UUID to pass as p_actor_admin_user_id.
+ *
+ * The DB writes go through service-role; the cargo tables have
+ * RLS enabled (round 6 P1 #3) but service-role bypasses.
  */
 
 export type CargoAdminActionFailure = {
   ok: false;
   error: string;
+  field_errors?: Record<string, string>;
 };
+
+function fieldErrorsFromZod(
+  issues: { path: (string | number)[]; message: string }[]
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const issue of issues) {
+    const path = issue.path.join('.');
+    if (path) out[path] = issue.message;
+  }
+  return out;
+}
+
+type LooseRpcClient = {
+  rpc: (
+    name: string,
+    args?: Record<string, unknown>
+  ) => Promise<{
+    data: unknown;
+    error: { code?: string; message?: string } | null;
+  }>;
+};
+
+function looseClient(): LooseRpcClient {
+  return createAdminClient() as unknown as LooseRpcClient;
+}
 
 function isCargoDisabled(): boolean {
   return process.env.ENABLE_CARGO !== 'true';
@@ -107,4 +149,190 @@ export async function upsertCargoAircraftCapability(
 
   revalidatePath('/admin/cargo/aircraft-capabilities');
   return { ok: true, aircraft_id: input.aircraft_id };
+}
+
+// ============================================================
+// PR 2 — adminAcceptCargoOfferOnBehalf
+// ============================================================
+//
+// Admin path on §4.4 accept_cargo_offer for guest cargo requests.
+// Pass both actor IDs as NULL (per round 6 P1 #1). The RPC will
+// reject with `admin_cannot_accept_for_authed_client` if the
+// request has client_id IS NOT NULL — defense-in-depth so the
+// admin button only ever works on guest paths even if the UI
+// renders it incorrectly.
+
+export type AdminAcceptCargoOfferResult =
+  | {
+      ok: true;
+      booking_id: string;
+      offer_id: string;
+      cargo_request_id: string;
+      accepted_at: string;
+    }
+  | CargoAdminActionFailure;
+
+export async function adminAcceptCargoOfferOnBehalf(input: {
+  offer_id: string;
+}): Promise<AdminAcceptCargoOfferResult> {
+  requireAdminSession();
+  if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = acceptOfferSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    };
+  }
+
+  const client = looseClient();
+  const { data, error } = await client.rpc('accept_cargo_offer', {
+    p_offer_id: parsed.data.offer_id,
+    p_actor_client_id: null,
+    p_actor_admin_user_id: null,
+  });
+  if (error) {
+    console.error('[cargo-admin.acceptOnBehalf] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | {
+        ok: true;
+        booking_id: string;
+        offer_id: string;
+        cargo_request_id: string;
+        accepted_at: string;
+      }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath('/admin/cargo');
+  revalidatePath(`/admin/cargo/${result.cargo_request_id}`);
+  revalidatePath('/admin/leads');
+
+  return {
+    ok: true,
+    booking_id: result.booking_id,
+    offer_id: result.offer_id,
+    cargo_request_id: result.cargo_request_id,
+    accepted_at: result.accepted_at,
+  };
+}
+
+// ============================================================
+// PR 2 — adminDeclineCargoOfferOnBehalf
+// ============================================================
+
+export type AdminDeclineCargoOfferResult =
+  | { ok: true; offer_id: string; already_declined?: boolean }
+  | CargoAdminActionFailure;
+
+export async function adminDeclineCargoOfferOnBehalf(input: {
+  offer_id: string;
+  reason?: string;
+}): Promise<AdminDeclineCargoOfferResult> {
+  requireAdminSession();
+  if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = declineOfferSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    };
+  }
+
+  const client = looseClient();
+  const { data, error } = await client.rpc('decline_cargo_offer', {
+    p_offer_id: parsed.data.offer_id,
+    p_actor_client_id: null,
+    p_actor_admin_user_id: null,
+    p_reason: parsed.data.reason ?? null,
+  });
+  if (error) {
+    console.error('[cargo-admin.declineOnBehalf] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | { ok: true; offer_id: string; already_declined?: boolean }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath('/admin/cargo');
+
+  return {
+    ok: true,
+    offer_id: result.offer_id,
+    already_declined: result.already_declined,
+  };
+}
+
+// ============================================================
+// PR 2 — adminCancelCargoRequestOnBehalf
+// ============================================================
+
+export type AdminCancelCargoRequestResult =
+  | {
+      ok: true;
+      request_id: string;
+      cascade_declined_offers: number;
+      already_cancelled?: boolean;
+    }
+  | CargoAdminActionFailure;
+
+export async function adminCancelCargoRequestOnBehalf(input: {
+  request_id: string;
+  reason?: string;
+}): Promise<AdminCancelCargoRequestResult> {
+  requireAdminSession();
+  if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = cancelRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    };
+  }
+
+  const client = looseClient();
+  const { data, error } = await client.rpc('cancel_cargo_request', {
+    p_request_id: parsed.data.request_id,
+    p_actor_client_id: null,
+    p_actor_admin_user_id: null,
+    p_reason: parsed.data.reason ?? null,
+  });
+  if (error) {
+    console.error('[cargo-admin.cancelOnBehalf] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | {
+        ok: true;
+        request_id: string;
+        cascade_declined_offers: number;
+        already_cancelled?: boolean;
+      }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath('/admin/cargo');
+  revalidatePath(`/admin/cargo/${parsed.data.request_id}`);
+
+  return {
+    ok: true,
+    request_id: result.request_id,
+    cascade_declined_offers: result.cascade_declined_offers ?? 0,
+    already_cancelled: result.already_cancelled,
+  };
 }

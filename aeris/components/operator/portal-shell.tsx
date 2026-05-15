@@ -27,6 +27,15 @@ export function OperatorPortalShell({
               {[
                 { href: '/operator/dashboard', label: operatorsAr.portal.nav.dashboard },
                 { href: '/operator/legs', label: operatorsAr.portal.nav.legs },
+                // Phase 11 PR 2 — gated cargo nav links. Same
+                // ENABLE_CARGO === 'true' (fail-closed) discipline as
+                // the admin-shell + /operator/cargo pages themselves.
+                ...(process.env.ENABLE_CARGO === 'true'
+                  ? [
+                      { href: '/operator/cargo', label: 'الشحن' },
+                      { href: '/operator/cargo/offers', label: 'عروضي للشحن' },
+                    ]
+                  : []),
                 { href: '/operator/bookings', label: operatorsAr.portal.nav.bookings },
                 { href: '/operator/profile', label: operatorsAr.portal.nav.profile },
                 { href: '/operator/earnings', label: operatorsAr.portal.nav.earnings },

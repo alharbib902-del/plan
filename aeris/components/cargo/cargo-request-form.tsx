@@ -5,36 +5,53 @@ import Link from 'next/link';
 
 import { cargoAr } from '@/lib/i18n/cargo-ar';
 import { submitCargoRequestPublic } from '@/app/actions/cargo-public';
+import { submitCargoRequestAuthed } from '@/app/actions/cargo-clients';
 import type { CargoType } from '@/lib/cargo/types';
 
 /**
- * Phase 11 PR 1 — public cargo intake form.
+ * Phase 11 PR 1 + PR 2 — cargo intake form.
  *
  * 4-stage layout:
  *   1. Cargo type selector (4 options + descriptions)
- *   2. Customer fields (name, phone, email)
+ *   2. Customer fields (name, phone, email) — only when mode='guest'
  *   3. Shared shipment fields (origin, destination, dates, value)
  *   4. Per-category conditional fields (renders based on
  *      selected cargo_type)
  *
- * Submits to submitCargoRequestPublic Server Action which
- * wraps §4.1 create_cargo_request_guest RPC. On success
- * shows the CGO-XXXX reference + login CTA.
+ * `mode` prop controls:
+ *   - 'guest' (default, PR 1): renders customer fields, submits
+ *     to submitCargoRequestPublic → §4.1 create_cargo_request_guest.
+ *     Success shows CGO-XXXX + login CTA.
+ *   - 'authed' (PR 2): hides customer fields (the §4.2 RPC sources
+ *     them from the clients table at session.client_id), submits
+ *     to submitCargoRequestAuthed. Success shows CGO-XXXX +
+ *     "view request" CTA.
  *
- * Uses native HTML inputs (no react-hook-form) to keep PR 1
- * scope contained; PR 2 may refactor to RHF for shared
- * authed/public form. Field names match the Server Action's
- * Zod payload shape exactly.
+ * One file, two modes — keeps the per-category branching logic
+ * single-source and avoids drift between two parallel forms.
+ *
+ * Uses native HTML inputs (no react-hook-form) to keep PR 1/2
+ * scope contained; field names match the Server Actions' Zod
+ * payload shapes exactly.
  */
 
 const CARGO_TYPES: CargoType[] = ['horse', 'luxury_car', 'valuables', 'other'];
+
+export type CargoFormMode = 'guest' | 'authed';
 
 interface SuccessState {
   cargo_request_id: string;
   cargo_request_number: string;
 }
 
-export function CargoRequestForm() {
+export interface CargoRequestFormProps {
+  /** Defaults to 'guest' for backwards compat with PR 1 callers. */
+  mode?: CargoFormMode;
+}
+
+export function CargoRequestForm({
+  mode = 'guest',
+}: CargoRequestFormProps = {}) {
   const [cargoType, setCargoType] = useState<CargoType>('horse');
   const [isPending, startTransition] = useTransition();
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -99,11 +116,11 @@ export function CargoRequestForm() {
       categoryFields.other_special_handling = v('other_special_handling');
     }
 
-    const payload = {
+    // Build payload. Customer fields included only in guest mode;
+    // in authed mode the §4.2 RPC sources name/phone/email from the
+    // clients table.
+    const sharedPayload = {
       cargo_type: cargoType,
-      customer_name: v('customer_name'),
-      customer_phone: v('customer_phone'),
-      customer_email: v('customer_email'),
       origin_iata: v('origin_iata')?.toUpperCase(),
       origin_freeform: v('origin_freeform'),
       destination_iata: v('destination_iata')?.toUpperCase(),
@@ -116,11 +133,23 @@ export function CargoRequestForm() {
       handling_notes: v('handling_notes'),
       ...categoryFields,
     };
+    const payload =
+      mode === 'guest'
+        ? {
+            ...sharedPayload,
+            customer_name: v('customer_name'),
+            customer_phone: v('customer_phone'),
+            customer_email: v('customer_email'),
+          }
+        : sharedPayload;
 
     setErrorCode(null);
     setFieldErrors({});
     startTransition(async () => {
-      const result = await submitCargoRequestPublic(payload);
+      const result =
+        mode === 'guest'
+          ? await submitCargoRequestPublic(payload)
+          : await submitCargoRequestAuthed(payload);
       if (!result.ok) {
         setErrorCode(result.error);
         if (result.field_errors) setFieldErrors(result.field_errors);
@@ -149,12 +178,21 @@ export function CargoRequestForm() {
           {success.cargo_request_number}
         </p>
         <p className="font-ar mt-6 text-sm text-ink-muted">
-          <Link
-            href="/login?redirect=/me/cargo-requests"
-            className="text-gold-light hover:text-gold"
-          >
-            {cargoAr.submitSuccessLoginCta}
-          </Link>
+          {mode === 'guest' ? (
+            <Link
+              href="/login?redirect=/me/cargo-requests"
+              className="text-gold-light hover:text-gold"
+            >
+              {cargoAr.submitSuccessLoginCta}
+            </Link>
+          ) : (
+            <Link
+              href={`/me/cargo-requests/${success.cargo_request_id}`}
+              className="text-gold-light hover:text-gold"
+            >
+              {cargoAr.meDetailPageTitle} ←
+            </Link>
+          )}
         </p>
       </div>
     );
@@ -206,32 +244,38 @@ export function CargoRequestForm() {
         </div>
       </fieldset>
 
-      {/* 2. Customer fields */}
-      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field
-          label={cargoAr.customerNameLabel}
-          name="customer_name"
-          required
-          error={fieldErrors.customer_name}
-          maxLength={120}
-        />
-        <Field
-          label={cargoAr.customerPhoneLabel}
-          name="customer_phone"
-          required
-          dir="ltr"
-          error={fieldErrors.customer_phone}
-          maxLength={20}
-        />
-        <Field
-          label={cargoAr.customerEmailLabel}
-          name="customer_email"
-          type="email"
-          dir="ltr"
-          error={fieldErrors.customer_email}
-          maxLength={120}
-        />
-      </fieldset>
+      {/* 2. Customer fields — guest mode only. In authed mode the
+          §4.2 RPC sources name/phone/email from the clients table
+          at session.client_id (Phase 9 PR 2 immutable-snapshot
+          discipline; the form must NOT let an authed user override
+          their own identity per request). */}
+      {mode === 'guest' ? (
+        <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field
+            label={cargoAr.customerNameLabel}
+            name="customer_name"
+            required
+            error={fieldErrors.customer_name}
+            maxLength={120}
+          />
+          <Field
+            label={cargoAr.customerPhoneLabel}
+            name="customer_phone"
+            required
+            dir="ltr"
+            error={fieldErrors.customer_phone}
+            maxLength={20}
+          />
+          <Field
+            label={cargoAr.customerEmailLabel}
+            name="customer_email"
+            type="email"
+            dir="ltr"
+            error={fieldErrors.customer_email}
+            maxLength={120}
+          />
+        </fieldset>
+      ) : null}
 
       {/* 3. Shared shipment fields */}
       <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
