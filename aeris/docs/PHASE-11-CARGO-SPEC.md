@@ -1,17 +1,29 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 2).
-> **Codex history:** round 1 closed 4 P1 + 1 P2 (5 findings):
-> P1 #1 (§3.4 extended bookings_source_offer_check too —
-> not just source_discriminator), P1 #2 (§4.3 column
-> business_name → company_name), P1 #3 (§4.1 + §4.2 text
-> allowlist before ENUM cast to avoid raw 22P02 escape),
-> P1 #4 (§3.2 aircraft_id NOT NULL + §4.3 capability check
-> unconditional — close the bypass), P2 #5 (§3.1 + §3.2
-> wrap CREATE TYPE in pg_type DO block guards).
-> Round 2 should verify Probe 28 covers all 12 schema
-> checks + the 2 new structured-error contracts
-> (cargo_type_invalid + aircraft_id_required) are exposed.
+> **Status:** Draft for Codex review (round 3).
+> **Codex history:** rounds 1-2 closed 6 P1 + 3 P2 (9 findings):
+> - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
+>   bookings_source_offer_check too — not just
+>   source_discriminator), P1 #2 (§4.3 business_name →
+>   company_name), P1 #3 (§4.1 + §4.2 text allowlist before
+>   ENUM cast), P1 #4 (§3.2 aircraft_id NOT NULL + §4.3
+>   capability check unconditional), P2 #5 (3 CREATE TYPE
+>   wrapped in pg_type DO block guards).
+> - **Round 2 (2 P1 + 2 P2):** P1 #1 (§4.3 UUID cast in
+>   BEGIN/EXCEPTION block — `aircraft_id_invalid` structured
+>   error catches malformed values like `'not-a-uuid'`),
+>   P1 #2 (§3.2 3 named price CHECKs + §4.3 GET STACKED
+>   DIAGNOSTICS CONSTRAINT_NAME match → structured
+>   `price_invalid`; SQLERRM substring matching avoided),
+>   P2 #3 (§3.3 ON DELETE RESTRICT + invariant CHECK
+>   `cargo_requests_accepted_has_offer_check`), P2 #4 (§5
+>   PR 1 manifest now lists §3.4.2 explicitly).
+>
+> Round 3 should verify Probe 28 now covers 16 schema
+> checks (was 12), all 4 new structured-error contracts
+> are exposed (`cargo_type_invalid`, `aircraft_id_required`,
+> `aircraft_id_invalid`, `price_invalid`), and the PR 1
+> manifest lists every §3.x section explicitly.
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -428,10 +440,32 @@ CREATE TABLE cargo_offers (
   operator_email_snapshot VARCHAR(120) NOT NULL,
   aircraft_snapshot TEXT,
 
-  -- Offer terms
-  base_price_sar DECIMAL(14, 2) NOT NULL,
-  insurance_price_sar DECIMAL(14, 2) NOT NULL DEFAULT 0,
-  customs_handling_price_sar DECIMAL(14, 2) NOT NULL DEFAULT 0,
+  -- Offer terms. Codex round 2 PR #64 P1 #2 fix — non-negative
+  -- price CHECKs. The prior draft had no constraints, so a
+  -- buggy/malicious operator submission could create a cargo
+  -- offer with negative/zero base_price_sar; §4.4
+  -- accept_cargo_offer copies these directly into
+  -- bookings.total_amount, producing negative cargo bookings
+  -- that downstream payment + ZATCA flows can't reason about.
+  --
+  --   - base_price_sar > 0 (must be POSITIVE — zero-priced
+  --     cargo flights are not a valid business case)
+  --   - insurance_price_sar >= 0 (zero allowed when client
+  --     opts out of insurance)
+  --   - customs_handling_price_sar >= 0 (zero allowed for
+  --     domestic shipments without customs)
+  --
+  -- The §4.3 submit_cargo_offer RPC catches violations and
+  -- returns the structured `price_invalid` contract code.
+  base_price_sar DECIMAL(14, 2) NOT NULL
+    CONSTRAINT cargo_offers_base_price_positive_check
+      CHECK (base_price_sar > 0),
+  insurance_price_sar DECIMAL(14, 2) NOT NULL DEFAULT 0
+    CONSTRAINT cargo_offers_insurance_price_nonneg_check
+      CHECK (insurance_price_sar >= 0),
+  customs_handling_price_sar DECIMAL(14, 2) NOT NULL DEFAULT 0
+    CONSTRAINT cargo_offers_customs_handling_nonneg_check
+      CHECK (customs_handling_price_sar >= 0),
   total_price_sar DECIMAL(14, 2) GENERATED ALWAYS AS (
     base_price_sar + insurance_price_sar + customs_handling_price_sar
   ) STORED,
@@ -468,14 +502,42 @@ CREATE INDEX idx_cargo_offers_pending
   WHERE status = 'pending';
 ```
 
-### §3.3 — `cargo_requests.accepted_offer_id` FK (deferred add)
+### §3.3 — `cargo_requests.accepted_offer_id` FK + invariant
 
 `cargo_requests.accepted_offer_id` is declared NULLable in
 §3.1 but no FK constraint binds it yet. We add the FK
 **after** `cargo_offers` exists in §3.2 to avoid a
-forward-reference circular dependency:
+forward-reference circular dependency.
+
+**Codex round 2 PR #64 P2 #3 fix.** The prior draft used
+`ON DELETE SET NULL`. If the accepted offer row was ever
+deleted (admin error, bulk cleanup script, manual
+intervention), `cargo_requests.accepted_offer_id` would
+silently become NULL while `status='accepted'` stays — an
+orphan state that breaks the audit trail + the unified
+`/me/bookings` lookup (which joins through this column to
+display the booking's offer breakdown).
+
+Two-layer defense:
+1. **`ON DELETE RESTRICT`** — Postgres refuses to delete
+   any `cargo_offers` row that's still referenced by a
+   `cargo_requests.accepted_offer_id`. Operationally this
+   means: before bulk-deleting accepted offers (e.g. PII
+   purge for a closed account), admin must first transition
+   the parent request out of `'accepted'` (e.g. a hard cancel
+   RPC that nulls accepted_offer_id + flips status to
+   `'cancelled'`). Phase 11 ships no such bulk-delete tool;
+   the constraint exists as defense against accidental
+   Studio deletions.
+2. **CHECK invariant** — even if a future migration
+   accidentally relaxes the FK to SET NULL, this CHECK
+   ensures `status='accepted'` rows always carry a non-NULL
+   `accepted_offer_id`. The CHECK is added in a separate
+   replay-safe DO block.
 
 ```sql
+-- Step 1: add the FK with ON DELETE RESTRICT (Codex round 2
+-- P2 #3 fix; was SET NULL in the prior draft).
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -487,10 +549,33 @@ BEGIN
       ADD CONSTRAINT cargo_requests_accepted_offer_fkey
       FOREIGN KEY (accepted_offer_id)
       REFERENCES cargo_offers(id)
-      ON DELETE SET NULL;
+      ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- Step 2: add the invariant CHECK (defense-in-depth — even
+-- if the FK is ever weakened, accepted requests cannot lose
+-- their offer pointer).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_requests_accepted_has_offer_check'
+       AND conrelid = 'cargo_requests'::regclass
+  ) THEN
+    ALTER TABLE cargo_requests
+      ADD CONSTRAINT cargo_requests_accepted_has_offer_check
+      CHECK (
+        status <> 'accepted' OR accepted_offer_id IS NOT NULL
+      );
   END IF;
 END $$;
 ```
+
+The CHECK is `OR`-shaped (not `AND`-shaped) so non-accepted
+statuses (`pending`, `offers_received`, `cancelled`,
+`expired`) can carry NULL `accepted_offer_id` freely. Only
+the `accepted` row state requires the pointer.
 
 ### §3.4 — `bookings` constraint extensions
 
@@ -985,10 +1070,28 @@ BEGIN
   -- cargo_offers (§3.2), so the capability check fires on
   -- EVERY offer submission — no more bypass via omitted
   -- aircraft_id.
-  v_aircraft_id := NULLIF(p_payload->>'aircraft_id', '')::UUID;
-  IF v_aircraft_id IS NULL THEN
+  --
+  -- Codex round 2 PR #64 P1 #1 fix — UUID cast in its own
+  -- BEGIN/EXCEPTION block. The prior draft handled the
+  -- empty/missing case (NULLIF returns NULL → structured
+  -- aircraft_id_required), but a non-empty malformed value
+  -- like 'not-a-uuid' would raise raw 22P02
+  -- "invalid input syntax for type uuid" instead of the
+  -- structured contract. Wrap the cast in BEGIN/EXCEPTION
+  -- so the structured aircraft_id_invalid error covers
+  -- both malformed text + the rare cases where the cast
+  -- otherwise leaks.
+  IF p_payload->>'aircraft_id' IS NULL
+     OR p_payload->>'aircraft_id' = '' THEN
     RETURN json_build_object('ok', false, 'error', 'aircraft_id_required');
   END IF;
+
+  BEGIN
+    v_aircraft_id := (p_payload->>'aircraft_id')::UUID;
+  EXCEPTION
+    WHEN invalid_text_representation THEN
+      RETURN json_build_object('ok', false, 'error', 'aircraft_id_invalid');
+  END;
 
   PERFORM 1 FROM cargo_aircraft_capabilities cac
     JOIN aircraft a ON a.id = cac.aircraft_id
@@ -1034,7 +1137,26 @@ BEGIN
     RETURNING id INTO v_offer_id;
   EXCEPTION
     WHEN check_violation THEN
-      RETURN json_build_object('ok', false, 'error', 'validation_failed');
+      -- Codex round 2 PR #64 P1 #2 fix — disambiguate price
+      -- CHECKs from the date-order CHECK using GET STACKED
+      -- DIAGNOSTICS. SQLERRM substring matching is fragile
+      -- (PG message text varies by locale + version);
+      -- CONSTRAINT_NAME is the canonical contract.
+      DECLARE
+        v_constraint_name TEXT;
+      BEGIN
+        GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME;
+        IF v_constraint_name IN (
+          'cargo_offers_base_price_positive_check',
+          'cargo_offers_insurance_price_nonneg_check',
+          'cargo_offers_customs_handling_nonneg_check'
+        ) THEN
+          RETURN json_build_object('ok', false, 'error', 'price_invalid');
+        END IF;
+        -- Default for cargo_offers_date_order_check + any
+        -- other future CHECK constraints we add.
+        RETURN json_build_object('ok', false, 'error', 'validation_failed');
+      END;
     WHEN invalid_text_representation THEN
       RETURN json_build_object('ok', false, 'error', 'malformed_input');
   END;
@@ -1071,8 +1193,10 @@ GRANT EXECUTE ON FUNCTION submit_cargo_offer(UUID, UUID, JSONB)
 | `request_not_open` | request status not in {pending, offers_received} |
 | `request_expired` | request `expires_at` elapsed |
 | `aircraft_id_required` | payload missing `aircraft_id` (round 1 P1 #4 fix) |
+| `aircraft_id_invalid` | `aircraft_id` value is not a valid UUID shape (round 2 P1 #1 fix — catches raw 22P02) |
 | `aircraft_not_capable` | aircraft owned by different operator OR no `cargo_aircraft_capabilities` row OR cargo-type-specific flag false |
-| `validation_failed` | DB CHECK constraint rejected (e.g. delivery_date < pickup_date) |
+| `price_invalid` | base_price ≤ 0 OR insurance/customs price < 0 (round 2 P1 #2 fix; disambiguated from generic validation_failed via GET STACKED DIAGNOSTICS CONSTRAINT_NAME match on the 3 named price CHECKs) |
+| `validation_failed` | DB CHECK constraint rejected (e.g. `cargo_offers_date_order_check` — proposed_delivery_date < proposed_pickup_date) |
 | `malformed_input` | numeric/date parsing failed |
 
 ### §4.4 — `accept_cargo_offer` (NEW)
@@ -1276,11 +1400,26 @@ cancel_cargo_request(p_request_id, p_actor_client_id, p_actor_admin_user_id, p_r
 ### PR 1 — Backend + public form + admin intake (~1500 lines total)
 
 **Migration** `20260518000030_phase_11_pr_1_cargo_intake.sql`:
-- §3.1 cargo_requests table + ENUMs + 3 named CHECK constraints + 3 indexes
-- §3.2 cargo_offers table + ENUM + 3 indexes (table created so §3.3 can FK back)
-- §3.3 cargo_requests.accepted_offer_id FK (replay-safe DO block)
-- §3.4 bookings.source_discriminator extended to include 'cargo'
-- §3.5 cargo_aircraft_capabilities table + 4 partial indexes + at-least-one CHECK
+- §3.1 cargo_requests table + 2 ENUMs (cargo_type +
+  cargo_request_status, both wrapped in pg_type DO block
+  guards per round 1 P2 #5) + 3 named CHECK constraints +
+  3 indexes
+- §3.2 cargo_offers table + 1 ENUM (cargo_offer_status, same
+  DO block guard) + 3 named price CHECK constraints (round 2
+  P1 #2) + 3 indexes (table created so §3.3 can FK back)
+- §3.3 cargo_requests.accepted_offer_id FK (replay-safe DO
+  block) with `ON DELETE RESTRICT` (round 2 P2 #3) +
+  cargo_requests_accepted_has_offer_check invariant CHECK
+  (round 2 P2 #3 defense-in-depth)
+- §3.4.1 bookings.source_discriminator CHECK extended to
+  include 'cargo'
+- §3.4.2 bookings_source_offer_check extended to include
+  'cargo_offers' (Codex round 1 P1 #1 fix — without this
+  the first cargo accept fails at INSERT with
+  check_violation; the prior round 0 manifest erroneously
+  omitted this from PR 1's scope)
+- §3.5 cargo_aircraft_capabilities table + 4 partial indexes
+  + at-least-one CHECK
 - §3.6 cargo_email_alert_status singleton + RLS
 - §4.1 create_cargo_request_guest RPC
 - §4.2 create_cargo_request_authenticated RPC
@@ -1427,22 +1566,45 @@ SELECT
     JOIN pg_namespace n ON n.oid = t.typnamespace
     WHERE t.typname = 'cargo_offer_status'
       AND n.nspname = 'public') AS has_offer_status_enum,
-  -- accepted_offer_id FK exists
+  -- accepted_offer_id FK exists with RESTRICT action
+  -- (Codex round 2 P2 #3 fix; was SET NULL → could orphan
+  -- accepted requests). confdeltype = 'r' means RESTRICT.
   EXISTS (SELECT 1 FROM pg_constraint
     WHERE conname = 'cargo_requests_accepted_offer_fkey'
-      AND conrelid = 'cargo_requests'::regclass) AS has_accepted_offer_fkey,
+      AND conrelid = 'cargo_requests'::regclass
+      AND confdeltype = 'r') AS accepted_offer_fk_restrict,
+  -- §3.3 invariant CHECK: accepted requests must have a non-
+  -- NULL accepted_offer_id (defense-in-depth alongside FK)
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_requests_accepted_has_offer_check'
+      AND conrelid = 'cargo_requests'::regclass) AS accepted_has_offer_check,
   -- §3.2 cargo_offers.aircraft_id NOT NULL (round 1 P1 #4 fix)
   EXISTS (SELECT 1 FROM information_schema.columns
     WHERE table_name = 'cargo_offers'
       AND column_name = 'aircraft_id'
-      AND is_nullable = 'NO') AS aircraft_id_not_null;
+      AND is_nullable = 'NO') AS aircraft_id_not_null,
+  -- §3.2 cargo_offers price CHECKs (Codex round 2 P1 #2 fix —
+  -- 3 named CHECKs for price validity + structured price_invalid
+  -- error contract via GET STACKED DIAGNOSTICS in §4.3)
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_offers_base_price_positive_check'
+      AND conrelid = 'cargo_offers'::regclass) AS has_base_price_positive_check,
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_offers_insurance_price_nonneg_check'
+      AND conrelid = 'cargo_offers'::regclass) AS has_insurance_nonneg_check,
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'cargo_offers_customs_handling_nonneg_check'
+      AND conrelid = 'cargo_offers'::regclass) AS has_customs_nonneg_check;
 ```
 
-**Expected:** all 12 = `true` (extended from 10 → 12 in
-Codex round 1 P1 #1 + P1 #4 + P2 #5 fixes:
-`source_offer_check_extended` + `aircraft_id_not_null` + the
-ENUM checks now use the same `pg_type + pg_namespace` schema-
-scoped guard as the migration's DO blocks).
+**Expected:** all 16 = `true` (extended from 12 → 16 in
+Codex round 2 P1 #2 + P2 #3 fixes:
+- `accepted_offer_fk_restrict` (was `has_accepted_offer_fkey`;
+  now also asserts `confdeltype = 'r'`)
+- `accepted_has_offer_check` (new §3.3 invariant)
+- `has_base_price_positive_check` (§3.2 price CHECK 1)
+- `has_insurance_nonneg_check` (§3.2 price CHECK 2)
+- `has_customs_nonneg_check` (§3.2 price CHECK 3)).
 
 ### Probe 29 — Guest cargo request appears in admin queue
 
@@ -1524,25 +1686,39 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 3
+## Open questions for Codex round 4
 
-Round 1 closed 4 P1 + 1 P2:
-- **P1 #1:** §3.4 now extends BOTH `bookings_source_discriminator_check`
-  AND `bookings_source_offer_check` (was only the first).
-- **P1 #2:** §4.3 reads `operators.company_name` (was the
-  non-existent `business_name`).
-- **P1 #3:** §4.1 + §4.2 validate `cargo_type` text against
-  the allowed set BEFORE the ENUM cast (avoids raw Postgres
-  22P02 surfacing instead of the structured contract).
-- **P1 #4:** §3.2 `cargo_offers.aircraft_id` is NOT NULL +
-  `ON DELETE RESTRICT` + §4.3 capability check is now
-  unconditional — closes the bypass where an operator could
-  submit an offer without an aircraft and skip the
-  `cargo_aircraft_capabilities` matrix entirely.
-- **P2 #5:** Both `CREATE TYPE` statements (3 ENUMs total)
-  wrapped in `pg_type + pg_namespace` DO block guards so
-  replay/staging-restore/partial migration doesn't fail
-  with `type already exists`.
+Rounds 1-2 closed 6 P1 + 3 P2:
+
+- **Round 1:**
+  - **P1 #1:** §3.4 extends BOTH constraints
+    (source_discriminator + source_offer_check).
+  - **P1 #2:** §4.3 reads `operators.company_name`.
+  - **P1 #3:** §4.1 + §4.2 text allowlist before ENUM cast.
+  - **P1 #4:** §3.2 aircraft_id NOT NULL + capability check
+    unconditional.
+  - **P2 #5:** All 3 CREATE TYPE in pg_type DO block guards.
+- **Round 2:**
+  - **P1 #1:** §4.3 UUID cast in BEGIN/EXCEPTION block →
+    structured `aircraft_id_invalid` (catches malformed
+    text values like `'not-a-uuid'`; raw 22P02 no longer
+    escapes).
+  - **P1 #2:** §3.2 3 named price CHECKs
+    (`cargo_offers_base_price_positive_check`,
+    `cargo_offers_insurance_price_nonneg_check`,
+    `cargo_offers_customs_handling_nonneg_check`) +
+    §4.3 uses `GET STACKED DIAGNOSTICS CONSTRAINT_NAME`
+    (NOT SQLERRM substring — that's locale + version
+    fragile) to disambiguate price violations from the
+    date-order check, returning `price_invalid` for the
+    former and `validation_failed` for the latter.
+  - **P2 #3:** §3.3 FK uses `ON DELETE RESTRICT` (was SET
+    NULL) + new invariant CHECK
+    `cargo_requests_accepted_has_offer_check` (defense-in-
+    depth: even if FK is later weakened,
+    `status='accepted'` rows must keep their offer pointer).
+  - **P2 #4:** §5 PR 1 manifest now lists §3.4.2 + §3.3
+    invariant + the 3 named price CHECKs explicitly.
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -1565,4 +1741,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 2 review.**
+**Spec ready for Codex round 3 review.**
