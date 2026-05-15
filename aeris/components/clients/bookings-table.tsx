@@ -2,9 +2,17 @@ import Link from 'next/link';
 
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import type { BookingRow } from '@/types/database';
+import { BookingsSourceChip } from './bookings-source-chip';
 
 /**
- * Phase 9 PR 3 — `/me/bookings` list table.
+ * Phase 9 PR 3 + Phase 10 PR 2 — `/me/bookings` list table.
+ *
+ * Phase 10 (Decision #10): the same table renders BOTH charter
+ * bookings (from accept_offer) AND empty-leg bookings (from
+ * §4.3 confirm_empty_leg_reservation_for_client + §4.4 patches).
+ * The new BookingsSourceChip in the source column disambiguates
+ * the row origin via bookings.source_discriminator.
+ *
  * Server-rendered (no client interactivity beyond Next links).
  */
 
@@ -63,6 +71,7 @@ export function BookingsTable({ rows }: { rows: BookingRow[] }) {
         <thead className="bg-navy-secondary/60 text-xs text-ink-muted">
           <tr>
             <Th>{clientsAr.meBookingsTableNumber}</Th>
+            <Th>{clientsAr.meBookingsTableSource}</Th>
             <Th>{clientsAr.meBookingsTableRoute}</Th>
             <Th>{clientsAr.meBookingsTableDeparture}</Th>
             <Th>{clientsAr.meBookingsTableOperator}</Th>
@@ -80,6 +89,9 @@ export function BookingsTable({ rows }: { rows: BookingRow[] }) {
                 <span dir="ltr" className="text-ink-primary">
                   {row.booking_number}
                 </span>
+              </Td>
+              <Td>
+                <BookingsSourceChip source={row.source_discriminator} />
               </Td>
               <Td>
                 <span dir="ltr">{bookingRouteSummary(row)}</span>

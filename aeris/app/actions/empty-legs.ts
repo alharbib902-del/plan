@@ -423,6 +423,87 @@ export async function adminReleaseReservation(input: {
 }
 
 // ============================================================
+// 6.5. adminConfirmReservationForClient (Phase 10 PR 2)
+// ============================================================
+//
+// Calls §4.3 confirm_empty_leg_reservation_for_client RPC. Used
+// by the new admin "تأكيد حجز عميل مسجّل" affordance which
+// renders ONLY when leg.reservation_client_id IS NOT NULL (State
+// C). The existing token-based adminConfirmReservation (Case 2)
+// stays unchanged for State B (guest reservations).
+//
+// p_admin_user_id is currently NULL because Aeris admin auth is
+// cookie + env-var based (Phase 8 ADMIN_INBOX_PASSWORD); admins
+// don't have a users row. The RPC stashes a NULL there and logs
+// the call in audit_logs.new_value.admin_user_id (also NULL until
+// a future phase wires admin → users).
+
+export type AdminConfirmReservationForClientActionResult =
+  | { ok: true; leg_id: string; booking_id: string; client_id: string }
+  | AdminEmptyLegActionFailure;
+
+export async function adminConfirmReservationForClient(input: {
+  leg_id: string;
+}): Promise<AdminConfirmReservationForClientActionResult> {
+  requireAdminSession();
+  if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = adminReleaseReservationSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    };
+  }
+
+  // Phase 9 PR 1 convention #1 + #15 — the new §4.3 RPC is NOT
+  // registered in the hand-maintained types/database.ts Functions
+  // map (intentional: parameterless/UUID-arg RPCs collapse type
+  // inference across the codebase per Phase 8 PR 2e #48 lesson).
+  // Use the loose-typed accessor which preserves Supabase JS's
+  // internal `this` binding.
+  const client = createAdminClient() as unknown as {
+    rpc: (
+      name: string,
+      args: Record<string, unknown>
+    ) => Promise<{
+      data: unknown;
+      error: { code?: string; message?: string } | null;
+    }>;
+  };
+  const { data, error } = await client.rpc(
+    'confirm_empty_leg_reservation_for_client',
+    {
+      p_leg_id: parsed.data.leg_id,
+      p_admin_user_id: null,
+    }
+  );
+
+  if (error) {
+    console.error(
+      '[empty-legs.adminConfirmReservationForClient] RPC error',
+      error
+    );
+    return { ok: false, error: 'rpc_failed' };
+  }
+
+  const result = data as
+    | { ok: true; leg_id: string; booking_id: string; client_id: string }
+    | { ok: false; error: string };
+  revalidateAdminPaths(parsed.data.leg_id);
+  if (result.ok) {
+    return {
+      ok: true,
+      leg_id: result.leg_id,
+      booking_id: result.booking_id,
+      client_id: result.client_id,
+    };
+  }
+  return { ok: false, error: result.error };
+}
+
+// ============================================================
 // 7. markOutreachSent
 // ============================================================
 

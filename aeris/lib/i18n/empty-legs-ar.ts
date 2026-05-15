@@ -126,13 +126,19 @@ export const emptyLegsAr = {
   markSoldFieldCustomerPhone: 'رقم العميل',
   markSoldSubmit: 'تأكيد البيع',
 
-  // Case 2 — reserved
+  // Case 2 — reserved (State B = guest token; State C = client)
   caseReservedTitle: 'تفاصيل التحفظ',
+  // Phase 10 PR 2 — distinct title for State C (CLIENT) so the
+  // founder can tell at a glance which confirm flow applies.
+  caseReservedClientTitle: 'تفاصيل التحفظ — عميل مسجّل',
   reservedCustomerName: 'اسم العميل',
   reservedCustomerPhone: 'رقم العميل',
   reservedExpiresAt: 'ينتهي التحفظ في',
   reservedCallCustomer: 'اتصل بالعميل',
   reservedConfirmReservation: 'تأكيد الحجز',
+  // Phase 10 PR 2 — State C: no token input. The §4.3 RPC
+  // reads reservation_client_id off the leg + clients table.
+  reservedConfirmClientReservation: 'تأكيد حجز عميل مسجّل',
   reservedReleaseReservation: 'إلغاء التحفظ',
   reservedConfirmHint:
     'الصق رمز التحفظ الذي أرسله العميل عبر واتساب لتأكيد الحجز.',

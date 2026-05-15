@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 
 import {
   adminConfirmReservation,
+  adminConfirmReservationForClient,
   adminReleaseReservation,
 } from '@/app/actions/empty-legs';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
@@ -15,6 +16,14 @@ interface Props {
   customerName: string | null;
   customerPhone: string | null;
   expiresAt: string | null;
+  // Phase 10 PR 2: when non-null, this is a State C (CLIENT)
+  // reservation. The token-based confirm flow is hidden +
+  // replaced with the §4.3 confirm_empty_leg_reservation_for_client
+  // affordance. Customer name/phone for State C come from the
+  // clients table (resolved by the parent leg-detail server
+  // component); customerName/customerPhone props above carry
+  // that resolved data, NOT NULL.
+  reservationClientId: string | null;
 }
 
 export function ReservationActions({
@@ -22,11 +31,21 @@ export function ReservationActions({
   customerName,
   customerPhone,
   expiresAt,
+  reservationClientId,
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [showConfirmInput, setShowConfirmInput] = useState(false);
+
+  // Codex round 1 PR #63 P1 #1 fix — positive string check
+  // mirrors the parent leg-detail.tsx. Defense-in-depth: even if
+  // a future caller forgets the `?? null` coercion, this check
+  // still rejects undefined / empty-string and only fires on a
+  // real UUID-shape value.
+  const isClientReservation =
+    typeof reservationClientId === 'string' &&
+    reservationClientId.length > 0;
 
   const waUrl = customerPhone
     ? `https://wa.me/${customerPhone.replace(/[^0-9]/g, '')}`
@@ -45,6 +64,23 @@ export function ReservationActions({
       const result = await adminConfirmReservation({
         leg_id: legId,
         token,
+      });
+      if (result.ok) {
+        router.refresh();
+        return;
+      }
+      setError(translateEmptyLegError(result.error));
+    });
+  }
+
+  // Phase 10 PR 2 — State C confirm flow. No token input; the
+  // RPC reads reservation_client_id off the leg row + pulls
+  // client info from the clients table.
+  function handleConfirmClient() {
+    setError(null);
+    startTransition(async () => {
+      const result = await adminConfirmReservationForClient({
+        leg_id: legId,
       });
       if (result.ok) {
         router.refresh();
@@ -99,13 +135,30 @@ export function ReservationActions({
             {emptyLegsAr.reservedCallCustomer}
           </a>
         ) : null}
-        <button
-          type="button"
-          onClick={() => setShowConfirmInput((v) => !v)}
-          className="font-ar inline-flex items-center gap-2 rounded-md border border-gold bg-gold/10 px-4 py-1.5 text-sm text-gold-light transition-colors hover:bg-gold/15"
-        >
-          {emptyLegsAr.reservedConfirmReservation}
-        </button>
+        {/* Phase 10 PR 2 — State C dispatches the new
+            confirm-for-client RPC (no token input). State B keeps
+            the existing token-based flow. The label changes to
+            disambiguate the two paths visually for the founder. */}
+        {isClientReservation ? (
+          <button
+            type="button"
+            onClick={handleConfirmClient}
+            disabled={isPending}
+            className="font-ar inline-flex items-center gap-2 rounded-md border border-gold bg-gold/10 px-4 py-1.5 text-sm text-gold-light transition-colors hover:bg-gold/15 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isPending
+              ? emptyLegsAr.formSubmitting
+              : emptyLegsAr.reservedConfirmClientReservation}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowConfirmInput((v) => !v)}
+            className="font-ar inline-flex items-center gap-2 rounded-md border border-gold bg-gold/10 px-4 py-1.5 text-sm text-gold-light transition-colors hover:bg-gold/15"
+          >
+            {emptyLegsAr.reservedConfirmReservation}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleRelease}
@@ -118,7 +171,7 @@ export function ReservationActions({
         </button>
       </div>
 
-      {showConfirmInput ? (
+      {showConfirmInput && !isClientReservation ? (
         <form
           onSubmit={handleConfirm}
           className="rounded-lg border border-border bg-navy-secondary/40 p-3"

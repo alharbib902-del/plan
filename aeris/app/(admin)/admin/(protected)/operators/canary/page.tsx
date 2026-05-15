@@ -12,6 +12,7 @@ import {
   type OperatorCleanupJobName,
 } from '@/lib/admin/operators/canary-queries';
 import { getClientNotificationAlertStatus } from '@/lib/notifications/client-email-alert-status';
+import { getClientEmptyLegAlertStatus } from '@/lib/notifications/client-empty-leg-alert-status';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { clientsAr } from '@/lib/i18n/clients-ar';
@@ -62,12 +63,18 @@ export default async function AdminOperatorsCanaryPage() {
     velocity,
     alertStatus,
     clientAlertStatus,
+    clientEmptyLegAlertStatus,
     attemptMix,
     cronHealth,
   ] = await Promise.all([
     safeGetOperatorSignupVelocity(),
     getOperatorNotificationAlertStatus(),
     getClientNotificationAlertStatus(adminClient),
+    // Phase 10 PR 2 §3.6 — 5th ChannelHealth card (round 2 P2 #5
+    // separate channel from Phase 9 client-auth singleton). A
+    // failed empty-leg email never mislabels client auth as
+    // unhealthy + vice versa.
+    getClientEmptyLegAlertStatus(adminClient),
     getSignupAttemptMix(),
     getCronTickHealth(),
   ]);
@@ -96,6 +103,7 @@ export default async function AdminOperatorsCanaryPage() {
       <NotificationHealthCard
         alertStatus={alertStatus}
         clientAlertStatus={clientAlertStatus}
+        clientEmptyLegAlertStatus={clientEmptyLegAlertStatus}
       />
 
       <AttemptMixCard mix={attemptMix} />
@@ -153,10 +161,14 @@ function VelocityCard({
 function NotificationHealthCard({
   alertStatus,
   clientAlertStatus,
+  clientEmptyLegAlertStatus,
 }: {
   alertStatus: Awaited<ReturnType<typeof getOperatorNotificationAlertStatus>>;
   clientAlertStatus: Awaited<
     ReturnType<typeof getClientNotificationAlertStatus>
+  >;
+  clientEmptyLegAlertStatus: Awaited<
+    ReturnType<typeof getClientEmptyLegAlertStatus>
   >;
 }) {
   if (!alertStatus) {
@@ -196,6 +208,22 @@ function NotificationHealthCard({
           status={clientAlertStatus?.status ?? 'unknown'}
           lastFailureAt={clientAlertStatus?.last_failure_at ?? null}
           lastFailureReason={clientAlertStatus?.last_failure_reason ?? null}
+        />
+        {/* Phase 10 PR 2 §3.6 — 5th ChannelHealth card for the
+            empty-leg client email channel (covers BOTH match
+            emails AND reservation-confirmation emails per round
+            7 P1 #2). Distinct from the 4th card so a degraded
+            empty-leg dispatch never mislabels client auth as
+            unhealthy. Same null-safe pattern as card #4. */}
+        <ChannelHealth
+          label={clientsAr.canaryClientEmptyLegEmailChannel}
+          status={clientEmptyLegAlertStatus?.status ?? 'unknown'}
+          lastFailureAt={
+            clientEmptyLegAlertStatus?.last_failure_at ?? null
+          }
+          lastFailureReason={
+            clientEmptyLegAlertStatus?.last_failure_reason ?? null
+          }
         />
       </div>
     </Card>
