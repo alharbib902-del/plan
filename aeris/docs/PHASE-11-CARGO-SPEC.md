@@ -1,7 +1,7 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 4).
-> **Codex history:** rounds 1-3 closed 7 P1 + 6 P2 (13 findings):
+> **Status:** Draft for Codex review (round 5).
+> **Codex history:** rounds 1-4 closed 10 P1 + 7 P2 (17 findings):
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -33,13 +33,29 @@
 >   structured `value_invalid` + `date_invalid` errors via
 >   GET STACKED DIAGNOSTICS in §4.1 + §4.2).
 >
-> Round 4 should verify Probe 28 now covers 20 schema
-> checks (was 16), 6 new structured-error contracts total
-> are exposed (`cargo_type_invalid`, `aircraft_id_required`,
-> `aircraft_id_invalid`, `price_invalid`, `value_invalid`,
-> `date_invalid`), and every CREATE statement in PR 1's
-> migration carries the appropriate replay-safety guard
-> (DO block for ENUMs + IF NOT EXISTS for tables/indexes).
+> - **Round 4 (3 P1 + 1 P2):** P1 #1 (§4.4 deadlock-safe lock
+>   order — lock parent request FIRST then lock all sibling
+>   offers in id-ORDER, eliminating the ABBA cycle on
+>   concurrent accepts), P1 #2 (§4.1 + §4.2 NOT NULL guards
+>   on the 4 required intake fields → structured
+>   `customer_name_required` / `customer_phone_required` /
+>   `pickup_date_required` / `estimated_value_required`
+>   instead of raw 23502 escape), P1 #3 (§4.3 NOT NULL
+>   guards on the 3 required offer fields → structured
+>   `base_price_required` / `proposed_pickup_date_required` /
+>   `proposed_delivery_date_required`), P2 #4 (§4.4
+>   `actor_required` guard rejects the all-NULL actor case
+>   at DB boundary as defense-in-depth — Server Action layer
+>   stays primary auth gate).
+>
+> Round 5 should verify the §4.4 deadlock fix uses
+> deterministic id-ORDER lock acquisition (not just
+> "lock request then offer"), that the new 7 NOT NULL
+> guards return BEFORE any DB write attempt (so they
+> can't be confused with the existing CHECK-based
+> structured errors), and that the §4.4 contracts table
+> documents all 9 possible error codes including the new
+> `actor_required`.
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -903,12 +919,35 @@ BEGIN
   END IF;
   v_cargo_type := (p_payload->>'cargo_type')::cargo_type;
 
+  -- Codex round 4 PR #64 P1 #2 fix — NOT NULL guards on the
+  -- 4 required intake fields. The prior draft INSERTed
+  -- p_payload->>'customer_name' / 'customer_phone' /
+  -- 'pickup_date' / 'estimated_value_sar' directly. If the
+  -- payload lacked any of these, the INSERT would hit a NOT
+  -- NULL violation (sqlstate 23502) which the existing
+  -- check_violation + invalid_text_representation handlers
+  -- don't catch — raw PG message would escape to the client.
+  -- Explicit guards return structured contract codes per field.
+  IF NULLIF(TRIM(p_payload->>'customer_name'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'customer_name_required');
+  END IF;
+  IF NULLIF(TRIM(p_payload->>'customer_phone'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'customer_phone_required');
+  END IF;
+  IF NULLIF(p_payload->>'pickup_date', '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'pickup_date_required');
+  END IF;
+  IF NULLIF(p_payload->>'estimated_value_sar', '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'estimated_value_required');
+  END IF;
+
   -- Other guards (rate limit per IP, etc.) handled by app layer.
   -- DB layer enforces structural integrity via the §3.1
   -- constraints (cargo_requests_identity_check +
   -- cargo_requests_category_required_check +
-  -- cargo_requests_*_present_check). A failed insert returns
-  -- a structured error rather than the raw PG message.
+  -- cargo_requests_*_present_check + value/date sanity).
+  -- A failed insert returns a structured error rather than
+  -- the raw PG message.
 
   BEGIN
     INSERT INTO cargo_requests (
@@ -1021,13 +1060,20 @@ GRANT EXECUTE ON FUNCTION create_cargo_request_guest(JSONB, INET)
 | `ip_required` | Server Action passed null IP |
 | `cargo_type_required` | payload missing `cargo_type` |
 | `cargo_type_invalid` | `cargo_type` not in allowed set (round 1 P1 #3 fix) |
+| `customer_name_required` | payload missing `customer_name` (round 4 P1 #2 fix; §4.1 only — §4.2 reads from clients) |
+| `customer_phone_required` | payload missing `customer_phone` (round 4 P1 #2 fix; §4.1 only) |
+| `pickup_date_required` | payload missing `pickup_date` (round 4 P1 #2 fix; both §4.1 + §4.2) |
+| `estimated_value_required` | payload missing `estimated_value_sar` (round 4 P1 #2 fix; both) |
 | `value_invalid` | `estimated_value_sar <= 0` (round 3 P2 #4 fix; via `cargo_requests_value_positive_check`) |
 | `date_invalid` | `delivery_date_target < pickup_date` (round 3 P2 #4 fix; via `cargo_requests_date_order_check`) |
 | `validation_failed` | Other DB CHECK constraint rejected (identity + category exclusivity + route + flexibility range) |
 | `malformed_input` | numeric/date parsing failed |
 
 §4.2 (`create_cargo_request_authenticated`) returns the same
-contract set above plus `client_not_found` + `client_not_active`.
+contract set above plus `client_not_found` + `client_not_active`,
+**minus** `customer_name_required` + `customer_phone_required`
+(those fields are pulled from the clients table, not the
+payload, in §4.2).
 
 ### §4.2 — `create_cargo_request_authenticated` (NEW)
 
@@ -1078,6 +1124,19 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'cargo_type_invalid');
   END IF;
   v_cargo_type := (p_payload->>'cargo_type')::cargo_type;
+
+  -- Codex round 4 PR #64 P1 #2 fix (mirror of §4.1) — NOT NULL
+  -- guards for the 2 required intake fields not sourced from
+  -- the clients table. customer_name + customer_phone are pulled
+  -- from v_client_row (always populated for an active client),
+  -- so only pickup_date + estimated_value_sar need explicit
+  -- payload guards here.
+  IF NULLIF(p_payload->>'pickup_date', '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'pickup_date_required');
+  END IF;
+  IF NULLIF(p_payload->>'estimated_value_sar', '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'estimated_value_required');
+  END IF;
 
   BEGIN
     INSERT INTO cargo_requests (
@@ -1277,6 +1336,27 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'aircraft_not_capable');
   END IF;
 
+  -- Codex round 4 PR #64 P1 #3 fix — NOT NULL guards on the
+  -- 3 required offer fields. The prior draft INSERTed
+  -- (p_payload->>'base_price_sar')::DECIMAL etc. directly. If
+  -- the payload lacked any of these, the INSERT would hit a
+  -- NOT NULL violation (sqlstate 23502) which the existing
+  -- check_violation + invalid_text_representation handlers
+  -- don't catch — raw PG message would escape to the operator.
+  -- Explicit guards return structured contract codes per field.
+  -- (insurance_price_sar + customs_handling_price_sar default
+  -- to 0 via COALESCE in the VALUES list below; their omission
+  -- is intentional + safe.)
+  IF NULLIF(p_payload->>'base_price_sar', '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'base_price_required');
+  END IF;
+  IF NULLIF(p_payload->>'proposed_pickup_date', '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'proposed_pickup_date_required');
+  END IF;
+  IF NULLIF(p_payload->>'proposed_delivery_date', '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'proposed_delivery_date_required');
+  END IF;
+
   BEGIN
     INSERT INTO cargo_offers (
       cargo_request_id, operator_id, aircraft_id,
@@ -1357,6 +1437,9 @@ GRANT EXECUTE ON FUNCTION submit_cargo_offer(UUID, UUID, JSONB)
 | `aircraft_id_required` | payload missing `aircraft_id` (round 1 P1 #4 fix) |
 | `aircraft_id_invalid` | `aircraft_id` value is not a valid UUID shape (round 2 P1 #1 fix — catches raw 22P02) |
 | `aircraft_not_capable` | aircraft owned by different operator OR no `cargo_aircraft_capabilities` row OR cargo-type-specific flag false |
+| `base_price_required` | payload missing `base_price_sar` (round 4 P1 #3 fix) |
+| `proposed_pickup_date_required` | payload missing `proposed_pickup_date` (round 4 P1 #3 fix) |
+| `proposed_delivery_date_required` | payload missing `proposed_delivery_date` (round 4 P1 #3 fix) |
 | `price_invalid` | base_price ≤ 0 OR insurance/customs price < 0 (round 2 P1 #2 fix; disambiguated from generic validation_failed via GET STACKED DIAGNOSTICS CONSTRAINT_NAME match on the 3 named price CHECKs) |
 | `validation_failed` | DB CHECK constraint rejected (e.g. `cargo_offers_date_order_check` — proposed_delivery_date < proposed_pickup_date) |
 | `malformed_input` | numeric/date parsing failed |
@@ -1381,18 +1464,79 @@ DECLARE
   v_offer cargo_offers%ROWTYPE;
   v_request cargo_requests%ROWTYPE;
   v_booking_id UUID;
+  v_request_id_for_lock UUID;
 BEGIN
-  -- Lock offer + request
-  SELECT * INTO v_offer FROM cargo_offers
-    WHERE id = p_offer_id FOR UPDATE;
-  IF NOT FOUND THEN
+  -- Codex round 4 PR #64 P2 #4 fix — actor authorization guard.
+  -- The signature documents `p_actor_admin_user_id` as set for
+  -- admin acceptance, but the body only branched on
+  -- p_actor_client_id IS NULL → admin path without checking
+  -- p_actor_admin_user_id. A buggy/forged Server Action that
+  -- passed both NULL would silently take the admin branch
+  -- without any actor identity. Reject the all-NULL case at
+  -- the DB boundary (defense-in-depth — Server Action layer
+  -- is the primary auth gate, but DB layer should not accept
+  -- anonymous accept_cargo_offer calls even via service-role).
+  IF p_actor_client_id IS NULL AND p_actor_admin_user_id IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'actor_required');
+  END IF;
+
+  -- Codex round 4 PR #64 P1 #1 fix — deadlock-safe lock order.
+  -- The prior draft locked the offer first, then the request,
+  -- then declined sibling offers. Two concurrent accepts on
+  -- DIFFERENT offers for the SAME request would deadlock:
+  --   tx A: locks offer A → locks request → tries to update offer B (waits for B)
+  --   tx B: locks offer B → tries to lock request (waits for A)
+  --   → deadlock detected by PG, one tx aborted with 40P01
+  --
+  -- Fix: deterministic lock order. Read the cargo_request_id
+  -- from the offer WITHOUT a lock (cheap index lookup), then:
+  --   1. Lock the parent request first (single shared resource
+  --      across all concurrent accepts on this request)
+  --   2. Lock all offers on the request in id-ORDER (consistent
+  --      across transactions; PG's per-row lock acquisition
+  --      respects the order of the FOR UPDATE rows seen by the
+  --      query plan, and the ORDER BY ensures both txs see the
+  --      same order)
+  -- Because both txs now acquire the request lock first, only
+  -- one can proceed past step 1; the second waits for the first
+  -- to commit, then sees the post-state (status='accepted' on
+  -- the winning offer + status='declined' on its own offer).
+  SELECT cargo_request_id INTO v_request_id_for_lock
+    FROM cargo_offers WHERE id = p_offer_id;
+  IF v_request_id_for_lock IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'offer_not_found');
   END IF;
 
+  -- Step 1: lock the parent request FIRST (deadlock-safe).
   SELECT * INTO v_request FROM cargo_requests
-    WHERE id = v_offer.cargo_request_id FOR UPDATE;
+    WHERE id = v_request_id_for_lock FOR UPDATE;
   IF NOT FOUND THEN
     RETURN json_build_object('ok', false, 'error', 'request_not_found');
+  END IF;
+
+  -- Step 2: lock the target offer + all sibling offers in
+  -- deterministic id-ORDER. Even if 3 concurrent txs target
+  -- 3 different offers on the same request, all 3 see the
+  -- same lock-acquisition order so no cycle can form.
+  -- The tx that wins step 1 acquires all offer locks here; the
+  -- losing txs wait for the winner to commit, then re-evaluate
+  -- and see status='declined' on their target → return
+  -- offer_not_pending without writing anything.
+  PERFORM 1 FROM cargo_offers
+    WHERE cargo_request_id = v_request_id_for_lock
+    ORDER BY id
+    FOR UPDATE;
+
+  -- Step 3: re-load the target offer post-lock for state
+  -- inspection. Use SELECT (not the PERFORM above) to capture
+  -- the row into v_offer.
+  SELECT * INTO v_offer FROM cargo_offers
+    WHERE id = p_offer_id;
+  IF NOT FOUND THEN
+    -- Race: offer deleted between step 1 and step 2 (very
+    -- unlikely with the §3.3 ON DELETE RESTRICT FK invariant,
+    -- but defensive).
+    RETURN json_build_object('ok', false, 'error', 'offer_not_found');
   END IF;
 
   -- State guards
@@ -1527,6 +1671,20 @@ REVOKE ALL ON FUNCTION accept_cargo_offer(UUID, UUID, UUID)
 GRANT EXECUTE ON FUNCTION accept_cargo_offer(UUID, UUID, UUID)
   TO service_role;
 ```
+
+**Structured contracts:**
+
+| Code | Trigger |
+|---|---|
+| `actor_required` | Both `p_actor_client_id` AND `p_actor_admin_user_id` are NULL (round 4 P2 #4 fix; defense-in-depth — Server Action layer is primary auth gate) |
+| `offer_not_found` | `p_offer_id` invalid OR offer deleted post-lock (rare) |
+| `request_not_found` | `cargo_offers.cargo_request_id` references missing request (only possible if FK violated; defensive) |
+| `offer_not_pending` | `cargo_offers.status` not 'pending' (already accepted/declined/withdrawn/expired by another actor) |
+| `offer_expired` | `cargo_offers.expires_at` elapsed |
+| `request_not_open` | `cargo_requests.status` not in {'pending', 'offers_received'} |
+| `request_expired` | `cargo_requests.expires_at` elapsed |
+| `not_your_request` | Client actor's `id` doesn't match `cargo_requests.client_id` |
+| `admin_cannot_accept_for_authed_client` | Admin path on a request whose `client_id IS NOT NULL` (admin only authorized for guest requests) |
 
 ### §4.5 — `decline_cargo_offer` + `withdraw_cargo_offer` (NEW)
 
@@ -1863,9 +2021,9 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 5
+## Open questions for Codex round 6
 
-Rounds 1-3 closed 7 P1 + 6 P2:
+Rounds 1-4 closed 10 P1 + 7 P2:
 
 - **Round 1:**
   - **P1 #1:** §3.4 extends BOTH constraints
@@ -1918,6 +2076,35 @@ Rounds 1-3 closed 7 P1 + 6 P2:
     + §4.1 + §4.2 disambiguate via GET STACKED DIAGNOSTICS
     CONSTRAINT_NAME → structured `value_invalid` + `date_invalid`
     contracts (mirror of §4.3 price_invalid pattern).
+- **Round 4:**
+  - **P1 #1:** §4.4 deadlock-safe lock order. Prior order
+    (lock offer → lock request → update siblings) deadlocked
+    on concurrent accepts targeting different offers on the
+    same request (ABBA cycle). New order: read
+    cargo_request_id from offer (no lock) → lock parent
+    request FIRST → lock all sibling offers ORDER BY id.
+    Both concurrent accepts now compete for the request
+    lock first; only one passes, the other waits + sees
+    post-state (status='declined' on its target).
+  - **P1 #2:** §4.1 + §4.2 explicit NOT NULL guards on
+    customer_name + customer_phone + pickup_date +
+    estimated_value_sar (§4.2 only the latter two — the
+    customer fields come from the clients table). Returns
+    structured `*_required` contracts instead of raw 23502
+    not_null_violation escape.
+  - **P1 #3:** §4.3 explicit NOT NULL guards on
+    base_price_sar + proposed_pickup_date +
+    proposed_delivery_date. Returns structured
+    `base_price_required` + `proposed_pickup_date_required` +
+    `proposed_delivery_date_required` contracts. (The two
+    addon prices stay COALESCE-defaulted to 0; their
+    omission is intentional.)
+  - **P2 #4:** §4.4 `actor_required` guard rejects the case
+    where both `p_actor_client_id` AND `p_actor_admin_user_id`
+    are NULL. Defense-in-depth — Server Action layer is the
+    primary auth gate (cookie + ADMIN_INBOX_PASSWORD), but
+    the DB boundary should never accept anonymous accept
+    calls even via service-role.
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -1940,4 +2127,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 4 review.**
+**Spec ready for Codex round 5 review.**
