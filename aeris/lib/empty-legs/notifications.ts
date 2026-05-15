@@ -272,6 +272,15 @@ export async function enqueueClientLegNotifications({
   const currentDiscountPct = leg.current_discount_pct ?? 0;
 
   const writtenRows: EnqueuedRow[] = [];
+  // Codex round 2 PR #62 P2 #1 fix — track wa.me-bound rows
+  // separately so the founder batch alert reports the count of
+  // rows that actually need manual dispatch (channel ∈
+  // {whatsapp_link, email_and_wa}). Email-only rows are
+  // dispatched inline by sendClientEmptyLegMatchEmail and
+  // marked outreach_sent_at=NOW(); they never appear in the
+  // admin outreach queue, so counting them in the founder
+  // alert would lie about pending work.
+  let waBoundCount = 0;
   let skippedPreferencesCount = 0;
   const dbClient = createAdminClient();
 
@@ -342,7 +351,25 @@ export async function enqueueClientLegNotifications({
     }
 
     // 5. INSERT the empty_leg_notifications row (single
-    //    row per client+leg per §3.2 unique index)
+    //    row per client+leg per §3.2 unique index).
+    //
+    // Codex round 2 PR #62 P2 #1 fix: email-only rows have NO
+    // manual outreach action. The Resend email below is dispatched
+    // inline (later in this loop), so the row's outreach_sent_at
+    // should be NOW() at INSERT time — otherwise the admin
+    // outreach queue (filters WHERE outreach_sent_at IS NULL)
+    // surfaces these as stale pending tasks with no wa.me URL
+    // for the founder to dispatch from.
+    //
+    //   - whatsapp_link → outreach_sent_at = NULL (founder
+    //     dispatches wa.me manually)
+    //   - email_and_wa  → outreach_sent_at = NULL (founder still
+    //     needs to dispatch wa.me; email auto-sent in parallel)
+    //   - email         → outreach_sent_at = NOW() (auto-sent
+    //     by sendClientEmptyLegMatchEmail below; no manual action)
+    const insertOutreachSentAt =
+      channel === 'email' ? new Date().toISOString() : null;
+
     const { data, error } = await dbClient
       .from(NOTIFICATIONS_TABLE)
       .insert({
@@ -353,7 +380,7 @@ export async function enqueueClientLegNotifications({
         channel,
         wa_url: dbWaUrl,
         email_url: dbEmailUrl,
-        outreach_sent_at: null,
+        outreach_sent_at: insertOutreachSentAt,
         external_message_id: null,
         sent_at: new Date().toISOString(),
       })
@@ -379,6 +406,14 @@ export async function enqueueClientLegNotifications({
       leg_id: leg.id,
       wa_url: dbWaUrl ?? '',
     });
+
+    // Track wa.me-bound rows for the founder alert count
+    // (Codex round 2 P2 #1 — email-only rows are auto-sent and
+    // marked outreach_sent_at=NOW; they don't appear in the
+    // admin outreach queue, so don't count them as "pending").
+    if (channel === 'whatsapp_link' || channel === 'email_and_wa') {
+      waBoundCount++;
+    }
 
     // 6. Dispatch the email if requested. Fire-and-forget (no
     //    await on the alert recording — sendClientEmptyLegMatchEmail
@@ -420,12 +455,19 @@ export async function enqueueClientLegNotifications({
   // they summarise different recipient pools and surface in the
   // same /admin/empty-legs/outreach-queue page where the founder
   // dispatches both manually.
-  if (writtenRows.length > 0) {
+  //
+  // Codex round 2 PR #62 P2 #1 fix — only fire when there are
+  // actually wa.me-bound rows pending. If every written row was
+  // email-only (auto-sent + outreach_sent_at=NOW), the founder
+  // doesn't need a "new pending wa.me actions" alert because
+  // none are pending; the email auto-dispatch already happened
+  // and is tracked via §3.6 client_empty_leg_alert_status singleton.
+  if (waBoundCount > 0) {
     try {
       await sendFounderBatchAlert({
         legId: leg.id,
         legNumber: leg.leg_number,
-        rowCount: writtenRows.length,
+        rowCount: waBoundCount,
       });
     } catch (err) {
       // sendFounderBatchAlert is fail-tolerant: it logs +
