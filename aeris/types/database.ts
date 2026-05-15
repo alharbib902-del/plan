@@ -569,7 +569,16 @@ export type AddonStatusValue =
  * `admin_mark_empty_leg_sold` (PR 2a) write that discriminator
  * onto the bookings row they create.
  */
-export type SourceOfferTable = 'phase4' | 'phase5' | 'phase7_empty_leg';
+// Codex round 1 PR #65 P2 #2 fix — extended for cargo bookings.
+// Phase 11 PR 1 §3.4.2 migration extends bookings_source_offer_check
+// CHECK to allow 'cargo_offers'; the local TS union must match
+// or PR 2/3 cargo booking code (writing accept_cargo_offer +
+// reading /me/bookings) will fight the type system.
+export type SourceOfferTable =
+  | 'phase4'
+  | 'phase5'
+  | 'phase7_empty_leg'
+  | 'cargo_offers';
 
 export type BookingRow = {
   id: string;

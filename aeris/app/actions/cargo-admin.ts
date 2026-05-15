@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireAdminSession } from '@/lib/admin/auth';
 import type { CargoAircraftCapabilityInsert } from '@/lib/cargo/types';
 
 /**
@@ -11,12 +12,12 @@ import type { CargoAircraftCapabilityInsert } from '@/lib/cargo/types';
  * Currently 1 action (capability matrix upsert). PR 2 will
  * add accept/decline-on-behalf for guest cargo requests.
  *
- * Auth: gated by ENABLE_CARGO + the admin layout's
- * `requireAdminSession()` check (Phase 8 ADMIN_INBOX_PASSWORD
- * cookie). The Server Action itself trusts the surrounding
- * admin route protection — it doesn't re-check the session
- * because re-importing the admin guard from inside an action
- * creates module-load cycles in Next 14 App Router.
+ * Auth (Codex round 1 PR #65 P1 #1 fix): every action calls
+ * `requireAdminSession()` BEFORE any validation or write.
+ * Relying on the admin layout's auth check is NOT enough for
+ * Server Actions — the action endpoint is reachable directly
+ * via POST regardless of which page imported it. Mirrors
+ * `app/actions/empty-legs.ts:123` discipline.
  *
  * The DB write goes through service-role; the
  * cargo_aircraft_capabilities table has RLS enabled (round 6
@@ -55,6 +56,13 @@ export type UpsertCargoCapabilityResult =
 export async function upsertCargoAircraftCapability(
   input: UpsertCargoCapabilityInput
 ): Promise<UpsertCargoCapabilityResult> {
+  // Codex round 1 PR #65 P1 #1 fix — admin auth gate at the
+  // Server Action boundary. requireAdminSession() throws
+  // NEXT_REDIRECT to /admin/login if the cookie is missing/
+  // invalid (Phase 8 ADMIN_INBOX_PASSWORD), aborting the
+  // caller before any flag check or DB write.
+  requireAdminSession();
+
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   if (!input.aircraft_id || input.aircraft_id.length === 0) {

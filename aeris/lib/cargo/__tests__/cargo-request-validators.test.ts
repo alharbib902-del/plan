@@ -4,7 +4,7 @@
  * Layer-1 (no DB): pure schema parses for both public + authed
  * surfaces. Runs as: npm run test:cargo-request-validators
  *
- * Cases covered (16 total):
+ * Cases covered (19 total):
  *   Public schema discriminatedUnion (per-category required):
  *     1. horse with horse_count → ok
  *     2. horse without horse_count → fails
@@ -21,10 +21,14 @@
  *   Length bounds (round 8 P1 #1):
  *    12. customer_name length 121 → fails
  *    13. origin_iata length 5 → fails
+ *   Whitespace handling (round 1 PR #65 P2 #3):
+ *    14. customer_name = "   " → fails as missing
+ *    15. car_make = "   " (luxury_car) → fails as missing
+ *    16. other_description = "   " → fails as missing
+ *    17. customer_name padded "  Test  " → ok and trimmed in output
  *   Authed schema:
- *    14. authed horse without customer_name → ok (customer fields not in schema)
- *    15. authed horse with customer_name → fails (extraneous, but Zod allows by default)
- *    16. authed valuables happy path
+ *    18. authed horse happy path (no customer fields)
+ *    19. authed valuables happy path
  */
 
 import { strict as assert } from 'node:assert';
@@ -196,6 +200,52 @@ test('origin_iata length 5 → fails', () => {
     origin_iata: 'RUHXX',
   });
   assert.equal(r.success, false);
+});
+
+// ============================================================
+// Whitespace handling (round 1 PR #65 P2 #3)
+// ============================================================
+// Without `.trim()` before `.min(1)`, a payload like "   " would
+// pass length>0 and reach the DB as a blank-looking row. The
+// round 1 fix wraps every required string with `.string().trim()`
+// so whitespace-only fails as missing; the migration mirrors with
+// BTRIM in NULLIF inside INSERT VALUES + guards.
+
+test('customer_name = "   " → fails as missing', () => {
+  const r = cargoRequestPublicSchema.safeParse({
+    ...baseHorse,
+    customer_name: '   ',
+  });
+  assert.equal(r.success, false);
+});
+
+test('car_make = "   " (luxury_car) → fails as missing', () => {
+  const r = cargoRequestPublicSchema.safeParse({
+    ...baseLuxuryCar,
+    car_make: '   ',
+  });
+  assert.equal(r.success, false);
+});
+
+test('other_description = "   " → fails as missing', () => {
+  const r = cargoRequestPublicSchema.safeParse({
+    ...baseOther,
+    other_description: '   ',
+  });
+  assert.equal(r.success, false);
+});
+
+test('customer_name padded "  Test  " → ok and trimmed', () => {
+  const r = cargoRequestPublicSchema.safeParse({
+    ...baseHorse,
+    customer_name: '  Founder  ',
+  });
+  assert.equal(r.success, true);
+  if (r.success) {
+    // Confirm the surviving payload is trimmed (value is normalized
+    // for the DB write — no leading/trailing whitespace lands).
+    assert.equal(r.data.customer_name, 'Founder');
+  }
 });
 
 // ============================================================

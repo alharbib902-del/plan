@@ -20,6 +20,16 @@ import { z } from 'zod';
  *   - customer_phone: max 20
  *   - customer_email: max 120
  *   - origin_iata / destination_iata: max 4
+ *
+ * Whitespace handling (Codex round 1 PR #65 P2 #3 fix): every
+ * string field — required AND optional — is `.trim()`-ed at the
+ * Zod boundary so a payload like `"   "` fails `.min(1)` (the
+ * required ones) or arrives as `""` (the optional ones, which
+ * the DB then converts to NULL via `NULLIF(BTRIM(...), '')`).
+ * Without `.trim()`, `"   "` passes `.min(1)` (length > 0) and
+ * survives to the DB as a blank-looking row. The DB-side RPC
+ * mirrors this with `BTRIM` in every `NULLIF` for INSERT VALUES
+ * and required-field guards as defense-in-depth.
  */
 
 // ============================================================
@@ -39,14 +49,14 @@ const horseFieldsSchema = z
     horse_cites_status: z
       .enum(['ready', 'in_progress', 'help_needed'])
       .optional(),
-    horse_stall_requirements: z.string().optional(),
+    horse_stall_requirements: z.string().trim().optional(),
   })
   .strict();
 
 const luxuryCarFieldsSchema = z
   .object({
-    car_make: z.string().min(1, 'صانع السيارة مطلوب'),
-    car_model: z.string().min(1, 'موديل السيارة مطلوب'),
+    car_make: z.string().trim().min(1, 'صانع السيارة مطلوب'),
+    car_model: z.string().trim().min(1, 'موديل السيارة مطلوب'),
     car_year: z
       .number()
       .int()
@@ -67,7 +77,7 @@ const valuablesFieldsSchema = z
       .enum(['standard', 'high', 'armed_escort'])
       .optional(),
     valuables_climate_controlled: z.boolean().optional(),
-    valuables_item_description: z.string().optional(),
+    valuables_item_description: z.string().trim().optional(),
   })
   .strict();
 
@@ -75,26 +85,29 @@ const otherFieldsSchema = z
   .object({
     other_description: z
       .string()
+      .trim()
       .min(1, 'وصف البضاعة مطلوب لفئة "أخرى"'),
-    other_dimensions_lwh_cm: z.string().optional(),
+    other_dimensions_lwh_cm: z.string().trim().optional(),
     other_weight_kg: z.number().positive().optional(),
-    other_special_handling: z.string().optional(),
+    other_special_handling: z.string().trim().optional(),
   })
   .strict();
 
 const sharedShipmentSchema = z.object({
   origin_iata: z
     .string()
+    .trim()
     .max(4, 'رمز IATA لا يتعدى 4 أحرف')
     .optional()
     .nullable(),
-  origin_freeform: z.string().optional().nullable(),
+  origin_freeform: z.string().trim().optional().nullable(),
   destination_iata: z
     .string()
+    .trim()
     .max(4, 'رمز IATA لا يتعدى 4 أحرف')
     .optional()
     .nullable(),
-  destination_freeform: z.string().optional().nullable(),
+  destination_freeform: z.string().trim().optional().nullable(),
   pickup_date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صحيح (YYYY-MM-DD)'),
@@ -106,20 +119,23 @@ const sharedShipmentSchema = z.object({
   flexibility_days: z.number().int().min(0).max(7).optional().default(0),
   estimated_value_sar: z.number().positive('القيمة التقديرية يجب أن تكون موجبة'),
   insurance_required: z.boolean().optional().default(false),
-  handling_notes: z.string().optional().nullable(),
+  handling_notes: z.string().trim().optional().nullable(),
 });
 
 const customerFieldsSchema = z.object({
   customer_name: z
     .string()
+    .trim()
     .min(1, 'الاسم مطلوب')
     .max(120, 'الاسم لا يتعدى 120 حرفاً'),
   customer_phone: z
     .string()
+    .trim()
     .min(1, 'رقم الهاتف مطلوب')
     .max(20, 'رقم الهاتف لا يتعدى 20 حرفاً'),
   customer_email: z
     .string()
+    .trim()
     .email('بريد إلكتروني غير صحيح')
     .max(120, 'البريد الإلكتروني لا يتعدى 120 حرفاً')
     .optional()

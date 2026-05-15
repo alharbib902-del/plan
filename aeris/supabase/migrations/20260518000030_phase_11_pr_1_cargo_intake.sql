@@ -571,13 +571,17 @@ BEGIN
   v_cargo_type := (p_payload->>'cargo_type')::cargo_type;
 
   -- Round 4 P1 #2 — required-field guards.
-  IF NULLIF(TRIM(p_payload->>'customer_name'), '') IS NULL THEN
+  -- Round 1 PR #65 P2 #3 — BTRIM (was bare TRIM in some) so a payload
+  -- like "   " consistently fails the *_required check. Length checks
+  -- below also use BTRIM so a value like "AAAAA   " collapses to its
+  -- semantic length before comparison.
+  IF NULLIF(BTRIM(p_payload->>'customer_name'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'customer_name_required');
   END IF;
-  IF NULLIF(TRIM(p_payload->>'customer_phone'), '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'customer_phone'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'customer_phone_required');
   END IF;
-  IF NULLIF(p_payload->>'pickup_date', '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'pickup_date'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'pickup_date_required');
   END IF;
   IF NULLIF(p_payload->>'estimated_value_sar', '') IS NULL THEN
@@ -585,32 +589,32 @@ BEGIN
   END IF;
 
   -- Round 5 P1 #2 — origin/destination required guards.
-  IF NULLIF(TRIM(p_payload->>'origin_iata'), '') IS NULL
-     AND NULLIF(TRIM(p_payload->>'origin_freeform'), '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'origin_iata'), '') IS NULL
+     AND NULLIF(BTRIM(p_payload->>'origin_freeform'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'origin_required');
   END IF;
-  IF NULLIF(TRIM(p_payload->>'destination_iata'), '') IS NULL
-     AND NULLIF(TRIM(p_payload->>'destination_freeform'), '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'destination_iata'), '') IS NULL
+     AND NULLIF(BTRIM(p_payload->>'destination_freeform'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'destination_required');
   END IF;
 
   -- Round 8 P1 #1 — DB-boundary length guards.
-  IF length(p_payload->>'customer_name') > 120 THEN
+  IF length(BTRIM(p_payload->>'customer_name')) > 120 THEN
     RETURN json_build_object('ok', false, 'error', 'customer_name_invalid');
   END IF;
-  IF length(p_payload->>'customer_phone') > 20 THEN
+  IF length(BTRIM(p_payload->>'customer_phone')) > 20 THEN
     RETURN json_build_object('ok', false, 'error', 'customer_phone_invalid');
   END IF;
   IF p_payload->>'customer_email' IS NOT NULL
-     AND length(p_payload->>'customer_email') > 120 THEN
+     AND length(BTRIM(p_payload->>'customer_email')) > 120 THEN
     RETURN json_build_object('ok', false, 'error', 'customer_email_invalid');
   END IF;
-  IF NULLIF(p_payload->>'origin_iata', '') IS NOT NULL
-     AND length(p_payload->>'origin_iata') > 4 THEN
+  IF NULLIF(BTRIM(p_payload->>'origin_iata'), '') IS NOT NULL
+     AND length(BTRIM(p_payload->>'origin_iata')) > 4 THEN
     RETURN json_build_object('ok', false, 'error', 'origin_invalid');
   END IF;
-  IF NULLIF(p_payload->>'destination_iata', '') IS NOT NULL
-     AND length(p_payload->>'destination_iata') > 4 THEN
+  IF NULLIF(BTRIM(p_payload->>'destination_iata'), '') IS NOT NULL
+     AND length(BTRIM(p_payload->>'destination_iata')) > 4 THEN
     RETURN json_build_object('ok', false, 'error', 'destination_invalid');
   END IF;
 
@@ -634,42 +638,47 @@ BEGIN
       other_weight_kg, other_special_handling
     ) VALUES (
       NULL,  -- guest path
-      p_payload->>'customer_name',
-      p_payload->>'customer_phone',
-      NULLIF(p_payload->>'customer_email', ''),
+      -- Round 1 PR #65 P2 #3 — BTRIM all text fields so a payload like
+      -- "   " never reaches the DB as a blank-looking row. Required
+      -- guards above already use NULLIF(TRIM(...), '') for the same
+      -- reason; this brings INSERT VALUES in line. Numeric/DATE/BOOL
+      -- casts intentionally skip BTRIM (the cast itself rejects pad).
+      BTRIM(p_payload->>'customer_name'),
+      BTRIM(p_payload->>'customer_phone'),
+      NULLIF(BTRIM(p_payload->>'customer_email'), ''),
       v_cargo_type,
-      NULLIF(p_payload->>'origin_iata', ''),
-      NULLIF(p_payload->>'origin_freeform', ''),
-      NULLIF(p_payload->>'destination_iata', ''),
-      NULLIF(p_payload->>'destination_freeform', ''),
+      NULLIF(BTRIM(p_payload->>'origin_iata'), ''),
+      NULLIF(BTRIM(p_payload->>'origin_freeform'), ''),
+      NULLIF(BTRIM(p_payload->>'destination_iata'), ''),
+      NULLIF(BTRIM(p_payload->>'destination_freeform'), ''),
       (p_payload->>'pickup_date')::DATE,
       NULLIF(p_payload->>'delivery_date_target', '')::DATE,
       -- Round 8 P2 #2 — NULLIF before cast for optional fields.
       COALESCE(NULLIF(p_payload->>'flexibility_days', '')::INT, 0),
       (p_payload->>'estimated_value_sar')::DECIMAL,
       COALESCE(NULLIF(p_payload->>'insurance_required', '')::BOOLEAN, false),
-      NULLIF(p_payload->>'handling_notes', ''),
+      NULLIF(BTRIM(p_payload->>'handling_notes'), ''),
       -- horse
       NULLIF(p_payload->>'horse_count', '')::INT,
       NULLIF(p_payload->>'horse_groom_required', '')::BOOLEAN,
-      NULLIF(p_payload->>'horse_cites_status', ''),
-      NULLIF(p_payload->>'horse_stall_requirements', ''),
+      NULLIF(BTRIM(p_payload->>'horse_cites_status'), ''),
+      NULLIF(BTRIM(p_payload->>'horse_stall_requirements'), ''),
       -- luxury_car
-      NULLIF(p_payload->>'car_make', ''),
-      NULLIF(p_payload->>'car_model', ''),
+      NULLIF(BTRIM(p_payload->>'car_make'), ''),
+      NULLIF(BTRIM(p_payload->>'car_model'), ''),
       NULLIF(p_payload->>'car_year', '')::INT,
       NULLIF(p_payload->>'car_running_condition', '')::BOOLEAN,
       NULLIF(p_payload->>'car_enclosed_required', '')::BOOLEAN,
       -- valuables
       NULLIF(p_payload->>'valuables_declared_value_sar', '')::DECIMAL,
-      NULLIF(p_payload->>'valuables_security_level', ''),
+      NULLIF(BTRIM(p_payload->>'valuables_security_level'), ''),
       NULLIF(p_payload->>'valuables_climate_controlled', '')::BOOLEAN,
-      NULLIF(p_payload->>'valuables_item_description', ''),
+      NULLIF(BTRIM(p_payload->>'valuables_item_description'), ''),
       -- other
-      NULLIF(p_payload->>'other_description', ''),
-      NULLIF(p_payload->>'other_dimensions_lwh_cm', ''),
+      NULLIF(BTRIM(p_payload->>'other_description'), ''),
+      NULLIF(BTRIM(p_payload->>'other_dimensions_lwh_cm'), ''),
       NULLIF(p_payload->>'other_weight_kg', '')::DECIMAL,
-      NULLIF(p_payload->>'other_special_handling', '')
+      NULLIF(BTRIM(p_payload->>'other_special_handling'), '')
     )
     RETURNING id, cargo_request_number INTO v_request_id, v_request_number;
   EXCEPTION
@@ -758,29 +767,31 @@ BEGIN
 
   -- Required-field guards (customer fields from clients; only
   -- pickup_date + estimated_value_sar from payload).
-  IF NULLIF(p_payload->>'pickup_date', '') IS NULL THEN
+  -- Round 1 PR #65 P2 #3 — BTRIM mirrors §4.1; "   " must fail
+  -- *_required and length checks must reflect semantic length.
+  IF NULLIF(BTRIM(p_payload->>'pickup_date'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'pickup_date_required');
   END IF;
   IF NULLIF(p_payload->>'estimated_value_sar', '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'estimated_value_required');
   END IF;
-  IF NULLIF(TRIM(p_payload->>'origin_iata'), '') IS NULL
-     AND NULLIF(TRIM(p_payload->>'origin_freeform'), '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'origin_iata'), '') IS NULL
+     AND NULLIF(BTRIM(p_payload->>'origin_freeform'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'origin_required');
   END IF;
-  IF NULLIF(TRIM(p_payload->>'destination_iata'), '') IS NULL
-     AND NULLIF(TRIM(p_payload->>'destination_freeform'), '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'destination_iata'), '') IS NULL
+     AND NULLIF(BTRIM(p_payload->>'destination_freeform'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'destination_required');
   END IF;
 
   -- Round 8 P1 #1 — IATA length guards (customer fields from clients
   -- already enforce VARCHAR(120/20/120)).
-  IF NULLIF(p_payload->>'origin_iata', '') IS NOT NULL
-     AND length(p_payload->>'origin_iata') > 4 THEN
+  IF NULLIF(BTRIM(p_payload->>'origin_iata'), '') IS NOT NULL
+     AND length(BTRIM(p_payload->>'origin_iata')) > 4 THEN
     RETURN json_build_object('ok', false, 'error', 'origin_invalid');
   END IF;
-  IF NULLIF(p_payload->>'destination_iata', '') IS NOT NULL
-     AND length(p_payload->>'destination_iata') > 4 THEN
+  IF NULLIF(BTRIM(p_payload->>'destination_iata'), '') IS NOT NULL
+     AND length(BTRIM(p_payload->>'destination_iata')) > 4 THEN
     RETURN json_build_object('ok', false, 'error', 'destination_invalid');
   END IF;
 
@@ -808,33 +819,34 @@ BEGIN
       v_client_row.contact_phone,
       v_client_row.auth_email,
       v_cargo_type,
-      NULLIF(p_payload->>'origin_iata', ''),
-      NULLIF(p_payload->>'origin_freeform', ''),
-      NULLIF(p_payload->>'destination_iata', ''),
-      NULLIF(p_payload->>'destination_freeform', ''),
+      -- Round 1 PR #65 P2 #3 — BTRIM all text fields (mirrors §4.1).
+      NULLIF(BTRIM(p_payload->>'origin_iata'), ''),
+      NULLIF(BTRIM(p_payload->>'origin_freeform'), ''),
+      NULLIF(BTRIM(p_payload->>'destination_iata'), ''),
+      NULLIF(BTRIM(p_payload->>'destination_freeform'), ''),
       (p_payload->>'pickup_date')::DATE,
       NULLIF(p_payload->>'delivery_date_target', '')::DATE,
       COALESCE(NULLIF(p_payload->>'flexibility_days', '')::INT, 0),
       (p_payload->>'estimated_value_sar')::DECIMAL,
       COALESCE(NULLIF(p_payload->>'insurance_required', '')::BOOLEAN, false),
-      NULLIF(p_payload->>'handling_notes', ''),
+      NULLIF(BTRIM(p_payload->>'handling_notes'), ''),
       NULLIF(p_payload->>'horse_count', '')::INT,
       NULLIF(p_payload->>'horse_groom_required', '')::BOOLEAN,
-      NULLIF(p_payload->>'horse_cites_status', ''),
-      NULLIF(p_payload->>'horse_stall_requirements', ''),
-      NULLIF(p_payload->>'car_make', ''),
-      NULLIF(p_payload->>'car_model', ''),
+      NULLIF(BTRIM(p_payload->>'horse_cites_status'), ''),
+      NULLIF(BTRIM(p_payload->>'horse_stall_requirements'), ''),
+      NULLIF(BTRIM(p_payload->>'car_make'), ''),
+      NULLIF(BTRIM(p_payload->>'car_model'), ''),
       NULLIF(p_payload->>'car_year', '')::INT,
       NULLIF(p_payload->>'car_running_condition', '')::BOOLEAN,
       NULLIF(p_payload->>'car_enclosed_required', '')::BOOLEAN,
       NULLIF(p_payload->>'valuables_declared_value_sar', '')::DECIMAL,
-      NULLIF(p_payload->>'valuables_security_level', ''),
+      NULLIF(BTRIM(p_payload->>'valuables_security_level'), ''),
       NULLIF(p_payload->>'valuables_climate_controlled', '')::BOOLEAN,
-      NULLIF(p_payload->>'valuables_item_description', ''),
-      NULLIF(p_payload->>'other_description', ''),
-      NULLIF(p_payload->>'other_dimensions_lwh_cm', ''),
+      NULLIF(BTRIM(p_payload->>'valuables_item_description'), ''),
+      NULLIF(BTRIM(p_payload->>'other_description'), ''),
+      NULLIF(BTRIM(p_payload->>'other_dimensions_lwh_cm'), ''),
       NULLIF(p_payload->>'other_weight_kg', '')::DECIMAL,
-      NULLIF(p_payload->>'other_special_handling', '')
+      NULLIF(BTRIM(p_payload->>'other_special_handling'), '')
     )
     RETURNING id, cargo_request_number INTO v_request_id, v_request_number;
   EXCEPTION
@@ -952,13 +964,16 @@ BEGIN
   END IF;
 
   -- Round 4 P1 #3 — required offer fields guards.
+  -- Round 1 PR #65 P2 #3 — BTRIM dates so "   " fails the *_required
+  -- check (numeric base_price stays NULLIF-only because the cast
+  -- itself rejects whitespace).
   IF NULLIF(p_payload->>'base_price_sar', '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'base_price_required');
   END IF;
-  IF NULLIF(p_payload->>'proposed_pickup_date', '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'proposed_pickup_date'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'proposed_pickup_date_required');
   END IF;
-  IF NULLIF(p_payload->>'proposed_delivery_date', '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'proposed_delivery_date'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'proposed_delivery_date_required');
   END IF;
 
@@ -973,13 +988,14 @@ BEGIN
     ) VALUES (
       p_cargo_request_id, p_operator_id, v_aircraft_id,
       v_op_row.company_name, v_op_row.contact_phone, v_op_row.contact_email,
-      NULLIF(p_payload->>'aircraft_snapshot', ''),
+      -- Round 1 PR #65 P2 #3 — BTRIM the optional text fields.
+      NULLIF(BTRIM(p_payload->>'aircraft_snapshot'), ''),
       (p_payload->>'base_price_sar')::DECIMAL,
       COALESCE(NULLIF(p_payload->>'insurance_price_sar', '')::DECIMAL, 0),
       COALESCE(NULLIF(p_payload->>'customs_handling_price_sar', '')::DECIMAL, 0),
       (p_payload->>'proposed_pickup_date')::DATE,
       (p_payload->>'proposed_delivery_date')::DATE,
-      NULLIF(p_payload->>'operator_notes', '')
+      NULLIF(BTRIM(p_payload->>'operator_notes'), '')
     )
     RETURNING id INTO v_offer_id;
   EXCEPTION
