@@ -636,11 +636,12 @@ export type BookingRow = {
   // Source-offer linkage (no FK; one-of-two target tables).
   source_offer_table: SourceOfferTable | null;
   source_offer_id: string | null;
-  // Phase 10 PR 1 §3.4: discriminator for unified /me/bookings.
-  // NOT NULL + DEFAULT 'charter'; populated explicitly by
-  // §4.3/§4.4 RPCs as 'empty_leg', falls through to DEFAULT for
-  // accept_offer (Phase 9 charter path; round 6 P2 #4 lock).
-  source_discriminator: 'charter' | 'empty_leg';
+  // Phase 10 PR 1 §3.4 + Phase 11 PR 1 §3.4.1: discriminator
+  // for unified /me/bookings. NOT NULL + DEFAULT 'charter';
+  // populated explicitly by Phase 10 §4.3/§4.4 RPCs ('empty_leg')
+  // + Phase 11 §4.4 accept_cargo_offer ('cargo'), falls through
+  // to DEFAULT for accept_offer (Phase 9 charter path).
+  source_discriminator: 'charter' | 'empty_leg' | 'cargo';
   // Customer checkout-prep token. Both NULL by default;
   // founder mints + writes both via the admin "Issue
   // checkout link" action. Paired CHECK enforces both-or-
@@ -1621,6 +1622,166 @@ export type ClientEmptyLegAlertStatusUpdate = Partial<
   Omit<ClientEmptyLegAlertStatusRow, 'id'>
 >;
 
+// ============================================================================
+// PHASE 11 PR 1 — Aeris Cargo (Special Cargo Charter)
+// Spec: aeris/docs/PHASE-11-CARGO-SPEC.md (Codex 100/100, round 10)
+// ============================================================================
+
+export type CargoType = 'horse' | 'luxury_car' | 'valuables' | 'other';
+
+export type CargoRequestStatus =
+  | 'pending'
+  | 'offers_received'
+  | 'accepted'
+  | 'cancelled'
+  | 'expired';
+
+export type CargoOfferStatus =
+  | 'pending'
+  | 'accepted'
+  | 'declined'
+  | 'withdrawn'
+  | 'expired';
+
+export type CargoEmailAlertStatusValue =
+  | 'healthy'
+  | 'config_missing'
+  | 'send_failed';
+
+export type CargoRequestRow = {
+  id: string;
+  cargo_request_number: string;
+  client_id: string | null;
+  customer_name_snapshot: string;
+  customer_phone_snapshot: string;
+  customer_email_snapshot: string | null;
+  cargo_type: CargoType;
+  origin_iata: string | null;
+  origin_freeform: string | null;
+  destination_iata: string | null;
+  destination_freeform: string | null;
+  pickup_date: string;
+  delivery_date_target: string | null;
+  flexibility_days: number;
+  estimated_value_sar: number;
+  insurance_required: boolean;
+  handling_notes: string | null;
+  // horse
+  horse_count: number | null;
+  horse_groom_required: boolean | null;
+  horse_cites_status: string | null;
+  horse_stall_requirements: string | null;
+  // luxury_car
+  car_make: string | null;
+  car_model: string | null;
+  car_year: number | null;
+  car_running_condition: boolean | null;
+  car_enclosed_required: boolean | null;
+  // valuables
+  valuables_declared_value_sar: number | null;
+  valuables_security_level: string | null;
+  valuables_climate_controlled: boolean | null;
+  valuables_item_description: string | null;
+  // other
+  other_description: string | null;
+  other_dimensions_lwh_cm: string | null;
+  other_weight_kg: number | null;
+  other_special_handling: string | null;
+  // status + audit
+  status: CargoRequestStatus;
+  expires_at: string;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  accepted_offer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CargoRequestInsert = Partial<CargoRequestRow> & {
+  customer_name_snapshot: string;
+  customer_phone_snapshot: string;
+  cargo_type: CargoType;
+  pickup_date: string;
+  estimated_value_sar: number;
+};
+
+export type CargoRequestUpdate = Partial<
+  Omit<CargoRequestRow, 'id' | 'created_at' | 'cargo_request_number'>
+>;
+
+export type CargoOfferRow = {
+  id: string;
+  cargo_request_id: string;
+  operator_id: string;
+  aircraft_id: string;
+  operator_name_snapshot: string;
+  operator_phone_snapshot: string;
+  operator_email_snapshot: string;
+  aircraft_snapshot: string | null;
+  base_price_sar: number;
+  insurance_price_sar: number;
+  customs_handling_price_sar: number;
+  total_price_sar: number; // GENERATED
+  proposed_pickup_date: string;
+  proposed_delivery_date: string;
+  operator_notes: string | null;
+  status: CargoOfferStatus;
+  expires_at: string;
+  decided_at: string | null;
+  decided_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CargoOfferInsert = Partial<CargoOfferRow> & {
+  cargo_request_id: string;
+  operator_id: string;
+  aircraft_id: string;
+  operator_name_snapshot: string;
+  operator_phone_snapshot: string;
+  operator_email_snapshot: string;
+  base_price_sar: number;
+  proposed_pickup_date: string;
+  proposed_delivery_date: string;
+};
+
+export type CargoOfferUpdate = Partial<
+  Omit<CargoOfferRow, 'id' | 'created_at' | 'total_price_sar'>
+>;
+
+export type CargoAircraftCapabilityRow = {
+  aircraft_id: string;
+  supports_horse: boolean;
+  supports_luxury_car: boolean;
+  supports_valuables: boolean;
+  supports_other: boolean;
+  max_horse_count: number | null;
+  max_car_count: number | null;
+  max_payload_kg: number | null;
+  notes: string | null;
+  updated_at: string;
+};
+
+export type CargoAircraftCapabilityInsert = Partial<CargoAircraftCapabilityRow> & {
+  aircraft_id: string;
+};
+
+export type CargoAircraftCapabilityUpdate = Partial<
+  Omit<CargoAircraftCapabilityRow, 'aircraft_id'>
+>;
+
+export type CargoEmailAlertStatusRow = {
+  id: 1;
+  status: CargoEmailAlertStatusValue;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+  updated_at: string;
+};
+
+export type CargoEmailAlertStatusUpdate = Partial<
+  Omit<CargoEmailAlertStatusRow, 'id'>
+>;
+
 // --- operator_notification_alert_status (Phase 8 §3.10) ---
 
 // Singleton — id is always 1 (CHECK enforced by migration).
@@ -2572,6 +2733,31 @@ export type Database = {
         Row: ClientEmptyLegAlertStatusRow;
         Insert: ClientEmptyLegAlertStatusRow;
         Update: ClientEmptyLegAlertStatusUpdate;
+        Relationships: [];
+      };
+      // Phase 11 PR 1 §3.1-§3.6 — Cargo (Special Charter) tables.
+      cargo_requests: {
+        Row: CargoRequestRow;
+        Insert: CargoRequestInsert;
+        Update: CargoRequestUpdate;
+        Relationships: [];
+      };
+      cargo_offers: {
+        Row: CargoOfferRow;
+        Insert: CargoOfferInsert;
+        Update: CargoOfferUpdate;
+        Relationships: [];
+      };
+      cargo_aircraft_capabilities: {
+        Row: CargoAircraftCapabilityRow;
+        Insert: CargoAircraftCapabilityInsert;
+        Update: CargoAircraftCapabilityUpdate;
+        Relationships: [];
+      };
+      cargo_email_alert_status: {
+        Row: CargoEmailAlertStatusRow;
+        Insert: CargoEmailAlertStatusRow;
+        Update: CargoEmailAlertStatusUpdate;
         Relationships: [];
       };
     };

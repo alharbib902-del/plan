@@ -365,9 +365,12 @@ export const clientsAr = {
     unauthorized: 'يجب تسجيل الدخول أولاً.',
   } as Record<string, string>,
 
-  // Bookings page chips (Decision #10 unified /me/bookings)
+  // Bookings page chips (Decision #10 unified /me/bookings).
+  // Phase 11 PR 1 adds cargo (sky → emerald palette to keep
+  // the 3 sources visually distinct).
   bookingsSourceCharter: 'طيران خاص',
   bookingsSourceEmptyLeg: 'رحلة فارغة',
+  bookingsSourceCargo: 'شحن',
   // Phase 10 PR 2 — new "المصدر" column header in
   // BookingsTable for the source_discriminator chip.
   meBookingsTableSource: 'المصدر',
