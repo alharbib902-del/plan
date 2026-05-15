@@ -1,9 +1,9 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 10).
+> **Status:** ✅ ACCEPTED by Codex (round 10, 100/100).
 > **Codex history:** rounds 1-9 closed 17 P1 + 14 P2 (31 findings).
-> Round 9 was the first round with **zero P1** — sign of spec
-> approaching acceptance.
+> Round 9 was the first round with zero P1; round 10 returned
+> zero findings. Ready for merge + Phase 11 PR 1 implementation.
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -2572,7 +2572,10 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 11
+## Codex review history
+
+Spec ACCEPTED by Codex on round 10 (100/100). Below is the
+closure log for traceability when implementing PR 1-3.
 
 Rounds 1-9 closed 17 P1 + 14 P2 (31 findings total):
 
@@ -2768,25 +2771,48 @@ Rounds 1-9 closed 17 P1 + 14 P2 (31 findings total):
     "DO NOT reintroduce actor_required" warning so future
     iterations don't regress on Round 6's settled decision.
 
-Three open questions carry forward (unchanged from round 1):
+## Accepted defaults for PR 1 implementation
 
-1. **Snapshot freshness on cargo_requests.** Should
-   `customer_*_snapshot` re-sync from `clients` table on
-   subsequent edits to the request? Phase 9 PR 2 fixed
-   snapshots at insert time (Decision #4). Cargo follows
-   the same — open if Codex disagrees.
-2. **cargo_offer expiry default.** 7 days is suggested in
-   §3.2; Phase 9 offers are 24h. Cargo is bespoke +
-   higher-value; operators may need longer to quote.
-   Codex to validate.
-3. **Per-aircraft vs per-operator capability flags.** §3.5
-   keys on `aircraft_id`. Alternative: per-operator flags
-   (operator says "we can handle horses" without listing
-   specific aircraft). Aircraft-level is more precise but
-   higher friction to seed; operator-level is simpler but
-   lossy. Founder open to either; defaulting to aircraft-
-   level for v1.
+The 3 questions below were carried as open through rounds 1-9.
+Codex round 10 acceptance noted they are functionally **defaults
+already chosen**, not blockers. Locked here so PR 1 implementation
+proceeds without re-litigation:
+
+1. **Snapshot freshness on cargo_requests = fixed at insert.**
+   `customer_*_snapshot` columns are NEVER re-synced from the
+   `clients` table after the request row lands. Mirrors Phase 9
+   PR 2 Decision #4 (immutable audit trail at submit time).
+   Rationale: a client who later renames their account or
+   updates their phone should not retroactively change the
+   PII captured for an outstanding cargo request — the
+   request is a frozen contract artifact at submit time. If
+   a future phase needs a "current vs original" view, add
+   a JOIN to `clients` at read time without touching the
+   snapshot.
+2. **cargo_offer expiry default = 7 days.** Phase 9 charter
+   offers are 24h, but cargo is bespoke + high-value and
+   operators commonly need 2-3 business days to:
+   - source aircraft + crew availability
+   - run insurance + customs clearance estimates
+   - confirm permits (CITES for horses, etc.)
+   24h would push operators to defensive auto-decline.
+   7 days gives realistic quoting room; if a request needs
+   faster turnaround, the founder can manually shorten via
+   admin UI (deferred to PR 3 ops polish).
+3. **Capability matrix = per-aircraft (NOT per-operator).**
+   §3.5 `cargo_aircraft_capabilities` keys on `aircraft_id`.
+   Per-operator was the simpler alternative ("operator says
+   we handle horses") but loses precision: an operator with
+   a Cessna Citation + a Boeing 747-F has very different
+   capabilities per aircraft. Aircraft-level matches the
+   reality + lets the §4.3 capability check JOIN against
+   the specific aircraft proposed in the offer (round 1
+   P1 #4 fix). Higher seeding friction (founder must
+   manually populate per aircraft via admin UI), but the
+   precision is worth it for v1. Phase 12+ may auto-populate
+   from operator-self-declared aircraft profiles.
 
 ---
 
-**Spec ready for Codex round 10 review.**
+**Spec accepted by Codex (round 10, 100/100). Ready for merge
++ Phase 11 PR 1 implementation.**
