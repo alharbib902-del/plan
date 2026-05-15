@@ -1,18 +1,19 @@
 # Phase 10 — Empty Legs Client-Side Portal
 
-> **Status:** Draft for Codex review (round 6).
-> **Codex history:** rounds 1-5 closed 11 P1 + 6 P2 findings
+> **Status:** Draft for Codex review (round 7).
+> **Codex history:** rounds 1-6 closed 13 P1 + 8 P2 findings
 > across §3.1 / §3.2 / §3.4 / §3.5 / §3.6 / §4.2 / §4.3 /
-> §4.4 / §4.5 + Decision #9 + Probe 21 + PR 1 Server Actions
-> manifest. Round 6 should verify §3.5 → §4.5 pointer
-> consistency, the four reservation-clearing RPC patches
-> (expire / release / admin_release / cancel) all add
-> `reservation_client_id = NULL`, the new 1-hour TTL appears
-> in §4.1 RPC body + J1 user journey + Probe 23 expected
-> output (no remaining "24h" mentions outside the 5/24h
-> frequency-cap window), and the PR 1 manifest routes
-> reservation email alerts to `recordClientEmptyLegAlertStatus`
-> (NOT the Phase 9 `recordClientEmailAlertStatus`).
+> §4.4 / §4.5 / §4.6 + Decision #9 + Probe 21 + PR 1 Server
+> Actions manifest + accept_offer locked decision. Round 7
+> should verify §3.1 FK is `ON DELETE RESTRICT` (not SET
+> NULL — would corrupt valid-states CHECK on hard-delete),
+> §4.6 `release_empty_leg_reservation_for_client` is the
+> single source of truth for client cancel (Server Action
+> wrapper only), `MatchOutcome` carries both
+> `clients_written` + `clients_skipped_preferences` for
+> opt-out observability, and PR 1 manifest explicitly
+> states "do NOT patch accept_offer" (relies on §3.4
+> DEFAULT 'charter').
 > **Predecessor:** Phase 9 — Charter & Client Portal — closed
 > 2026-05-15 at sha `c1f975e` (PR #60). Phase 9 gave clients
 > first-class authenticated accounts + `/me/*` portal +
@@ -144,8 +145,10 @@ These are settled before spec acceptance:
    reservation lives on `empty_legs.reservation_*` columns
    (4-pair check). Phase 10 adds **one** column —
    `reservation_client_id UUID NULL REFERENCES clients(id)
-   ON DELETE SET NULL` — and extends the pair check so
-   `(reservation_client_id IS NULL) OR
+   ON DELETE RESTRICT` (Codex round 6 P1 #1 fix — `SET NULL`
+   would corrupt the State C valid-states CHECK on hard-
+   delete; see §3.1 for the rationale) — and extends the
+   pair check so `(reservation_client_id IS NULL) OR
    (reservation_token_hash IS NULL)` (i.e. either the
    guest-token reservation OR the authenticated-client
    reservation, never both on one row).
@@ -333,11 +336,43 @@ a guest token. Phase 7 reservation_* columns stay; this
 adds one nullable FK + extends the existing pair-check
 constraint.
 
+**Codex round 6 PR #61 P1 #1 fix — FK behavior must not break
+the valid-states CHECK.** The prior draft used `ON DELETE SET
+NULL`. With the State C valid-states CHECK (which requires
+both `reservation_client_id` AND `reservation_expires_at`
+populated together), a hard-delete of a client row holding
+an active State C reservation would set ONLY
+`reservation_client_id` to NULL, leaving
+`reservation_expires_at` populated → the row matches no valid
+state, so PostgreSQL would abort the DELETE itself. That's
+silent data corruption mode + admin operations that fail with
+no obvious cause.
+
+Use `ON DELETE RESTRICT` instead: PostgreSQL refuses to delete
+the client row while any leg references it, with an explicit
+FK violation message. Operationally this means: **before hard-
+deleting a client account (admin tool, future PDPL right-to-
+erase flow), admin must first call `admin_release_empty_leg_reservation`
+on every leg where `reservation_client_id = client.id`.** The
+release RPC clears the entire reservation tuple atomically
+(per §4.5.3 patch) so the FK then has nothing to reject.
+
+Phase 9 does NOT expose a hard-delete flow for clients today
+(deactivation is soft via `signup_status`). When a future
+phase adds hard-delete, the spec there will document the
+"release holds first" sequence; for Phase 10 the constraint
+is purely defensive against accidental hard-delete from
+Supabase Studio or admin tooling that doesn't know about
+empty-leg reservations.
+
 ```sql
--- Add column
+-- Add column with ON DELETE RESTRICT (Codex round 6 P1 #1).
+-- See spec text above for the rationale (SET NULL would
+-- leave reservation_expires_at populated, violating the
+-- valid-states CHECK and aborting the DELETE).
 ALTER TABLE empty_legs
   ADD COLUMN IF NOT EXISTS reservation_client_id UUID
-    REFERENCES clients(id) ON DELETE SET NULL;
+    REFERENCES clients(id) ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS idx_empty_legs_reservation_client
   ON empty_legs (reservation_client_id)
@@ -947,30 +982,46 @@ forward. Concretely:
        `wa_url` populated + `email_url` NULL, dispatch
        wa.me link only
      - opted OUT of both → **no row written**, no dispatch
-       (counted in `MatchOutcome` skipped variant for
-       observability)
+       (the client is counted in
+       `matched.clients_skipped_preferences` for observability —
+       see MatchOutcome shape below)
      The single-row-per-(client, leg) dedupe model is
      preserved by the §3.2 unique index — frequency cap
      + match-history work the same regardless of channel
      count.
    - **`MatchOutcome` shape change (Codex round 2 PR #61
-     P2 #4 fix).** The actual current shape is
-     `{ ok: true; matched: { leg_id: string; rows_written:
-     number } } | <skipped variants>`. **`rows_written`
-     stays as the lead count** (no rename — preserves
-     backwards-compat with all existing call sites +
-     outbox-processed semantics). A NEW optional sibling
-     `clients_written?: number` is added inside `matched`,
-     populated only when the client-loop actually ran (i.e.
-     when `ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`).
+     P2 #4 fix + round 6 P2 #3 fix).** The actual current
+     shape is `{ ok: true; matched: { leg_id: string;
+     rows_written: number } } | <skipped variants>`.
+     **`rows_written` stays as the lead count** (no rename
+     — preserves backwards-compat with all existing call
+     sites + outbox-processed semantics). Two new optional
+     siblings are added inside `matched`, populated only
+     when the client-loop actually ran (i.e. when
+     `ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true'`):
+     - `clients_written?: number` — Phase 10 round 2 fix:
+       count of `empty_leg_notifications` rows successfully
+       inserted for opted-in clients
+     - `clients_skipped_preferences?: number` — Phase 10
+       round 6 P2 #3 fix: count of eligible clients (passed
+       candidate-pool + frequency-cap) but who opted out of
+       BOTH email AND wa.me channels in §3.3
+       `notification_preferences`. Useful for observability
+       (matching pipeline visibility into how many clients
+       the dispatcher would have notified but skipped per
+       preferences). Goes in the same `matched` branch
+       because a leg WAS matched even if some clients opted
+       out — it's a sibling counter, not a skipped-variant
+       reason.
      Concretely:
      ```typescript
      export type MatchOutcome =
        | { ok: true;
            matched: {
              leg_id: string;
-             rows_written: number;          // existing — leads
-             clients_written?: number;       // NEW — Phase 10
+             rows_written: number;                  // existing — leads
+             clients_written?: number;               // NEW round 2 — opted-in client rows
+             clients_skipped_preferences?: number;   // NEW round 6 — opted-out client count
            };
          }
        | <skipped variants unchanged>;
@@ -979,7 +1030,9 @@ forward. Concretely:
      `(rows_written + (clients_written ?? 0)) > 0` so the
      outbox row gets marked processed when the client-loop
      succeeded even if the lead-loop wrote zero (and vice-
-     versa).
+     versa). `clients_skipped_preferences` does NOT
+     contribute to the processed predicate (skipped clients
+     are not "work done" — only written rows count).
 4. **`notifications.ts`** gains
    `sendClientEmptyLegMatchEmail(client, leg, event_type)`
    + `buildClientWaMeUrl(client, leg)` — mirror of the existing
@@ -1568,16 +1621,39 @@ from `source_offer_table`, but:
   RPC); the explicit `'empty_leg'` here covers the two
   known empty-leg paths. No silent mislabeling either way.
 
-**What about Phase 9 `accept_offer`?** It also INSERTs a
-bookings row, but for charter (not empty-leg). The §3.4
-DEFAULT `'charter'` correctly tags those rows; no patch
-needed. PR 1 includes a one-line addendum to the existing
-`accept_offer` (`CREATE OR REPLACE`) optionally — Codex to
-decide in round 6 whether to be defensive and explicit
-there too, or rely on the DEFAULT. Phase 9's
-`accept_offer` already has a 30+ column INSERT; adding
-`source_discriminator: 'charter'` is one line and removes
-DEFAULT-dependency.
+**What about Phase 9 `accept_offer`?** Locked decision
+(Codex round 6 PR #61 P2 #4 fix): **PR 1 does NOT patch
+`accept_offer`.** The §3.4 column DEFAULT `'charter'`
+correctly tags new charter accept_offer rows. Three reasons
+to leave accept_offer untouched in this phase:
+
+1. **Surface area discipline.** PR 1 already touches 6 RPCs
+   (§4.1 reserve, §4.3 confirm-for-client, §4.4 patches
+   confirm + admin_mark_sold, §4.5 patches expire +
+   release + admin_release + cancel, §4.6 release-for-
+   client). Adding accept_offer = 11 RPCs in one PR
+   makes the review surface harder to keep at 100/100.
+2. **DEFAULT is correct.** The §3.4 backfill `CASE` already
+   tags historical accept_offer rows as `'charter'` (rows
+   without `source_offer_table = 'phase7_empty_leg'` fall
+   to the ELSE branch). Forward writes get the same value
+   via DEFAULT. No silent mislabeling.
+3. **Phase 11 will touch accept_offer anyway.** The payment
+   phase wires HyperPay/Moyasar/ZATCA, which means
+   `accept_offer` will be `CREATE OR REPLACE`d to integrate
+   payment intent creation. That's the natural moment to
+   add explicit `source_discriminator: 'charter'` (one-line
+   defensive write removing DEFAULT-dependency). Doing it
+   now would just mean re-touching the same RPC twice.
+
+The trade-off accepted: if a Phase 10.x patch ever changes
+the §3.4 DEFAULT (e.g., to NULL for some new business unit),
+existing charter accept_offer code paths would silently start
+writing NULL. Mitigation: §3.4 explicitly says NOT NULL +
+DEFAULT 'charter', and Probe 21 verifies the named CHECK
+constraint binds. Any future DEFAULT change has to be a
+deliberate spec edit, which makes the implicit dependency
+visible.
 
 ### §4.5 — Phase 7 reservation-clearing RPC patches
 
@@ -1866,6 +1942,151 @@ patched signature is identical, so no route code change.
 Probe 22 (post-deploy) verifies the cron route still
 returns `200 OK` after migration — see §6 Probe 22 footnote.
 
+### §4.6 — `release_empty_leg_reservation_for_client` (NEW)
+
+**Codex round 6 PR #61 P1 #2 fix.** The prior draft described
+`cancelMyEmptyLegReservation` as "a single conditional UPDATE
+with three guards (Phase 9 PR 3 P1 #2 pattern)" — but did not
+specify the SET list and could not call
+`_recompute_empty_leg_price(p_leg_id)` from the Server Action,
+because that helper is REVOKEd from `service_role` (it's
+SECURITY DEFINER + only callable from other SECURITY DEFINER
+functions, per Phase 7 lockdown).
+
+Phase 7's release / expire / admin_release all do three things
+atomically: (a) clear the full reservation tuple, (b) flip
+status back to `'available'`, (c) call `_recompute_empty_leg_price`
+because the leg may have missed Dutch-auction ticks while
+held. Symmetric with §4.3's
+`confirm_empty_leg_reservation_for_client`, Phase 10 ships
+a dedicated client-side release RPC that does all three:
+
+```sql
+CREATE OR REPLACE FUNCTION release_empty_leg_reservation_for_client(
+  p_leg_id    UUID,
+  p_client_id UUID
+) RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_now      TIMESTAMPTZ := NOW();
+  v_leg      empty_legs%ROWTYPE;
+BEGIN
+  -- 1. Lock the leg row + load it
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  SELECT * INTO v_leg FROM empty_legs WHERE id = p_leg_id;
+
+  -- 2. Triple ownership + state guard (mirror of Phase 9
+  --    PR 3 P1 #2 conditional-UPDATE pattern, but in RPC
+  --    form so we can also call _recompute_empty_leg_price).
+  --    Single opaque error covers all three failure modes
+  --    (ownership, status, TTL) — UI shows a generic
+  --    "تعذّر الإلغاء" without leaking which guard failed.
+  IF v_leg.status <> 'reserved'
+     OR v_leg.reservation_client_id IS DISTINCT FROM p_client_id
+     OR v_leg.reservation_expires_at IS NULL
+     OR v_leg.reservation_expires_at <= v_now THEN
+    RETURN json_build_object('ok', false, 'error', 'cancel_not_allowed');
+  END IF;
+
+  -- 3. Clear the full reservation tuple + flip back to
+  --    'available'. Mirrors §4.5.3 admin_release_empty_leg_reservation
+  --    SET list exactly so all three release paths
+  --    (admin, cron expire, client cancel) leave identical
+  --    post-state.
+  UPDATE empty_legs
+     SET status                              = 'available',
+         reservation_token_hash              = NULL,
+         reservation_expires_at              = NULL,
+         reservation_customer_name_snapshot  = NULL,
+         reservation_customer_phone_snapshot = NULL,
+         reservation_client_id               = NULL
+   WHERE id = p_leg_id;
+
+  -- 4. Re-snap current_price onto the Dutch-auction curve
+  --    (the leg may have missed ticks during the hold).
+  --    SECURITY DEFINER lets us call the locked-down
+  --    helper that service_role cannot reach directly.
+  PERFORM _recompute_empty_leg_price(p_leg_id);
+
+  RETURN json_build_object(
+    'ok', true,
+    'leg_id', p_leg_id,
+    'released_at', v_now
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION release_empty_leg_reservation_for_client(UUID, UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION release_empty_leg_reservation_for_client(UUID, UUID)
+  TO service_role;
+```
+
+**Structured contracts:**
+
+| Code | Trigger |
+|---|---|
+| `leg_not_found` | leg_id invalid |
+| `cancel_not_allowed` | Any of: status not 'reserved', reservation_client_id mismatch, reservation_expires_at NULL or elapsed |
+
+**Why opaque single error?** Same rationale as Phase 9 PR 3
+P1 #2: leaking the specific failure mode (e.g.
+`not_your_reservation` vs `already_confirmed` vs `expired`)
+gives an attacker a probe surface to discover which legs a
+target client owns. Single `cancel_not_allowed` collapses
+the three guards into one opaque outcome. The UI message
+is constant: "تعذّر الإلغاء — قد يكون الحجز قد انتهى أو
+تأكّد بالفعل." (~constant: "Cancel failed — the hold may
+have expired or already been confirmed.")
+
+**Server Action contract** (replaces the prior loose
+description in §5 PR 1):
+
+```typescript
+// app/actions/clients-empty-legs.ts
+export async function cancelMyEmptyLegReservation(
+  legId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // 1. Validate session → client_id (Phase 9 PR 1 pattern)
+  const session = await requireClientSession();
+  if (!session) return { ok: false, error: 'unauthorized' };
+
+  // 2. Validate input shape (Zod, leg_id UUID)
+  const parsed = cancelMyEmptyLegReservationSchema.safeParse({
+    leg_id: legId,
+  });
+  if (!parsed.success) return { ok: false, error: 'invalid_input' };
+
+  // 3. Call the dedicated RPC (single round-trip, atomic
+  //    full-clear + status flip + price recompute).
+  const client = looseClient(getServiceRoleClient());
+  const { data, error } = await client.rpc(
+    'release_empty_leg_reservation_for_client',
+    { p_leg_id: parsed.data.leg_id, p_client_id: session.client_id }
+  );
+
+  if (error) return { ok: false, error: 'server_error' };
+  if (!data?.ok) return { ok: false, error: data?.error ?? 'cancel_not_allowed' };
+
+  // 4. Revalidate the portal pages so the UI updates
+  revalidatePath('/me/empty-legs');
+  revalidatePath('/me/empty-legs/matches');
+  return { ok: true };
+}
+```
+
+This replaces the original "single conditional UPDATE with
+three guards" description — the RPC is the single source of
+truth for the full release semantics (clear + flip + recompute),
+and the Server Action becomes a thin wrapper.
+
 ---
 
 ## 5. PR breakdown
@@ -1905,6 +2126,19 @@ returns `200 OK` after migration — see §6 Probe 22 footnote.
   `cancel_empty_leg` to ALSO clear `reservation_client_id`
   on all reservation-clearing paths (Codex round 5 P1 #2 fix —
   required for §3.1 valid-states CHECK to hold post-clear)
+- §4.6 `release_empty_leg_reservation_for_client(p_leg_id,
+  p_client_id)` RPC (NEW — Codex round 6 P1 #2 fix). Atomic
+  ownership-guarded release for the client cancel flow;
+  clears full reservation tuple + flips status='available' +
+  calls `_recompute_empty_leg_price` (the helper is REVOKEd
+  from service_role, so a Server Action UPDATE alone cannot
+  re-snap the Dutch-auction curve — only this SECURITY
+  DEFINER RPC can).
+- §3.4 also patches Phase 9 `accept_offer` decision: do NOT
+  patch (Codex round 6 P2 #4 lock). Rely on §3.4 column
+  DEFAULT `'charter'` for charter accept_offer rows. Phase 11
+  payment phase will revisit when accept_offer is touched
+  for HyperPay wiring.
 - REVOKE/GRANT for all new + modified functions
 
 **TS pipeline changes (NOT in the migration — Codex round 1
@@ -1926,12 +2160,17 @@ P1 #3 fix)**, alongside the migration in PR 1:
   singleton, so a failed reservation email surfaces on the
   5th canary card "بريد العملاء — عرض رحلة فارغة (Resend)"
   not on the existing Phase 9 client-auth Resend card).
-- `cancelMyEmptyLegReservation` — single conditional UPDATE
-  with three guards (Phase 9 PR 3 P1 #2 pattern):
-  ownership (`reservation_client_id = session.client_id`) +
-  not-yet-confirmed (`status='reserved'`) + within-TTL
-  (`reservation_expires_at > NOW()`). Zero rows → opaque
-  `cancel_not_allowed`.
+- `cancelMyEmptyLegReservation` — thin wrapper around the
+  §4.6 `release_empty_leg_reservation_for_client` RPC (Codex
+  round 6 PR #61 P1 #2 fix). Validates session + Zod input
+  + delegates to the dedicated RPC for the full atomic
+  release semantics (clear reservation tuple + flip status
+  to 'available' + recompute Dutch-auction price). Three
+  guards (ownership / status / TTL) live in the RPC body
+  collapsed to a single opaque `cancel_not_allowed` so a
+  failed cancel doesn't leak which guard rejected.
+  Revalidates `/me/empty-legs` + `/me/empty-legs/matches`
+  on success.
 - `updateMyNotificationPreferences` — wraps Zod-validated
   preferences write to `clients.notification_preferences`.
 
@@ -2207,9 +2446,9 @@ within milliseconds of each other.
 
 ---
 
-## Open questions for Codex round 6
+## Open questions for Codex round 7
 
-Rounds 1-5 closed:
+Rounds 1-6 closed:
 - **Round 1:** P1 #1 (3-state CHECK on `reservation_*`),
   P1 #2 (`lead_inquiry_id` DROP NOT NULL + XOR check),
   P1 #3 (TS pipeline scope correction), P1 #4 (new
@@ -2243,8 +2482,23 @@ Rounds 1-5 closed:
   `reserveAuthenticatedEmptyLeg` calls
   `recordClientEmptyLegAlertStatus` not the Phase 9
   client-auth singleton helper).
+- **Round 6:** P1 #1 (§3.1 FK `ON DELETE SET NULL` →
+  `ON DELETE RESTRICT` because SET NULL would clear only
+  `reservation_client_id` and leave `reservation_expires_at`
+  populated, violating the State C check and aborting the
+  client DELETE itself — silent corruption mode), P1 #2
+  (§4.6 NEW `release_empty_leg_reservation_for_client` RPC —
+  client cancel needs to clear full tuple + flip status +
+  recompute Dutch-auction price atomically; Server Action
+  alone cannot call REVOKEd `_recompute_empty_leg_price`),
+  P2 #3 (`MatchOutcome` extended with
+  `clients_skipped_preferences?: number` for opt-out
+  observability), P2 #4 (`accept_offer` decision locked —
+  PR 1 does NOT patch; relies on §3.4 DEFAULT `'charter'`;
+  Phase 11 payment phase will revisit when accept_offer is
+  touched anyway).
 
-Two open questions carry forward to round 6 (unchanged from
+Two open questions carry forward to round 7 (unchanged from
 round 2 — scope is acknowledged but deferred to PR 1
 implementation phase):
 
@@ -2278,4 +2532,4 @@ implementation phase):
 
 ---
 
-**Spec ready for Codex round 6 review.**
+**Spec ready for Codex round 7 review.**
