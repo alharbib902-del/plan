@@ -1,6 +1,11 @@
 # Phase 10 — Empty Legs Client-Side Portal
 
-> **Status:** Draft for Codex review (round 1).
+> **Status:** Draft for Codex review (round 5).
+> **Codex history:** rounds 1-4 closed P1 #1-#4 + P2 #1-#5
+> across §3.1 / §3.2 / §3.4 / §3.6 / §4.2 / §4.3 / §4.4 +
+> Probe 21. Round 5 should verify multi-channel row model
+> (§3.2 + §4.2 step 3), Phase 7 RPC patches (§4.4),
+> named CHECK constraint (§3.4), and extended Probe 21.
 > **Predecessor:** Phase 9 — Charter & Client Portal — closed
 > 2026-05-15 at sha `c1f975e` (PR #60). Phase 9 gave clients
 > first-class authenticated accounts + `/me/*` portal +
@@ -366,7 +371,7 @@ ALTER TABLE empty_legs
   );
 ```
 
-### §3.2 — `empty_leg_notifications.client_id`
+### §3.2 — `empty_leg_notifications.client_id` + multi-channel row model
 
 Allows the matching engine to write a match row keyed on a
 client (not just a lead). XOR check ensures exactly one of
@@ -380,6 +385,23 @@ the XOR check, otherwise every client INSERT raises
 `null_value_not_allowed` before the XOR predicate even
 evaluates. The `types/database.ts` regen must reflect the
 nullable shape.
+
+**Codex round 4 PR #61 P1 #1 fix — multi-channel row model.**
+Phase 7 created the table with `channel TEXT NOT NULL CHECK
+(channel IN ('whatsapp_link'))` + `wa_url TEXT NOT NULL`.
+Phase 10 needs to support clients who opt OUT of wa.me
+(email-only matches) AND clients who get BOTH channels for
+the same leg. The single-row-per-(client, leg) dedupe model
+(unique index from §3.2 below) MUST be preserved — it's how
+frequency cap + match-history work correctly. Solution:
+extend the `channel` CHECK to `('whatsapp_link', 'email',
+'email_and_wa')`, drop NOT NULL on `wa_url`, add a new
+`email_url TEXT NULL` column, then add a per-channel
+constraint pinning which URL columns are populated for each
+channel value. Existing Phase 7 rows already conform
+(channel='whatsapp_link', wa_url NOT NULL, email_url NULL by
+default), so the constraint validates trivially on a clean
+production DB.
 
 **Replay-safe XOR add (Codex round 2 PR #61 P1 #3 + round 3
 P2 #2 fix).** A previous failed migration run (e.g. partial
@@ -409,6 +431,64 @@ ALTER TABLE empty_leg_notifications
 -- becomes redundant + harmful.
 ALTER TABLE empty_leg_notifications
   ALTER COLUMN lead_inquiry_id DROP NOT NULL;
+
+-- Codex round 4 PR #61 P1 #1 fix — multi-channel row model.
+-- Phase 7 only allowed channel='whatsapp_link' + wa_url NOT
+-- NULL. Phase 10 clients may be email-only or two-channel,
+-- so extend the CHECK list, drop NOT NULL on wa_url, and add
+-- email_url + a per-channel pair check. Existing Phase 7
+-- rows already conform (whatsapp_link + wa_url + email_url
+-- NULL by default).
+ALTER TABLE empty_leg_notifications
+  ADD COLUMN IF NOT EXISTS email_url TEXT;
+
+ALTER TABLE empty_leg_notifications
+  ALTER COLUMN wa_url DROP NOT NULL;
+
+-- Drop + recreate the channel CHECK to allow the two new
+-- values. Named constraint (Codex round 4 P2 #3 discipline
+-- carries over to this section too).
+ALTER TABLE empty_leg_notifications
+  DROP CONSTRAINT IF EXISTS empty_leg_notifications_channel_check;
+
+ALTER TABLE empty_leg_notifications
+  ADD CONSTRAINT empty_leg_notifications_channel_check CHECK (
+    channel IN ('whatsapp_link', 'email', 'email_and_wa')
+  );
+
+-- Per-channel URL pair check. Each channel value pins which
+-- URL columns must / must not be populated. Pre-audit + RAISE
+-- before adding (Phase 9 PR 2 §1 + this spec's round-2 P1 #3
+-- discipline) — Phase 7 production rows are guaranteed to
+-- conform (channel='whatsapp_link', wa_url NOT NULL,
+-- email_url NULL by default), so the audit reports zero
+-- violations on healthy production.
+DO $$
+DECLARE
+  v_offending_count INT;
+BEGIN
+  SELECT COUNT(*) INTO v_offending_count
+    FROM empty_leg_notifications
+   WHERE NOT (
+     (channel = 'whatsapp_link'  AND wa_url IS NOT NULL AND email_url IS NULL)
+     OR (channel = 'email'        AND email_url IS NOT NULL AND wa_url IS NULL)
+     OR (channel = 'email_and_wa' AND wa_url IS NOT NULL AND email_url IS NOT NULL)
+   );
+  IF v_offending_count > 0 THEN
+    RAISE EXCEPTION 'PR 1 migration: empty_leg_notifications has % rows that violate the per-channel URL pair check; manual cleanup required',
+      v_offending_count;
+  END IF;
+END $$;
+
+ALTER TABLE empty_leg_notifications
+  DROP CONSTRAINT IF EXISTS empty_leg_notifications_channel_url_pair_check;
+
+ALTER TABLE empty_leg_notifications
+  ADD CONSTRAINT empty_leg_notifications_channel_url_pair_check CHECK (
+    (channel = 'whatsapp_link'  AND wa_url IS NOT NULL AND email_url IS NULL)
+    OR (channel = 'email'        AND email_url IS NOT NULL AND wa_url IS NULL)
+    OR (channel = 'email_and_wa' AND wa_url IS NOT NULL AND email_url IS NOT NULL)
+  );
 
 -- Audit + cleanup pass: any pre-existing row that violates
 -- the XOR (both NULL or both populated) is a partial-replay
@@ -500,12 +580,35 @@ unified `/me/bookings` view. Backfill via a `CASE` on the
 existing `source_offer_table` column instead, then make the
 column NOT NULL after the backfill is verified.
 
+**Codex round 4 PR #61 P2 #3 fix — named CHECK constraint
+separated from `ADD COLUMN`.** The prior draft inlined an
+anonymous `CHECK (source_discriminator IN ('charter',
+'empty_leg'))` clause inside `ADD COLUMN IF NOT EXISTS`. Two
+problems with that form:
+
+1. **Replay un-safety.** `ADD COLUMN IF NOT EXISTS` is
+   idempotent on the column itself, but the inline CHECK is
+   re-emitted with an auto-generated name (e.g.
+   `bookings_source_discriminator_check1`,
+   `..._check2`, …) on every replay if the column already
+   exists with a slightly-different inline check signature.
+   PostgreSQL silently accepts the column-already-exists case
+   but the inline CHECK is NOT idempotent the way a named
+   constraint with `DO $$ … IF NOT EXISTS … END $$` is.
+2. **Rollback opacity.** Anonymous constraints can only be
+   dropped by querying `pg_constraint` for the auto-name —
+   fragile across PG versions.
+
+Use a named constraint added in a separate step, guarded by
+a `pg_constraint`-existence check (mirrors the §3.2 and §5.2
+discipline established in Phase 9 PR 1):
+
 ```sql
 -- Step 1: add the column NULLABLE (so we can backfill correctly
--- before flipping NOT NULL).
+-- before flipping NOT NULL). NO inline CHECK — added separately
+-- in step 3 with an explicit name.
 ALTER TABLE bookings
-  ADD COLUMN IF NOT EXISTS source_discriminator TEXT
-    CHECK (source_discriminator IN ('charter', 'empty_leg'));
+  ADD COLUMN IF NOT EXISTS source_discriminator TEXT;
 
 -- Step 2: backfill from source_offer_table (Phase 6/7 column).
 -- Idempotent: WHERE source_discriminator IS NULL ensures replay
@@ -520,10 +623,27 @@ UPDATE bookings
    END
  WHERE source_discriminator IS NULL;
 
--- Step 3: set NOT NULL + DEFAULT for forward writes. The DEFAULT
+-- Step 3: add the named CHECK constraint AFTER backfill so the
+-- pre-existing rows are valid before the constraint binds.
+-- Replay-safe pg_constraint guard mirrors the §3.2 +
+-- §5.2 pattern.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'bookings_source_discriminator_check'
+       AND conrelid = 'bookings'::regclass
+  ) THEN
+    ALTER TABLE bookings
+      ADD CONSTRAINT bookings_source_discriminator_check
+      CHECK (source_discriminator IN ('charter', 'empty_leg'));
+  END IF;
+END $$;
+
+-- Step 4: set NOT NULL + DEFAULT for forward writes. The DEFAULT
 -- only matters for rows inserted by code paths that omit the
--- column (Phase 9 accept_offer is one such path until PR 1
--- code change adds the explicit value); Phase 10 PR 1's
+-- column (Phase 9 accept_offer is one such path until §4.4 below
+-- patches it to set the explicit value); Phase 10 PR 1's
 -- new admin confirmation RPC for client reservations will
 -- always set 'empty_leg' explicitly.
 ALTER TABLE bookings
@@ -793,10 +913,29 @@ forward. Concretely:
      `scoreCandidateAgainstLeg` function (signal substitutions
      per Decision #13) → for each client passing the
      frequency-cap helpers, INSERT a `client_id`-keyed row
-     into `empty_leg_notifications` + dispatch the email +
-     wa.me link via `notifications.ts` (extended to read
-     `clients.notification_preferences` + skip channels the
-     client opted out of).
+     into `empty_leg_notifications` + dispatch via
+     `notifications.ts`.
+   - **Per-client channel selection (Codex round 4 P1 #1
+     fix).** `notifications.ts` reads
+     `clients.notification_preferences.empty_legs.{email,wa_link}`
+     via the §3.3 `isClientOptedIn` helper, then writes the
+     match row + dispatches per these rules:
+     - opted in to BOTH → `channel='email_and_wa'`, both
+       `wa_url` + `email_url` populated, dispatch both
+       Resend + wa.me link
+     - opted in to email ONLY → `channel='email'`,
+       `email_url` populated + `wa_url` NULL, dispatch
+       Resend only
+     - opted in to wa.me ONLY → `channel='whatsapp_link'`,
+       `wa_url` populated + `email_url` NULL, dispatch
+       wa.me link only
+     - opted OUT of both → **no row written**, no dispatch
+       (counted in `MatchOutcome` skipped variant for
+       observability)
+     The single-row-per-(client, leg) dedupe model is
+     preserved by the §3.2 unique index — frequency cap
+     + match-history work the same regardless of channel
+     count.
    - **`MatchOutcome` shape change (Codex round 2 PR #61
      P2 #4 fix).** The actual current shape is
      `{ ok: true; matched: { leg_id: string; rows_written:
@@ -1080,6 +1219,349 @@ columns added by this section):**
 | `leg_route_destination_missing` | both `arrival_airport` AND `arrival_airport_freeform_snapshot` NULL |
 | `client_not_found` | reservation_client_id no longer exists in clients table |
 
+### §4.4 — Phase 7 RPC patches for `source_discriminator='empty_leg'`
+
+**Codex round 4 PR #61 P1 #2 fix.** §3.4 introduces the
+`bookings.source_discriminator` column with NOT NULL + DEFAULT
+`'charter'`. Two existing Phase 7 RPCs (`confirm_empty_leg_reservation`
++ `admin_mark_empty_leg_sold`) INSERT bookings rows for the
+**guest** + **admin-direct** empty-leg paths respectively;
+without an explicit `source_discriminator` value in those
+INSERTs, both code paths would fall through to the `'charter'`
+DEFAULT and mislabel post-migration empty-leg bookings on
+`/me/bookings` as charter.
+
+The §3.4 backfill correctly tags **historical** rows via
+`source_offer_table = 'phase7_empty_leg' → 'empty_leg'`. But
+forward writes from these two RPCs need explicit values,
+because the DEFAULT does not flip per code path.
+
+PR 1's migration includes a `CREATE OR REPLACE FUNCTION` for
+each of the two Phase 7 RPCs. Body changes are minimal —
+identical to the original migration body except the INSERT
+column list adds `source_discriminator` and the VALUES list
+adds `'empty_leg'`. Signatures + REVOKE/GRANT + structured
+error contracts stay unchanged so existing callers continue
+to compile.
+
+```sql
+-- ============================================================
+-- §4.4.1 — confirm_empty_leg_reservation (guest path patch)
+--
+-- Phase 7 reference: aeris/supabase/migrations/
+--   20260510000011_phase_7_empty_legs_rpcs.sql §5 line 615.
+-- Original signature, search_path, error contracts, and 30+
+-- column INSERT all preserved. Only diffs vs original:
+--   - INSERT column list: + source_discriminator
+--   - VALUES list:        + 'empty_leg'
+-- All other behaviour identical. Re-runnable as a CREATE OR
+-- REPLACE; PG drops the prior body atomically.
+-- ============================================================
+CREATE OR REPLACE FUNCTION confirm_empty_leg_reservation(
+  p_leg_id     UUID,
+  p_token_hash VARCHAR(64)
+) RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_now             TIMESTAMPTZ := NOW();
+  v_leg             empty_legs%ROWTYPE;
+  v_booking_id      UUID;
+BEGIN
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  SELECT * INTO v_leg FROM empty_legs WHERE id = p_leg_id;
+
+  IF v_leg.status <> 'reserved' THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_reserved');
+  END IF;
+
+  IF v_leg.reservation_expires_at IS NOT NULL
+     AND v_leg.reservation_expires_at <= v_now THEN
+    RETURN json_build_object('ok', false, 'error', 'reservation_expired');
+  END IF;
+
+  IF p_token_hash IS NULL
+     OR v_leg.reservation_token_hash IS DISTINCT FROM p_token_hash THEN
+    RETURN json_build_object('ok', false, 'error', 'reservation_token_mismatch');
+  END IF;
+
+  IF v_leg.reservation_customer_name_snapshot IS NULL
+     OR v_leg.reservation_customer_phone_snapshot IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'reservation_state_invalid');
+  END IF;
+
+  IF v_leg.departure_airport IS NULL
+     AND v_leg.departure_airport_freeform_snapshot IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_route_origin_missing');
+  END IF;
+
+  IF v_leg.arrival_airport IS NULL
+     AND v_leg.arrival_airport_freeform_snapshot IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_route_destination_missing');
+  END IF;
+
+  INSERT INTO bookings (
+    offer_id,
+    trip_request_id,
+    route_origin_iata,
+    route_destination_iata,
+    route_origin_freeform_snapshot,
+    route_destination_freeform_snapshot,
+    passengers_count_snapshot,
+    return_scheduled,
+    source_offer_table,
+    source_offer_id,
+    source_discriminator,             -- *DIFF* Phase 10 §3.4 column
+    client_id,
+    customer_name_snapshot,
+    customer_phone_snapshot,
+    operator_id,
+    operator_name_snapshot,
+    operator_phone_snapshot,
+    operator_email_snapshot,
+    aircraft_id,
+    aircraft_snapshot,
+    base_amount,
+    addons_amount,
+    vat_amount,
+    total_amount,
+    commission_amount,
+    operator_payout,
+    payment_status,
+    flight_status,
+    departure_scheduled,
+    checkout_token_hash,
+    checkout_token_expires_at
+  ) VALUES (
+    NULL,
+    NULL,
+    v_leg.departure_airport,
+    v_leg.arrival_airport,
+    v_leg.departure_airport_freeform_snapshot,
+    v_leg.arrival_airport_freeform_snapshot,
+    v_leg.max_passengers,
+    NULL,
+    'phase7_empty_leg',
+    v_leg.id,
+    'empty_leg',                                     -- *DIFF* source_discriminator
+    NULL,
+    v_leg.reservation_customer_name_snapshot,
+    v_leg.reservation_customer_phone_snapshot,
+    v_leg.operator_id,
+    v_leg.operator_name_snapshot,
+    v_leg.operator_phone_snapshot,
+    v_leg.operator_email_snapshot,
+    v_leg.aircraft_id,
+    v_leg.aircraft_snapshot,
+    v_leg.current_price,
+    0,
+    NULL,
+    v_leg.current_price,
+    NULL,
+    NULL,
+    'pending_offline'::booking_payment_status,
+    'confirmed'::booking_flight_status,
+    v_leg.departure_window_start,
+    NULL,
+    NULL
+  )
+  RETURNING id INTO v_booking_id;
+
+  UPDATE empty_legs
+    SET status = 'sold',
+        customer_booking_id = v_booking_id,
+        reservation_token_hash = NULL,
+        reservation_expires_at = NULL,
+        reservation_customer_name_snapshot = NULL,
+        reservation_customer_phone_snapshot = NULL
+    WHERE id = p_leg_id;
+
+  RETURN json_build_object(
+    'ok', true,
+    'leg_id', p_leg_id,
+    'booking_id', v_booking_id
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION confirm_empty_leg_reservation(UUID, VARCHAR)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION confirm_empty_leg_reservation(UUID, VARCHAR)
+  TO service_role;
+
+
+-- ============================================================
+-- §4.4.2 — admin_mark_empty_leg_sold (admin-direct path patch)
+--
+-- Phase 7 reference: same migration §11 line 1085. Same diff
+-- pattern: + source_discriminator column, + 'empty_leg' value.
+-- All other behaviour preserved.
+-- ============================================================
+CREATE OR REPLACE FUNCTION admin_mark_empty_leg_sold(
+  p_leg_id         UUID,
+  p_customer_name  TEXT,
+  p_customer_phone TEXT
+) RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_now            TIMESTAMPTZ := NOW();
+  v_leg            empty_legs%ROWTYPE;
+  v_booking_id     UUID;
+BEGIN
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  SELECT * INTO v_leg FROM empty_legs WHERE id = p_leg_id;
+
+  IF v_leg.status <> 'available' THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_available');
+  END IF;
+
+  IF v_leg.auction_window_end_at IS NOT NULL
+     AND v_leg.auction_window_end_at <= v_now THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_window_closed');
+  END IF;
+
+  IF NULLIF(TRIM(p_customer_name), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'customer_name_missing');
+  END IF;
+
+  IF NULLIF(TRIM(p_customer_phone), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'customer_phone_missing');
+  END IF;
+
+  IF v_leg.departure_airport IS NULL
+     AND v_leg.departure_airport_freeform_snapshot IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_route_origin_missing');
+  END IF;
+
+  IF v_leg.arrival_airport IS NULL
+     AND v_leg.arrival_airport_freeform_snapshot IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_route_destination_missing');
+  END IF;
+
+  INSERT INTO bookings (
+    offer_id,
+    trip_request_id,
+    route_origin_iata,
+    route_destination_iata,
+    route_origin_freeform_snapshot,
+    route_destination_freeform_snapshot,
+    passengers_count_snapshot,
+    return_scheduled,
+    source_offer_table,
+    source_offer_id,
+    source_discriminator,             -- *DIFF* Phase 10 §3.4 column
+    client_id,
+    customer_name_snapshot,
+    customer_phone_snapshot,
+    operator_id,
+    operator_name_snapshot,
+    operator_phone_snapshot,
+    operator_email_snapshot,
+    aircraft_id,
+    aircraft_snapshot,
+    base_amount,
+    addons_amount,
+    vat_amount,
+    total_amount,
+    commission_amount,
+    operator_payout,
+    payment_status,
+    flight_status,
+    departure_scheduled,
+    checkout_token_hash,
+    checkout_token_expires_at
+  ) VALUES (
+    NULL,
+    NULL,
+    v_leg.departure_airport,
+    v_leg.arrival_airport,
+    v_leg.departure_airport_freeform_snapshot,
+    v_leg.arrival_airport_freeform_snapshot,
+    v_leg.max_passengers,
+    NULL,
+    'phase7_empty_leg',
+    v_leg.id,
+    'empty_leg',                                     -- *DIFF* source_discriminator
+    NULL,
+    TRIM(p_customer_name),
+    TRIM(p_customer_phone),
+    v_leg.operator_id,
+    v_leg.operator_name_snapshot,
+    v_leg.operator_phone_snapshot,
+    v_leg.operator_email_snapshot,
+    v_leg.aircraft_id,
+    v_leg.aircraft_snapshot,
+    v_leg.current_price,
+    0,
+    NULL,
+    v_leg.current_price,
+    NULL,
+    NULL,
+    'pending_offline'::booking_payment_status,
+    'confirmed'::booking_flight_status,
+    v_leg.departure_window_start,
+    NULL,
+    NULL
+  )
+  RETURNING id INTO v_booking_id;
+
+  UPDATE empty_legs
+    SET status = 'sold',
+        customer_booking_id = v_booking_id
+    WHERE id = p_leg_id;
+
+  RETURN json_build_object(
+    'ok', true,
+    'leg_id', p_leg_id,
+    'booking_id', v_booking_id
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION admin_mark_empty_leg_sold(UUID, TEXT, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION admin_mark_empty_leg_sold(UUID, TEXT, TEXT)
+  TO service_role;
+```
+
+**Why two functions and not a trigger?** A trigger on
+`bookings AFTER INSERT` could derive `source_discriminator`
+from `source_offer_table`, but:
+- Triggers on hot tables add per-row overhead even for the
+  Phase 9 charter accept_offer path (which already sets the
+  column explicitly via §3.4 DEFAULT in the short term).
+- A trigger hides the contract — the RPC body becomes the
+  source of truth for the column value, which matches Phase
+  7 + Phase 9 conventions across the codebase.
+- The DEFAULT `'charter'` covers any third path we haven't
+  thought of (e.g. a future admin-direct charter create
+  RPC); the explicit `'empty_leg'` here covers the two
+  known empty-leg paths. No silent mislabeling either way.
+
+**What about Phase 9 `accept_offer`?** It also INSERTs a
+bookings row, but for charter (not empty-leg). The §3.4
+DEFAULT `'charter'` correctly tags those rows; no patch
+needed. PR 1 includes a one-line addendum to the existing
+`accept_offer` (`CREATE OR REPLACE`) optionally — Codex to
+decide in round 5 whether to be defensive and explicit
+there too, or rely on the DEFAULT. Phase 9's
+`accept_offer` already has a 30+ column INSERT; adding
+`source_discriminator: 'charter'` is one line and removes
+DEFAULT-dependency.
+
 ---
 
 ## 5. PR breakdown
@@ -1106,6 +1588,10 @@ columns added by this section):**
 - §4.2 (NOT a migration — TS pipeline changes; see below)
 - §4.3 `confirm_empty_leg_reservation_for_client` RPC
   (NEW — Codex round 1 P1 #4 fix)
+- §4.4 `CREATE OR REPLACE` for Phase 7
+  `confirm_empty_leg_reservation` +
+  `admin_mark_empty_leg_sold` to write
+  `source_discriminator='empty_leg'` (Codex round 4 P1 #2 fix)
 - REVOKE/GRANT for all new + modified functions
 
 **TS pipeline changes (NOT in the migration — Codex round 1
@@ -1223,6 +1709,16 @@ expected result, mirroring the Phase 9 §6 format.
 
 ### Probe 21 — Schema state
 
+**Codex round 4 PR #61 P2 #4 fix.** Probe extended from 5 to 9
+checks: adds the new `email_url` column (§3.2 — Codex round 4
+P1 #1), the named `bookings_source_discriminator_check`
+constraint (§3.4 step 3 — Codex round 4 P2 #3 fix), the
+extended channel CHECK accepting `'email_and_wa'` (§3.2 —
+Codex round 4 P1 #1 multi-channel row model), and the §3.6
+alert singleton row (Codex round 2 P2 #5 fix). Without these
+four extra checks, replays or partial migrations could leave
+the schema half-applied without surfacing in Probe 21.
+
 ```sql
 SELECT
   -- new column on empty_legs
@@ -1233,6 +1729,10 @@ SELECT
   EXISTS (SELECT 1 FROM information_schema.columns
     WHERE table_name = 'empty_leg_notifications'
       AND column_name = 'client_id') AS has_notif_client_id,
+  -- new column on empty_leg_notifications (Codex round 4 P1 #1)
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'empty_leg_notifications'
+      AND column_name = 'email_url') AS has_email_url,
   -- new column on clients
   EXISTS (SELECT 1 FROM information_schema.columns
     WHERE table_name = 'clients'
@@ -1241,12 +1741,28 @@ SELECT
   EXISTS (SELECT 1 FROM information_schema.columns
     WHERE table_name = 'bookings'
       AND column_name = 'source_discriminator') AS has_source_discriminator,
+  -- named CHECK constraint on bookings (Codex round 4 P2 #3)
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'bookings_source_discriminator_check'
+      AND conrelid = 'bookings'::regclass) AS has_source_discriminator_check,
   -- XOR check on notifications
   EXISTS (SELECT 1 FROM pg_constraint
-    WHERE conname = 'empty_leg_notifications_recipient_xor_check') AS xor_check_present;
+    WHERE conname = 'empty_leg_notifications_recipient_xor_check'
+      AND conrelid = 'empty_leg_notifications'::regclass) AS xor_check_present,
+  -- extended channel CHECK accepts the 3-state set (Codex round 4 P1 #1)
+  EXISTS (SELECT 1 FROM pg_constraint
+    WHERE conname = 'empty_leg_notifications_channel_check'
+      AND conrelid = 'empty_leg_notifications'::regclass
+      AND pg_get_constraintdef(oid) ILIKE '%email_and_wa%') AS channel_check_extended,
+  -- alert singleton row exists + healthy (Codex round 4 P2 #4)
+  EXISTS (SELECT 1 FROM client_empty_leg_alert_status
+    WHERE id = 1 AND status = 'healthy') AS alert_singleton_healthy;
 ```
 
-**Expected:** all 5 columns = `true`.
+**Expected:** all 9 columns = `true`. Any `false` indicates
+PR 1 migration failed midway or was replayed without the
+named constraints binding — re-investigate before flipping
+`ENABLE_CLIENT_EMPTY_LEGS_PORTAL=true`.
 
 ### Probe 22 — Matching engine writes client rows
 
@@ -1373,12 +1889,34 @@ within milliseconds of each other.
 
 ---
 
-## Open questions for Codex round 2
+## Open questions for Codex round 5
 
-Round 1 closed Decisions #1 / #2 / #3 / #5 (P1 #1 / P1 #2 /
-P1 #3 / P1 #4) plus #6 (P2 #5) plus Decision #13 scoring
-sources (P2 #6). Two open questions carry forward to
-round 2:
+Rounds 1-4 closed:
+- **Round 1:** P1 #1 (3-state CHECK on `reservation_*`),
+  P1 #2 (`lead_inquiry_id` DROP NOT NULL + XOR check),
+  P1 #3 (TS pipeline scope correction), P1 #4 (new
+  `confirm_empty_leg_reservation_for_client` RPC), P2 #5
+  (separate alert singleton), P2 #6 (scoring sources +
+  Decision #13).
+- **Round 2:** P1 #1 (booking column shape mirrors Phase 7
+  exactly — no new `source_empty_leg_id`), P1 #2 (full 30+
+  column INSERT not shortened), P2 #5 (`client_empty_leg_alert_status`
+  singleton + 5th canary card).
+- **Round 3:** P1 #1 (`audit_logs.user_id` NULL + admin id in
+  `new_value`), P2 #2 (no `NOT VALID + VALIDATE` pair —
+  pre-audit `RAISE` only).
+- **Round 4:** P1 #1 (multi-channel row model — `email_url`
+  column + extended channel CHECK + per-channel URL pair
+  CHECK + §4.2 step 3 channel selection rules), P1 #2 (Phase
+  7 RPC `CREATE OR REPLACE` for `source_discriminator`),
+  P2 #3 (named `bookings_source_discriminator_check`
+  constraint added separately + replay-safe pg_constraint
+  guard), P2 #4 (Probe 21 extended from 5 → 9 checks),
+  P2 #5 (header + footer + PR 1 manifest sync).
+
+Two open questions carry forward to round 5 (unchanged from
+round 2 — scope is acknowledged but deferred to PR 1
+implementation phase):
 
 1. **`empty_legs.status='reserved'` semantics** — Phase 7
    schema has `empty_leg_status ENUM ('available','reserved',
@@ -1410,4 +1948,4 @@ round 2:
 
 ---
 
-**Spec ready for Codex round 2 review.**
+**Spec ready for Codex round 5 review.**
