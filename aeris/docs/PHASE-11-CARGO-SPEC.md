@@ -1,7 +1,7 @@
 # Phase 11 — Aeris Cargo (Special Cargo Charter)
 
-> **Status:** Draft for Codex review (round 6).
-> **Codex history:** rounds 1-5 closed 12 P1 + 9 P2 (21 findings):
+> **Status:** Draft for Codex review (round 7).
+> **Codex history:** rounds 1-6 closed 15 P1 + 10 P2 (25 findings):
 > - **Round 1 (4 P1 + 1 P2):** P1 #1 (§3.4 extended
 >   bookings_source_offer_check too — not just
 >   source_discriminator), P1 #2 (§4.3 business_name →
@@ -63,13 +63,32 @@
 >   `actor_ambiguous` complementing the round-4 actor_required
 >   for both-NULL).
 >
-> Round 6 should verify the §4.4 booking-shape decision
-> rationale is operationally complete (no Phase 11 booking
-> reads code path expects `offer_id IS NOT NULL`), the
-> defensive `ALTER COLUMN TYPE` actually no-ops on a fresh
-> migration AND fixes the drift on a partial-replay (PG
-> behavior contract), and Probe 28 covers all 22 schema
-> checks introduced through round 5.
+> - **Round 6 (3 P1 + 1 P2):** P1 #1 (§4.4 actor_required
+>   removed; admin path correctly accepts both NULL after
+>   `requireAdminSession()` cookie check at Server Action
+>   layer — matches Phase 10 §4.3 admin RPC pattern;
+>   `actor_ambiguous` for both-set kept), P1 #2 (§3.4.3 widen
+>   `bookings.operator_name_snapshot 120→200` +
+>   `bookings.operator_email_snapshot 120→255` to match the
+>   already-widened `cargo_offers.*_snapshot` widths from
+>   round 3 — without this, accept_cargo_offer crashes when
+>   copying long operator name/email from cargo_offers into
+>   bookings), P1 #3 (RLS enabled on cargo_requests +
+>   cargo_offers + cargo_aircraft_capabilities; was only on
+>   cargo_email_alert_status; PII / pricing / capability data
+>   all at risk of direct anon read otherwise), P2 #4
+>   (defensive `ALTER COLUMN SET NOT NULL` on aircraft_id +
+>   defensive named CHECK re-add via DO blocks for all 5 named
+>   constraints — closes the partial-replay drift cases that
+>   `CREATE TABLE IF NOT EXISTS` couldn't fix; Probe 28
+>   extended 20→25 to verify every invariant).
+>
+> Round 7 should verify the actor-guard relaxation actually
+> aligns with `app/actions/empty-legs.ts:435` admin pattern,
+> the bookings column widening is non-breaking for Phase 6/9
+> charter + Phase 7/10 empty-leg booking surfaces, and that
+> Probe 28 catches every replay-drift case (RLS + widths +
+> NOT NULL + named CHECKs).
 > **Predecessor:** Phase 10 — Empty Legs Client-Side Portal —
 > live in production at HEAD `1035313` (PR #63 merged
 > 2026-05-15). All 7 founder probes (21-27) passed.
@@ -533,6 +552,45 @@ CREATE INDEX IF NOT EXISTS idx_cargo_requests_status
 CREATE INDEX IF NOT EXISTS idx_cargo_requests_pickup
   ON cargo_requests (pickup_date)
   WHERE status IN ('pending', 'offers_received');
+
+-- Codex round 6 PR #64 P1 #3 fix — RLS on cargo_requests.
+-- Contains client PII (customer_name + customer_phone +
+-- customer_email + cargo details). All access flows through
+-- service-role RPCs (§4.1, §4.2) + service-role admin queries
+-- which bypass RLS. No policies needed; the ENABLE ensures
+-- direct anon/authenticated reads are denied even if
+-- accidentally granted in a future migration.
+ALTER TABLE cargo_requests ENABLE ROW LEVEL SECURITY;
+
+-- Codex round 6 PR #64 P2 #4 fix — defensive CHECK repair on
+-- the 2 round-3 named constraints + the round-3 round-3
+-- request_value/date sanity. CREATE TABLE IF NOT EXISTS
+-- would skip if a partial earlier replay landed without these.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_requests_value_positive_check'
+       AND conrelid = 'cargo_requests'::regclass
+  ) THEN
+    ALTER TABLE cargo_requests
+      ADD CONSTRAINT cargo_requests_value_positive_check
+      CHECK (estimated_value_sar > 0);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_requests_date_order_check'
+       AND conrelid = 'cargo_requests'::regclass
+  ) THEN
+    ALTER TABLE cargo_requests
+      ADD CONSTRAINT cargo_requests_date_order_check
+      CHECK (
+        delivery_date_target IS NULL
+        OR delivery_date_target >= pickup_date
+      );
+  END IF;
+END $$;
 ```
 
 ### §3.2 — `cargo_offers` table (NEW)
@@ -675,6 +733,63 @@ CREATE INDEX IF NOT EXISTS idx_cargo_offers_pending
 ALTER TABLE cargo_offers
   ALTER COLUMN operator_name_snapshot TYPE VARCHAR(200),
   ALTER COLUMN operator_email_snapshot TYPE VARCHAR(255);
+
+-- Codex round 6 PR #64 P1 #3 fix — RLS on cargo_offers.
+-- Contains operator pricing + proposed dates + capability
+-- linkage. Service-role RPCs (§4.3-§4.6) + admin queries
+-- bypass RLS; direct reads denied.
+ALTER TABLE cargo_offers ENABLE ROW LEVEL SECURITY;
+
+-- Codex round 6 PR #64 P2 #4 fix — defensive aircraft_id
+-- NOT NULL repair. CREATE TABLE IF NOT EXISTS would skip if
+-- a partial earlier replay created cargo_offers with
+-- aircraft_id nullable (round 1 P1 #4 was the round that
+-- flipped it to NOT NULL). Defensive ALTER COLUMN SET NOT NULL
+-- runs unconditionally; if the column already has the
+-- constraint, PG no-ops. If not, PG migrates after verifying
+-- no NULL rows exist (we're about to land in PR 1 with no
+-- data, so the verification passes trivially).
+ALTER TABLE cargo_offers
+  ALTER COLUMN aircraft_id SET NOT NULL;
+
+-- Codex round 6 PR #64 P2 #4 fix — defensive named CHECK
+-- constraint repair. The 3 price CHECKs may be missing if
+-- a partial earlier replay created cargo_offers without
+-- them (round 2 P1 #2 was the round that added them).
+-- The DO blocks below add each CHECK only if pg_constraint
+-- doesn't already have a row by name (replay-safe re-add).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_offers_base_price_positive_check'
+       AND conrelid = 'cargo_offers'::regclass
+  ) THEN
+    ALTER TABLE cargo_offers
+      ADD CONSTRAINT cargo_offers_base_price_positive_check
+      CHECK (base_price_sar > 0);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_offers_insurance_price_nonneg_check'
+       AND conrelid = 'cargo_offers'::regclass
+  ) THEN
+    ALTER TABLE cargo_offers
+      ADD CONSTRAINT cargo_offers_insurance_price_nonneg_check
+      CHECK (insurance_price_sar >= 0);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'cargo_offers_customs_handling_nonneg_check'
+       AND conrelid = 'cargo_offers'::regclass
+  ) THEN
+    ALTER TABLE cargo_offers
+      ADD CONSTRAINT cargo_offers_customs_handling_nonneg_check
+      CHECK (customs_handling_price_sar >= 0);
+  END IF;
+END $$;
 ```
 
 ### §3.3 — `cargo_requests.accepted_offer_id` FK + invariant
@@ -827,7 +942,41 @@ The Phase 10 `idx_bookings_client_source` partial index
 needs no change — it's keyed on `client_id` + `source_discriminator`
 + `created_at` and works for all 3 discriminator values.
 
-**Probe 28 verifies BOTH extended CHECKs.**
+**§3.4.3 — `bookings.operator_*_snapshot` width widening
+(Codex round 6 PR #64 P1 #2 fix).** Round 3 P1 #1 widened
+`cargo_offers.operator_name_snapshot` to `VARCHAR(200)` +
+`cargo_offers.operator_email_snapshot` to `VARCHAR(255)` to
+match the source `operators` schema. But §4.4
+`accept_cargo_offer` then COPIES those snapshots into
+`bookings.operator_name_snapshot` + `bookings.operator_email_snapshot`,
+which are STILL `VARCHAR(120)` from Phase 6.2's initial
+schema (`20260508000007_phase_6_2_addons.sql:43`). A valid
+operator with `company_name` length 121-200 OR
+`contact_email` length 121-255 would pass §4.3
+`submit_cargo_offer` (snapshots fit in cargo_offers) but
+fail §4.4 `accept_cargo_offer` with `value too long for
+type character varying(120)` on the bookings INSERT.
+
+Fix: widen the shared `bookings` snapshot columns to match
+the source operators schema. This is non-breaking — `ALTER
+TABLE ... TYPE VARCHAR(N)` widening is in-place, no data
+migration required, and existing Phase 6/9/10 charter +
+empty-leg bookings continue to fit. Affects all 3 source
+business units (charter + empty_leg + cargo) uniformly.
+
+```sql
+-- Codex round 6 PR #64 P1 #2 fix — widen shared bookings
+-- snapshot columns to match source operators schema. Phase 6.2
+-- shipped them as VARCHAR(120); we widen to VARCHAR(200/255)
+-- to align with operators.company_name (200) +
+-- operators.contact_email (255).
+ALTER TABLE bookings
+  ALTER COLUMN operator_name_snapshot TYPE VARCHAR(200),
+  ALTER COLUMN operator_email_snapshot TYPE VARCHAR(255);
+```
+
+**Probe 28 verifies BOTH extended CHECKs + the widened
+booking snapshot widths (round 6 P1 #2).**
 
 ### §3.5 — `cargo_aircraft_capabilities` table (NEW)
 
@@ -867,6 +1016,13 @@ CREATE INDEX IF NOT EXISTS idx_cargo_aircraft_caps_valuables
   ON cargo_aircraft_capabilities (aircraft_id) WHERE supports_valuables;
 CREATE INDEX IF NOT EXISTS idx_cargo_aircraft_caps_other
   ON cargo_aircraft_capabilities (aircraft_id) WHERE supports_other;
+
+-- Codex round 6 PR #64 P1 #3 fix — RLS on cargo_aircraft_capabilities.
+-- Operator capability data is sensitive (reveals fleet
+-- specialization). Service-role admin queries bypass RLS for
+-- the §3.5 admin seeding UI; service-role distribution engine
+-- (PR 3) reads via the §4.3 capability-check JOIN.
+ALTER TABLE cargo_aircraft_capabilities ENABLE ROW LEVEL SECURITY;
 ```
 
 PR 1 ships an admin UI page `/admin/cargo/aircraft-capabilities`
@@ -1559,17 +1715,38 @@ DECLARE
   v_booking_id UUID;
   v_request_id_for_lock UUID;
 BEGIN
-  -- Codex round 4 PR #64 P2 #4 + round 5 P2 #4 fix — actor
-  -- authorization XOR guard. Round 4 rejected the all-NULL
-  -- case (anonymous accept). Round 5 also rejects the all-SET
-  -- case (ambiguous accountability — body would silently take
-  -- the client branch but audit_logs would carry a non-NULL
-  -- admin id, leaving the audit trail confused about who
-  -- actually accepted). Exactly one of the two actor IDs must
-  -- be set.
-  IF p_actor_client_id IS NULL AND p_actor_admin_user_id IS NULL THEN
-    RETURN json_build_object('ok', false, 'error', 'actor_required');
-  END IF;
+  -- Codex round 4 P2 #4 + round 5 P2 #4 + round 6 P1 #1
+  -- ITERATION HISTORY:
+  --   - Round 4: added actor_required (rejected both NULL)
+  --   - Round 5: added actor_ambiguous (rejected both set, XOR)
+  --   - Round 6: REMOVED actor_required (it broke admin path)
+  --
+  -- Round 6 P1 #1 fix — Aeris admin auth is cookie + ENV var
+  -- based (Phase 8 ADMIN_INBOX_PASSWORD); admins do NOT have
+  -- a `users` row, so they have no UUID to pass as
+  -- p_actor_admin_user_id. Existing admin RPCs (e.g. Phase 10
+  -- §4.3 `confirm_empty_leg_reservation_for_client`) are
+  -- called with `p_admin_user_id: null` from
+  -- `app/actions/empty-legs.ts` after `requireAdminSession()`
+  -- gates at the Server Action layer.
+  --
+  -- Requiring p_actor_admin_user_id NOT NULL on the admin path
+  -- (which round 4's actor_required guard effectively did)
+  -- would make admin guest acceptance impossible until a
+  -- future phase wires admin → users row.
+  --
+  -- New contract:
+  --   - Both NULL allowed → admin path (Server Action layer
+  --     verified the admin via cookie auth before calling)
+  --   - p_actor_client_id NOT NULL → client path (Server
+  --     Action verified session → client_id)
+  --   - Both set → REJECTED (still semantically wrong;
+  --     ambiguous accountability)
+  --
+  -- The one ambiguity that actor_required closed (anonymous
+  -- accept via direct service-role RPC call) is now caught
+  -- at the Server Action gate instead. Defense-in-depth at
+  -- the DB layer is reduced to "no ambiguous both-set" only.
   IF p_actor_client_id IS NOT NULL AND p_actor_admin_user_id IS NOT NULL THEN
     RETURN json_build_object('ok', false, 'error', 'actor_ambiguous');
   END IF;
@@ -1770,8 +1947,7 @@ GRANT EXECUTE ON FUNCTION accept_cargo_offer(UUID, UUID, UUID)
 
 | Code | Trigger |
 |---|---|
-| `actor_required` | Both `p_actor_client_id` AND `p_actor_admin_user_id` are NULL (round 4 P2 #4 fix) |
-| `actor_ambiguous` | Both actor IDs are non-NULL (round 5 P2 #4 fix — XOR; ambiguous accountability would log admin id while body takes client branch) |
+| `actor_ambiguous` | Both `p_actor_client_id` AND `p_actor_admin_user_id` are non-NULL (round 5 P2 #4 fix; round 6 P1 #1 removed the previous `actor_required` for both-NULL because Aeris admin auth has no users row → admin path legitimately passes both NULL after `requireAdminSession()` cookie check at Server Action layer) |
 | `offer_not_found` | `p_offer_id` invalid OR offer deleted post-lock (rare) |
 | `request_not_found` | `cargo_offers.cargo_request_id` references missing request (only possible if FK violated; defensive) |
 | `offer_not_pending` | `cargo_offers.status` not 'pending' (already accepted/declined/withdrawn/expired by another actor) |
@@ -1833,9 +2009,21 @@ cancel_cargo_request(p_request_id, p_actor_client_id, p_actor_admin_user_id, p_r
   the first cargo accept fails at INSERT with
   check_violation; the prior round 0 manifest erroneously
   omitted this from PR 1's scope)
+- §3.4.3 bookings.operator_name_snapshot widened 120 → 200 +
+  bookings.operator_email_snapshot widened 120 → 255 to match
+  source operators schema (Codex round 6 P1 #2 fix — without
+  this the cargo accept INSERT crashes when copying long
+  operator name/email from cargo_offers; affects all 3 source
+  business units uniformly, non-breaking widening)
 - §3.5 cargo_aircraft_capabilities table + 4 partial indexes
-  + at-least-one CHECK
+  + at-least-one CHECK + RLS (Codex round 6 P1 #3 fix)
 - §3.6 cargo_email_alert_status singleton + RLS
+- RLS enabled on cargo_requests + cargo_offers (Codex round 6
+  P1 #3 fix — were missed in initial draft; PII + pricing data)
+- Defensive ALTER COLUMN SET NOT NULL on cargo_offers.aircraft_id
+  + defensive named-CHECK re-add via DO blocks for all 5 named
+  constraints (Codex round 6 P2 #4 — closes partial-replay
+  drift cases)
 - §4.1 create_cargo_request_guest RPC
 - §4.2 create_cargo_request_authenticated RPC
 - §4.3 submit_cargo_offer RPC
@@ -2026,15 +2214,50 @@ SELECT
   EXISTS (SELECT 1 FROM information_schema.columns
     WHERE table_name = 'cargo_offers'
       AND column_name = 'operator_email_snapshot'
-      AND character_maximum_length = 255) AS operator_email_snapshot_width_255;
+      AND character_maximum_length = 255) AS operator_email_snapshot_width_255,
+  -- §3.4.3 widened bookings.operator_*_snapshot (Codex round 6
+  -- P1 #2 fix — without these the cargo accept INSERT crashes
+  -- with "value too long" when copying from cargo_offers's
+  -- already-widened snapshots into bookings's narrower columns)
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'bookings'
+      AND column_name = 'operator_name_snapshot'
+      AND character_maximum_length = 200) AS bookings_operator_name_width_200,
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'bookings'
+      AND column_name = 'operator_email_snapshot'
+      AND character_maximum_length = 255) AS bookings_operator_email_width_255,
+  -- §3.1 + §3.2 + §3.5 RLS enabled (Codex round 6 P1 #3 fix)
+  -- pg_class.relrowsecurity = true means RLS is ENABLED.
+  EXISTS (SELECT 1 FROM pg_class
+    WHERE relname = 'cargo_requests'
+      AND relnamespace = 'public'::regnamespace
+      AND relrowsecurity = true) AS cargo_requests_rls_enabled,
+  EXISTS (SELECT 1 FROM pg_class
+    WHERE relname = 'cargo_offers'
+      AND relnamespace = 'public'::regnamespace
+      AND relrowsecurity = true) AS cargo_offers_rls_enabled,
+  EXISTS (SELECT 1 FROM pg_class
+    WHERE relname = 'cargo_aircraft_capabilities'
+      AND relnamespace = 'public'::regnamespace
+      AND relrowsecurity = true) AS cargo_caps_rls_enabled;
 ```
 
-**Expected:** all 20 = `true` (extended from 16 → 20 in
-Codex round 3 P1 #1 + P2 #4 fixes:
-- `has_request_value_check` (§3.1 estimated_value > 0)
-- `has_request_date_order_check` (§3.1 delivery >= pickup)
-- `operator_name_snapshot_width_200` (§3.2 widened from 120)
-- `operator_email_snapshot_width_255` (§3.2 widened from 120)).
+**Expected:** all 25 = `true` (extended from 20 → 25 in
+Codex round 6 P1 #2 + P1 #3 + P2 #4 fixes:
+- `bookings_operator_name_width_200` (§3.4.3 widened bookings)
+- `bookings_operator_email_width_255` (§3.4.3 widened bookings)
+- `cargo_requests_rls_enabled` (§3.1 RLS)
+- `cargo_offers_rls_enabled` (§3.2 RLS)
+- `cargo_caps_rls_enabled` (§3.5 RLS)
+
+Round 6 elevates Probe 28 from a "schema present" check to a
+"schema invariants intact" check — every constraint that
+`CREATE TABLE IF NOT EXISTS` could skip on a partial replay
+is verified explicitly. ANY false here means the migration
+landed against a drifted DB; defensive ALTERs in §3.1 / §3.2
+should have caught the drift but Probe 28 is the final
+verifier before flipping `ENABLE_CARGO=true`.
 
 ### Probe 29 — Guest cargo request appears in admin queue
 
@@ -2134,9 +2357,9 @@ or WhatsApp link audit).
 
 ---
 
-## Open questions for Codex round 7
+## Open questions for Codex round 8
 
-Rounds 1-5 closed 12 P1 + 9 P2:
+Rounds 1-6 closed 15 P1 + 10 P2:
 
 - **Round 1:**
   - **P1 #1:** §3.4 extends BOTH constraints
@@ -2243,6 +2466,35 @@ Rounds 1-5 closed 12 P1 + 9 P2:
     rejected both-NULL; round 5 adds `actor_ambiguous` to
     reject both-set. Together they enforce "exactly one"
     semantics; the audit trail is unambiguous.
+- **Round 6:**
+  - **P1 #1:** §4.4 actor_required REMOVED. Aeris admin auth
+    is cookie + ENV var (Phase 8 ADMIN_INBOX_PASSWORD); admins
+    have no `users` row → no UUID. Existing admin RPCs (Phase
+    10 §4.3 confirm_empty_leg_reservation_for_client) pass
+    `p_admin_user_id: null`. Round 4's actor_required would
+    have made admin guest cargo acceptance impossible. Server
+    Action layer is the auth gate via requireAdminSession();
+    `actor_ambiguous` for both-set is the only DB-layer
+    actor guard remaining.
+  - **P1 #2:** §3.4.3 widened bookings.operator_name_snapshot
+    (120 → 200) + bookings.operator_email_snapshot (120 → 255).
+    Round 3 widened the cargo_offers snapshots; round 6 widens
+    the bookings snapshots they're copied INTO. Affects
+    Phase 6/9/10 booking surfaces uniformly (non-breaking
+    widening; existing data fits).
+  - **P1 #3:** RLS enabled on cargo_requests +
+    cargo_offers + cargo_aircraft_capabilities (was missed —
+    only cargo_email_alert_status had it). Service-role RPCs
+    + admin queries bypass RLS; no policies needed. Defensive
+    against accidental anon/authenticated GRANTs in future
+    migrations.
+  - **P2 #4:** Defensive ALTER COLUMN SET NOT NULL on
+    cargo_offers.aircraft_id + defensive named-CHECK re-add
+    via DO blocks for all 5 named constraints (3 price + 2
+    request value/date). Probe 28 extended 20 → 25 to verify
+    RLS + bookings widths + the constraints. Closes the
+    partial-replay drift cases that `CREATE TABLE IF NOT EXISTS`
+    can't recover from.
 
 Three open questions carry forward (unchanged from round 1):
 
@@ -2265,4 +2517,4 @@ Three open questions carry forward (unchanged from round 1):
 
 ---
 
-**Spec ready for Codex round 6 review.**
+**Spec ready for Codex round 7 review.**
