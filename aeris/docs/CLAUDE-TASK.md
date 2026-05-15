@@ -1,11 +1,18 @@
 # Phase 10 — Empty Legs Client-Side Portal
 
-> **Status:** Draft for Codex review (round 5).
-> **Codex history:** rounds 1-4 closed P1 #1-#4 + P2 #1-#5
-> across §3.1 / §3.2 / §3.4 / §3.6 / §4.2 / §4.3 / §4.4 +
-> Probe 21. Round 5 should verify multi-channel row model
-> (§3.2 + §4.2 step 3), Phase 7 RPC patches (§4.4),
-> named CHECK constraint (§3.4), and extended Probe 21.
+> **Status:** Draft for Codex review (round 6).
+> **Codex history:** rounds 1-5 closed 11 P1 + 6 P2 findings
+> across §3.1 / §3.2 / §3.4 / §3.5 / §3.6 / §4.2 / §4.3 /
+> §4.4 / §4.5 + Decision #9 + Probe 21 + PR 1 Server Actions
+> manifest. Round 6 should verify §3.5 → §4.5 pointer
+> consistency, the four reservation-clearing RPC patches
+> (expire / release / admin_release / cancel) all add
+> `reservation_client_id = NULL`, the new 1-hour TTL appears
+> in §4.1 RPC body + J1 user journey + Probe 23 expected
+> output (no remaining "24h" mentions outside the 5/24h
+> frequency-cap window), and the PR 1 manifest routes
+> reservation email alerts to `recordClientEmptyLegAlertStatus`
+> (NOT the Phase 9 `recordClientEmailAlertStatus`).
 > **Predecessor:** Phase 9 — Charter & Client Portal — closed
 > 2026-05-15 at sha `c1f975e` (PR #60). Phase 9 gave clients
 > first-class authenticated accounts + `/me/*` portal +
@@ -88,7 +95,7 @@ behaviour stays intact.
    reservation columns on `empty_legs` (mirrors Phase 7
    guest path) + sets `reservation_client_id = session.client_id`.
 6. UI flips to "تم الحجز — في انتظار تأكيد الإدارة" with
-   a 24h hold timer. Admin confirms via existing Phase 7
+   a 1-hour hold timer (Decision #9). Admin confirms via existing Phase 7
    admin panel; on confirmation a booking row is created
    (existing accept-flow), and the booking shows up in
    `/me/bookings` for the client.
@@ -206,11 +213,27 @@ These are settled before spec acceptance:
    considered + rejected during round 2 review: it muddies
    Phase 7's existing semantics + breaks the canary's
    1-to-1 mapping between cards and Resend channels.
-9. **Reserve TTL:** 24 hours (matches Phase 7 guest
-   default). Cron `cleanup_expired_empty_leg_reservations`
-   already exists from Phase 7 — extends to also clear
-   `reservation_client_id` (no new RPC; existing function
-   gets a CREATE OR REPLACE in PR 1 migration).
+9. **Reserve TTL:** 1 hour (Codex round 5 PR #61 P1 #3 fix
+   + founder confirmation). The prior draft said "24h
+   matches Phase 7 guest default" — both halves wrong:
+   Phase 7 guest TTL is **10 minutes** (see
+   `lib/empty-legs/reservation-token.ts` line 42:
+   `DEFAULT_TTL_SECONDS = 10 * 60`), and 24h would block
+   Dutch-auction inventory far longer than guests get.
+   1 hour is the deliberate middle ground: an authenticated
+   client gets ~6× longer than a guest (privilege uplift —
+   they may need to coordinate with travel companions or
+   loop in family before committing), but the leg returns
+   to the auction within the same operating shift if the
+   client doesn't confirm. The Phase 7 cron at
+   `/api/cron/empty-legs/expire-reservations` (every 5 min)
+   continues to handle expiry — see §4.5 for the
+   `expire_empty_leg_reservation(UUID)` patch that adds
+   `reservation_client_id = NULL` to the existing clear-on-
+   expiry UPDATE. The 1h value is hard-coded into §4.1's
+   `reserve_empty_leg_authenticated` (`v_now + INTERVAL '1
+   hour'`); if product wants to change later, the constant
+   lives in one place.
 10. **Bookings unification:** application-level merge in
     `/me/bookings/page.tsx` server component. NO database
     VIEW (avoids migration + makes filtering cheaper). The
@@ -657,50 +680,43 @@ CREATE INDEX IF NOT EXISTS idx_bookings_client_source
   WHERE client_id IS NOT NULL;
 ```
 
-### §3.5 — `cleanup_expired_empty_leg_reservations` extension
+### §3.5 — Phase 7 reservation-clearing RPC patches (pointer)
 
-Phase 7's existing cleanup RPC drops in-place reservation
-when `reservation_expires_at <= NOW()`. Phase 10 extends it
-to also clear `reservation_client_id` when the same TTL
-expires (single CREATE OR REPLACE — no new RPC).
+**Codex round 5 PR #61 P1 #1 + P1 #2 fix.** The prior draft
+in this slot invented a `cleanup_expired_empty_leg_reservations()`
+batch RPC that does NOT exist in Phase 7. The Phase 7
+implementation is per-leg:
 
-The extended RPC body:
+- `expire_empty_leg_reservation(p_leg_id UUID)` — line 957 of
+  `20260510000011_phase_7_empty_legs_rpcs.sql`, called by the
+  cron route at `/api/cron/empty-legs/expire-reservations`
+  for each leg where `status='reserved'` AND
+  `reservation_expires_at <= NOW()`.
+- `release_empty_leg_reservation(UUID, VARCHAR)` — line 777,
+  customer-initiated release (token-bound).
+- `admin_release_empty_leg_reservation(UUID)` — line 840,
+  admin force-release.
+- `cancel_empty_leg(UUID, TEXT)` — line 893, admin/operator
+  terminal cancel (flips to `'cancelled'`).
 
-```sql
-CREATE OR REPLACE FUNCTION cleanup_expired_empty_leg_reservations()
-  RETURNS JSON
-  LANGUAGE plpgsql
-  SECURITY DEFINER
-  SET search_path = public, pg_temp
-AS $$
-DECLARE
-  v_deleted_count INT;
-BEGIN
-  WITH cleaned AS (
-    UPDATE empty_legs
-       SET reservation_token_hash               = NULL,
-           reservation_expires_at               = NULL,
-           reservation_customer_name_snapshot   = NULL,
-           reservation_customer_phone_snapshot  = NULL,
-           reservation_client_id                = NULL
-     WHERE reservation_expires_at <= NOW()
-     RETURNING id
-  )
-  SELECT COUNT(*) INTO v_deleted_count FROM cleaned;
+All four currently clear `reservation_token_hash`,
+`reservation_expires_at`, `reservation_customer_name_snapshot`,
+`reservation_customer_phone_snapshot` — but **not the new
+`reservation_client_id`** column added by §3.1. Without
+patches, a State C (CLIENT) reservation that hits any of these
+paths would leave the column populated while `status` flips
+back to `'available'` / `'cancelled'`, violating the new §3.1
+CHECK constraint (which requires `reservation_client_id IS
+NULL` when `reservation_token_hash IS NULL` AND `status <>
+'reserved'`).
 
-  RETURN json_build_object('ok', true, 'deleted_count', v_deleted_count);
-END;
-$$;
--- REVOKE/GRANT explicit per Phase 8 PR #53 hardening;
--- already in place from Phase 7. Re-issue to be defensive.
-REVOKE ALL ON FUNCTION cleanup_expired_empty_leg_reservations() FROM PUBLIC;
-REVOKE ALL ON FUNCTION cleanup_expired_empty_leg_reservations() FROM anon, authenticated;
-GRANT EXECUTE ON FUNCTION cleanup_expired_empty_leg_reservations() TO service_role;
-```
-
-The cron route at `/api/cron/empty-legs/expire-reservations`
-(Phase 7) needs no code change — it already calls this RPC
-every 5 minutes.
+Body patches live in **§4.5 below** alongside the §4.4
+booking-write RPC patches (single PR 1 migration; all five
+patched RPCs ship in lockstep). The cron route at
+`/api/cron/empty-legs/expire-reservations` needs no code
+change — it already calls `expire_empty_leg_reservation(UUID)`
+per leg every 5 minutes, and the patched body keeps the
+same signature.
 
 ### §3.6 — `client_empty_leg_alert_status` singleton (NEW)
 
@@ -832,11 +848,12 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'auction_window_closed');
   END IF;
 
-  -- 4. Compute reservation TTL: 24h, capped at the auction
+  -- 4. Compute reservation TTL: 1 hour (Decision #9 +
+  --    Codex round 5 P1 #3 fix), capped at the auction
   --    window end (so the reservation never outlives the
-  --    leg's offer validity)
+  --    leg's offer validity).
   v_expires_at := LEAST(
-    v_now + INTERVAL '24 hours',
+    v_now + INTERVAL '1 hour',
     v_leg_row.auction_window_end_at
   );
 
@@ -1556,11 +1573,298 @@ bookings row, but for charter (not empty-leg). The §3.4
 DEFAULT `'charter'` correctly tags those rows; no patch
 needed. PR 1 includes a one-line addendum to the existing
 `accept_offer` (`CREATE OR REPLACE`) optionally — Codex to
-decide in round 5 whether to be defensive and explicit
+decide in round 6 whether to be defensive and explicit
 there too, or rely on the DEFAULT. Phase 9's
 `accept_offer` already has a 30+ column INSERT; adding
 `source_discriminator: 'charter'` is one line and removes
 DEFAULT-dependency.
+
+### §4.5 — Phase 7 reservation-clearing RPC patches
+
+**Codex round 5 PR #61 P1 #2 fix.** §3.1's new valid-states
+CHECK constraint requires that `reservation_client_id` be
+NULL whenever `reservation_token_hash` is NULL **and**
+`status <> 'reserved'`. Four existing Phase 7 RPCs clear
+the legacy reservation columns but were written before
+`reservation_client_id` existed; without patches, a State C
+(client) reservation that hits any of these clear-paths
+would leave `reservation_client_id` populated while the
+status flips to `'available'` / `'cancelled'`, violating
+the new CHECK on the very next admin write.
+
+PR 1's migration patches all four via `CREATE OR REPLACE
+FUNCTION`. Body changes are minimal — identical to the
+Phase 7 originals except the SET clause adds
+`reservation_client_id = NULL`. Signatures + REVOKE/GRANT
++ structured error contracts unchanged so existing callers
+(including the cron route at
+`/api/cron/empty-legs/expire-reservations`) compile and
+run with no edit.
+
+```sql
+-- ============================================================
+-- §4.5.1 — expire_empty_leg_reservation (cron path patch)
+--
+-- Phase 7 reference: aeris/supabase/migrations/
+--   20260510000011_phase_7_empty_legs_rpcs.sql §9 line 957.
+-- Cron-callable per-leg RPC (the cron route loops legs where
+-- status='reserved' AND reservation_expires_at <= NOW(), then
+-- calls this RPC for each). No-op if status flipped or TTL
+-- not elapsed yet.
+-- Diff vs Phase 7 original: + reservation_client_id = NULL on
+-- the UPDATE SET clause. All other behaviour preserved.
+-- ============================================================
+CREATE OR REPLACE FUNCTION expire_empty_leg_reservation(
+  p_leg_id UUID
+) RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_now             TIMESTAMPTZ := NOW();
+  v_status          empty_leg_status;
+  v_expires_at      TIMESTAMPTZ;
+BEGIN
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  SELECT status, reservation_expires_at
+    INTO v_status, v_expires_at
+    FROM empty_legs WHERE id = p_leg_id;
+
+  IF v_status <> 'reserved' THEN
+    RETURN json_build_object('ok', true, 'no_op', true);
+  END IF;
+
+  IF v_expires_at IS NULL OR v_expires_at > v_now THEN
+    RETURN json_build_object('ok', true, 'no_op', true);
+  END IF;
+
+  UPDATE empty_legs
+    SET status = 'available',
+        reservation_token_hash = NULL,
+        reservation_expires_at = NULL,
+        reservation_customer_name_snapshot = NULL,
+        reservation_customer_phone_snapshot = NULL,
+        reservation_client_id = NULL          -- *DIFF* Phase 10 §3.1
+    WHERE id = p_leg_id;
+
+  PERFORM _recompute_empty_leg_price(p_leg_id);
+
+  RETURN json_build_object('ok', true, 'leg_id', p_leg_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION expire_empty_leg_reservation(UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION expire_empty_leg_reservation(UUID)
+  TO service_role;
+
+
+-- ============================================================
+-- §4.5.2 — release_empty_leg_reservation (customer release)
+--
+-- Phase 7 reference: same migration §6 line 777. Token-bound
+-- customer-initiated release. State C (client) reservations
+-- have no token (NULL `reservation_token_hash`), so the existing
+-- token-mismatch guard naturally rejects them — but the function
+-- can still be invoked by the dispatcher cleanup path or future
+-- admin tooling that doesn't know about State C, so the
+-- defensive `reservation_client_id = NULL` belongs in the
+-- clear-clause regardless.
+--
+-- For State C release flows, the actual entry point is the
+-- new Server Action `cancelMyEmptyLegReservation` (§5 PR 1)
+-- which performs an atomic UPDATE-with-WHERE-guards and does
+-- NOT call this RPC. Patch is defense-in-depth.
+-- Diff vs Phase 7 original: + reservation_client_id = NULL.
+-- ============================================================
+CREATE OR REPLACE FUNCTION release_empty_leg_reservation(
+  p_leg_id     UUID,
+  p_token_hash VARCHAR(64)
+) RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_status   empty_leg_status;
+  v_hash     VARCHAR(64);
+BEGIN
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  SELECT status, reservation_token_hash INTO v_status, v_hash
+    FROM empty_legs WHERE id = p_leg_id;
+
+  IF v_status <> 'reserved' THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_reserved');
+  END IF;
+
+  IF p_token_hash IS NULL
+     OR v_hash IS DISTINCT FROM p_token_hash THEN
+    RETURN json_build_object('ok', false, 'error', 'reservation_token_mismatch');
+  END IF;
+
+  UPDATE empty_legs
+    SET status = 'available',
+        reservation_token_hash = NULL,
+        reservation_expires_at = NULL,
+        reservation_customer_name_snapshot = NULL,
+        reservation_customer_phone_snapshot = NULL,
+        reservation_client_id = NULL          -- *DIFF* Phase 10 §3.1
+    WHERE id = p_leg_id;
+
+  PERFORM _recompute_empty_leg_price(p_leg_id);
+
+  RETURN json_build_object('ok', true, 'leg_id', p_leg_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION release_empty_leg_reservation(UUID, VARCHAR)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION release_empty_leg_reservation(UUID, VARCHAR)
+  TO service_role;
+
+
+-- ============================================================
+-- §4.5.3 — admin_release_empty_leg_reservation (admin force-release)
+--
+-- Phase 7 reference: same migration §7 line 840. Admin "إلغاء
+-- التحفظ" button on the empty-leg detail page calls this RPC.
+-- After Phase 10, the same admin affordance also handles State C
+-- (client) reservations — the button reads `reservation_client_id`
+-- and shows a different label ("إلغاء حجز العميل") for State C,
+-- but routes through this same RPC.
+-- Diff vs Phase 7 original: + reservation_client_id = NULL.
+-- ============================================================
+CREATE OR REPLACE FUNCTION admin_release_empty_leg_reservation(
+  p_leg_id UUID
+) RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_status empty_leg_status;
+BEGIN
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  SELECT status INTO v_status FROM empty_legs WHERE id = p_leg_id;
+
+  IF v_status <> 'reserved' THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_reserved');
+  END IF;
+
+  UPDATE empty_legs
+    SET status = 'available',
+        reservation_token_hash = NULL,
+        reservation_expires_at = NULL,
+        reservation_customer_name_snapshot = NULL,
+        reservation_customer_phone_snapshot = NULL,
+        reservation_client_id = NULL          -- *DIFF* Phase 10 §3.1
+    WHERE id = p_leg_id;
+
+  PERFORM _recompute_empty_leg_price(p_leg_id);
+
+  RETURN json_build_object('ok', true, 'leg_id', p_leg_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION admin_release_empty_leg_reservation(UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION admin_release_empty_leg_reservation(UUID)
+  TO service_role;
+
+
+-- ============================================================
+-- §4.5.4 — cancel_empty_leg (admin/operator terminal cancel)
+--
+-- Phase 7 reference: same migration §8 line 893. Terminal cancel
+-- of the leg itself (flips to 'cancelled', not 'available'). When
+-- a State C reservation exists at cancel time, this clears the
+-- client's hold + flips the leg terminal — clients see the leg
+-- disappear from their reservation cards on next page load.
+-- The audit_logs row already captures the operator/admin action
+-- + reason text via the existing AFTER UPDATE trigger + this
+-- RPC's explicit insert; no Phase 10 audit additions needed.
+-- Diff vs Phase 7 original: + reservation_client_id = NULL.
+-- ============================================================
+CREATE OR REPLACE FUNCTION cancel_empty_leg(
+  p_leg_id UUID,
+  p_reason TEXT
+) RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_status empty_leg_status;
+BEGIN
+  PERFORM 1 FROM empty_legs WHERE id = p_leg_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'leg_not_found');
+  END IF;
+
+  SELECT status INTO v_status FROM empty_legs WHERE id = p_leg_id;
+
+  IF v_status NOT IN ('available', 'reserved') THEN
+    RETURN json_build_object('ok', false,
+      'error', CASE v_status
+                 WHEN 'sold' THEN 'leg_sold_use_booking_flow'
+                 ELSE 'leg_terminal'
+               END);
+  END IF;
+
+  UPDATE empty_legs
+    SET status = 'cancelled',
+        reservation_token_hash = NULL,
+        reservation_expires_at = NULL,
+        reservation_customer_name_snapshot = NULL,
+        reservation_customer_phone_snapshot = NULL,
+        reservation_client_id = NULL          -- *DIFF* Phase 10 §3.1
+    WHERE id = p_leg_id;
+
+  INSERT INTO audit_logs (entity_type, entity_id, action, new_value)
+    VALUES (
+      'empty_legs', p_leg_id, 'cancel',
+      jsonb_build_object('reason', NULLIF(TRIM(p_reason), ''))
+    );
+
+  RETURN json_build_object('ok', true, 'leg_id', p_leg_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION cancel_empty_leg(UUID, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION cancel_empty_leg(UUID, TEXT)
+  TO service_role;
+```
+
+**Why per-leg patches and not a trigger or generated column?**
+Same rationale as §4.4: triggers hide the contract,
+generated columns can't reference the live status flip
+context. Each RPC body remains the source of truth for what
+"clear a reservation" means; Phase 10 simply extends the
+shared clear-set with one new column. If a future Phase
+adds another reservation column, the same four RPCs need
+the same one-line addition — easy to grep, easy to review.
+
+**Cron-route compatibility:** the cron route at
+`/api/cron/empty-legs/expire-reservations` (Phase 7,
+schedule `*/5 * * * *` per `vercel.json`) calls
+`expire_empty_leg_reservation(p_leg_id UUID)` per leg. The
+patched signature is identical, so no route code change.
+Probe 22 (post-deploy) verifies the cron route still
+returns `200 OK` after migration — see §6 Probe 22 footnote.
 
 ---
 
@@ -1580,7 +1884,9 @@ DEFAULT-dependency.
   (Codex round 2 P1 #1 fix — the existing
   `bookings.source_offer_id` already serves the linkage when
   `source_offer_table='phase7_empty_leg'`).
-- §3.5 `cleanup_expired_empty_leg_reservations` CREATE OR REPLACE
+- §3.5 — pointer to §4.5 (Codex round 5 P1 #1 fix —
+  the prior `cleanup_expired_empty_leg_reservations` RPC
+  did not exist in Phase 7; per-leg RPCs patched in §4.5)
 - §3.6 `client_empty_leg_alert_status` singleton + RLS
   (Codex round 2 P2 #5 fix — separate channel from Phase 9
   client auth alert singleton)
@@ -1592,6 +1898,13 @@ DEFAULT-dependency.
   `confirm_empty_leg_reservation` +
   `admin_mark_empty_leg_sold` to write
   `source_discriminator='empty_leg'` (Codex round 4 P1 #2 fix)
+- §4.5 `CREATE OR REPLACE` for Phase 7
+  `expire_empty_leg_reservation` +
+  `release_empty_leg_reservation` +
+  `admin_release_empty_leg_reservation` +
+  `cancel_empty_leg` to ALSO clear `reservation_client_id`
+  on all reservation-clearing paths (Codex round 5 P1 #2 fix —
+  required for §3.1 valid-states CHECK to hold post-clear)
 - REVOKE/GRANT for all new + modified functions
 
 **TS pipeline changes (NOT in the migration — Codex round 1
@@ -1607,7 +1920,12 @@ P1 #3 fix)**, alongside the migration in PR 1:
 **Server Actions** (`app/actions/clients-empty-legs.ts`):
 - `reserveAuthenticatedEmptyLeg` — wraps §4.1 RPC; on success
   triggers `sendClientEmptyLegReservationEmail` (helper) +
-  `recordClientEmailAlertStatus` (Phase 9 singleton).
+  `recordClientEmptyLegAlertStatus` (Codex round 5 PR #61
+  P2 #4 fix — writes to the §3.6 `client_empty_leg_alert_status`
+  singleton, NOT the Phase 9 `client_notification_alert_status`
+  singleton, so a failed reservation email surfaces on the
+  5th canary card "بريد العملاء — عرض رحلة فارغة (Resend)"
+  not on the existing Phase 9 client-auth Resend card).
 - `cancelMyEmptyLegReservation` — single conditional UPDATE
   with three guards (Phase 9 PR 3 P1 #2 pattern):
   ownership (`reservation_client_id = session.client_id`) +
@@ -1794,7 +2112,7 @@ SELECT reserve_empty_leg_authenticated(
   "ok": true,
   "leg_id": "...",
   "reserved_at": "...",
-  "expires_at": "<NOW + 24h or auction_end>",
+  "expires_at": "<NOW + 1 hour or auction_end, whichever earlier>",
   "price_at_reservation": "<DECIMAL>"
 }
 ```
@@ -1889,9 +2207,9 @@ within milliseconds of each other.
 
 ---
 
-## Open questions for Codex round 5
+## Open questions for Codex round 6
 
-Rounds 1-4 closed:
+Rounds 1-5 closed:
 - **Round 1:** P1 #1 (3-state CHECK on `reservation_*`),
   P1 #2 (`lead_inquiry_id` DROP NOT NULL + XOR check),
   P1 #3 (TS pipeline scope correction), P1 #4 (new
@@ -1913,8 +2231,20 @@ Rounds 1-4 closed:
   constraint added separately + replay-safe pg_constraint
   guard), P2 #4 (Probe 21 extended from 5 → 9 checks),
   P2 #5 (header + footer + PR 1 manifest sync).
+- **Round 5:** P1 #1 (§3.5 fix — patch real
+  `expire_empty_leg_reservation(UUID)` per leg, NOT the
+  invented `cleanup_expired_empty_leg_reservations()`),
+  P1 #2 (§4.5 new — `CREATE OR REPLACE` for the four Phase 7
+  reservation-clearing RPCs to ALSO clear `reservation_client_id`
+  so §3.1 valid-states CHECK holds), P1 #3 (Decision #9 TTL —
+  was wrongly stated "24h matches Phase 7 guest"; founder
+  picked 1 hour as middle ground between 10-min guest and
+  too-long 24h hold), P2 #4 (PR 1 Server Actions manifest —
+  `reserveAuthenticatedEmptyLeg` calls
+  `recordClientEmptyLegAlertStatus` not the Phase 9
+  client-auth singleton helper).
 
-Two open questions carry forward to round 5 (unchanged from
+Two open questions carry forward to round 6 (unchanged from
 round 2 — scope is acknowledged but deferred to PR 1
 implementation phase):
 
@@ -1948,4 +2278,4 @@ implementation phase):
 
 ---
 
-**Spec ready for Codex round 5 review.**
+**Spec ready for Codex round 6 review.**
