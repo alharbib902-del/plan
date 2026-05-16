@@ -250,7 +250,27 @@ CREATE OR REPLACE FUNCTION cargo_operator_last_dispatch_map(
   SECURITY DEFINER
   SET search_path = public, pg_temp
 AS $$
+DECLARE
+  v_text_ids TEXT[];
 BEGIN
+  -- Round 2 PR #73 P1 #1 fix — compare as TEXT first, cast after.
+  -- The earlier version cast `expanded.operator_id::UUID` directly
+  -- in the WHERE clause. If ANY processed outbox row contained a
+  -- non-UUID string in dispatch_result->'dispatched_operator_ids'
+  -- (from manual repair, a prior bug, or future schema drift), the
+  -- cast raised 22P02 invalid_text_representation. Because
+  -- dispatchCargoRequest() treats this RPC's failure as
+  -- `retryable_failure`, the whole distribution drain would loop
+  -- forever on the bad historical row.
+  --
+  -- The fix: convert p_operator_ids → TEXT[], match operator_id
+  -- (already TEXT from jsonb_array_elements_text) against that
+  -- text array, and cast to UUID ONLY in the outer SELECT — by
+  -- which point only rows whose JSON value equals one of our
+  -- input UUIDs-as-text survive. Bad strings drop out at the
+  -- WHERE without ever hitting the cast.
+  v_text_ids := ARRAY(SELECT id::TEXT FROM unnest(p_operator_ids) AS id);
+
   RETURN QUERY
     SELECT
       expanded.operator_id::UUID AS operator_id,
@@ -268,7 +288,7 @@ BEGIN
               o.dispatch_result -> 'dispatched_operator_ids'
             ) = 'array'
     ) AS expanded
-    WHERE expanded.operator_id::UUID = ANY(p_operator_ids)
+    WHERE expanded.operator_id = ANY(v_text_ids)
     GROUP BY expanded.operator_id;
 END;
 $$;
