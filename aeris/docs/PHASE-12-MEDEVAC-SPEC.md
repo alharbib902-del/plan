@@ -1045,10 +1045,26 @@ prior writes — see Atomicity note below):
    entry in `v_subscription.covered_members`:
 
    ```sql
+   -- Round 7 PR #75 P2 #3 fix — regex-gate the dob cast.
+   -- covered_members is mutable JSONB; an admin payload
+   -- with a malformed/missing 'dob' would otherwise raise
+   -- `invalid_datetime_format` (SQLSTATE 22007) at cast
+   -- time and bubble a raw Postgres error to the client
+   -- instead of the structured 'patient_not_covered'.
+   -- The `~ '^\d{4}-\d{2}-\d{2}$'` pre-filter limits the
+   -- cast to ISO-8601 date strings; any row with a missing
+   -- key, a non-string value (jsonb null/number/object),
+   -- or a string that doesn't match the shape is silently
+   -- skipped (treated as a non-match). The admin Server
+   -- Action that mutates covered_members per D5 is the
+   -- forward-defence; this filter is the consume-side
+   -- belt-and-suspenders.
    SELECT BTRIM(m->>'name')           -- canonical, casing kept
      INTO v_canonical_patient_name
      FROM jsonb_array_elements(v_subscription.covered_members) AS m
     WHERE lower(BTRIM(m->>'name')) = v_normalised_name
+      AND (m->>'dob') IS NOT NULL
+      AND (m->>'dob') ~ '^\d{4}-\d{2}-\d{2}$'
       AND (m->>'dob')::DATE          = p_patient_member_dob
     LIMIT 1;
    ```
@@ -1247,6 +1263,35 @@ admin_read_medevac_request_detail(
 **Steps** (single statement-level transaction; any RAISE
 EXCEPTION aborts the call and reverts the audit insert):
 
+0. **Fail-closed metadata guard** (Round 7 PR #75 P1 #1
+   fix). Before the audit insert OR the PII select, the RPC
+   MUST verify that `p_session_metadata` carries both
+   fields and that each is a non-empty string:
+
+   ```sql
+   IF p_session_metadata IS NULL
+      OR (p_session_metadata->>'cookie_expiry') IS NULL
+      OR length(BTRIM(p_session_metadata->>'cookie_expiry')) = 0
+      OR (p_session_metadata->>'cookie_fingerprint') IS NULL
+      OR length(BTRIM(p_session_metadata->>'cookie_fingerprint')) = 0
+   THEN
+     RETURN json_build_object(
+       'ok', false,
+       'error', 'admin_session_metadata_required'
+     );
+   END IF;
+   ```
+
+   This is the database-side counterpart to the TS helper's
+   env guard (see ENV addition below). It blocks the path
+   where a future caller refactor or a test harness passes
+   `'{}'::jsonb` and would otherwise produce an audit row
+   with `cookie_expiry=NULL` + `cookie_fingerprint=NULL`,
+   leaving the PII read effectively unattributable. The
+   guard returns the structured error WITHOUT writing any
+   audit row — the RPC never reached the privileged read,
+   so there's nothing to attribute.
+
 1. **INSERT the audit row first** so a SELECT failure can
    never expose PII unaudited:
    ```sql
@@ -1354,23 +1399,36 @@ because `consume_aeris_shield_event` (§4.7) and
 
 **Server-side helpers** (`lib/medevac/`):
 - `admin-pii.ts` — D12 PII surface (Round 5 PR #75 P2 #4 fix;
-  rewritten in Round 6 PR #75 P1 #1 + P1 #2 fixes).
+  rewritten in Round 6 PR #75 P1 #1 + P1 #2 fixes; hardened
+  in Round 7 PR #75 P1 #1 fix).
   Exports `readAdminMedevacRequestDetail(requestId)` which:
-  (1) calls `requireAdminSession()` to confirm the cookie is
-  valid + collect its `expiry`, (2) computes a
-  `cookie_fingerprint` (HMAC-SHA256 of the verified cookie
-  value using `process.env.ADMIN_AUDIT_FINGERPRINT_SECRET`
-  — a NEW env var added in PR 1's deployment runbook; the
-  fingerprint is reproducible per-session but never reverses
-  to the cookie), (3) calls SECURITY DEFINER RPC
+  (1) **fail-closed env guard** — at module load OR at
+  function call (cached), assert
+  `process.env.ADMIN_AUDIT_FINGERPRINT_SECRET` is a non-empty
+  string; if missing/empty, THROW
+  `AdminPiiEnvError('ADMIN_AUDIT_FINGERPRINT_SECRET is
+  missing or empty')` before any cookie read, RPC call, or
+  partial output. The page-level error boundary surfaces a
+  generic "admin temporarily unavailable" message — we
+  refuse to render PII without a working audit-fingerprint
+  pipeline. (2) Calls `requireAdminSession()` to confirm
+  the cookie is valid + collect its `expiry`. (3) Computes
+  the `cookie_fingerprint` (HMAC-SHA256 of the verified
+  cookie value using the env secret; reproducible per-session
+  but irreversible). (4) Calls SECURITY DEFINER RPC
   `admin_read_medevac_request_detail(p_request_id => $1,
   p_session_metadata => jsonb_build_object(
     'cookie_expiry', $cookie_expiry,
     'cookie_fingerprint', $fingerprint
-  ))` via `createAdminClient()`, (4) returns the RPC's
+  ))` via `createAdminClient()`. (5) Returns the RPC's
   `{request, audit_logged_at}` payload to the page. There
   is NO TS-side INSERT of the audit row — the RPC owns both
   the audit write AND the PII select in one transaction.
+  If the RPC returns `{ok: false, error:
+  'admin_session_metadata_required'}` (which it will only
+  ever do if the helper itself was bypassed by a buggy
+  caller), the helper re-throws so the page never receives
+  PII with a missing-attribution failure mode.
   Also exports `listAdminMedevacRequests()` which is the
   redacted list-view variant that NEVER selects
   `patient_name_snapshot` or `patient_age_snapshot` (D8
@@ -1529,9 +1587,105 @@ adds 37 + 39-40.
 
 ### Probe 33 — Schema state (PR 1, before flag flip)
 
-40+ boolean checks: 7 ENUMs + 4 tables + 4 lookup-seed
-verifications + all CHECK constraints + RLS on every new
-table + 7 indexes. Mirrors Phase 11 Probe 28 (33 checks).
+**Round 7 PR #75 P2 #4 fix — inventory expanded to the
+actual PR 1 surface.** Mirrors Phase 11 Probe 28's
+"every new object exists" pattern but adapted to Phase 12's
+larger PR 1 footprint. The probe is a single SQL script that
+returns a row per check with `name TEXT` + `ok BOOLEAN`; all
+rows MUST be ok=true before the activation flag flips.
+
+**ENUMs (7)** — `pg_type` exists with the expected labels:
+1. `medevac_severity`           (3 labels)
+2. `medevac_service_level`      (4 labels)
+3. `medevac_request_status`     (6 labels, NO `dispatched`)
+4. `medevac_offer_status`       (matches cargo shape)
+5. `aeris_shield_plan`          (4 labels)
+6. `aeris_shield_subscription_status` (5 labels — checks
+   that `'pending'` does NOT exist; only `pending_payment`)
+7. `medical_certifying_authority` (5 labels)
+
+**Tables + RLS (8 new objects)** — `pg_class` exists +
+`pg_class.relrowsecurity = true` for each:
+8.  `medevac_requests`
+9.  `medevac_offers`
+10. `aircraft_medical_certifications`
+11. `medevac_severity_sla` (lookup, 3-row seed verified)
+12. `medevac_subscription_plan_terms` (lookup, 4-row seed
+    verified — Round 4 PR #75 P2 #3 fix made this
+    RLS-enabled)
+13. `medevac_subscriptions`
+14. `aeris_shield_config` (singleton, 1-row seed verified)
+15. `medevac_email_alert_status` (singleton, 1-row seed
+    verified)
+
+**Constraints (named CHECK + FK)** — every named constraint
+in §3.1-§3.9 exists in `pg_constraint`:
+16. `medevac_requests_identity_check`
+17. `medevac_requests_guest_severity_check`
+18. `medevac_requests_covered_status_equiv_check`
+    (Round 2 PR #75 P1 #2 fix — two-way equivalence)
+19. `medevac_requests_covered_has_subscription_check`
+    (Round 2 PR #75 P1 #2 fix — paired with #18)
+20. `medevac_requests_accepted_link_check`
+21. `medevac_requests_value_positive_check`
+22. `medevac_requests_cancellation_reason_length_check`
+23. `medevac_requests_subscription_fkey` (ON DELETE RESTRICT)
+24. `medevac_subscriptions_date_order_check`
+25. `medevac_subscriptions_active_has_dates_check`
+    (Round 6 PR #75 P2 #4 fix — allows `cancelled` with
+    NULL dates pre-activation)
+26. `medevac_subscriptions_events_within_plan_check`
+27. `medevac_subscriptions_cancellation_reason_length_check`
+28. `bookings_source_discriminator_check` extended to allow
+    `'medevac'` (verify via `pg_get_constraintdef`)
+29. `bookings_source_offer_check` extended to allow
+    `'medevac_offers'` (verify via `pg_get_constraintdef`)
+
+**Trigger (1)** — `pg_trigger` exists for the
+`aircraft_medical_certifications` table:
+30. `enforce_aircraft_medical_certifications_trigger`
+    (Round 3 PR #75 P1 #1 fix — consolidated trigger
+    name; the older `reject_past_expiry_trigger` MUST NOT
+    exist, since the rule was moved into the trigger body).
+
+**Indexes (7 named in §3.1 + §3.7)** — all `idx_medevac_*`
+indexes from §3.1 and §3.7 exist in `pg_indexes`:
+31. `idx_medevac_requests_client`
+32. `idx_medevac_requests_status`
+33. `idx_medevac_requests_severity`
+34. `idx_medevac_requests_sla_pending`
+35. `idx_medevac_subscriptions_client`
+36. `idx_medevac_subscriptions_status`
+37. (extend if §3.2/§3.5 add more named indexes — count
+    them at probe-write time so this stays accurate.)
+
+**RPCs (6 in PR 1)** — `pg_proc` exists AND
+`has_function_privilege('service_role', $oid, 'EXECUTE')
+= true` AND `has_function_privilege('PUBLIC', $oid,
+'EXECUTE') = false`:
+38. `create_medevac_request_guest`        (§4.1)
+39. `create_medevac_request_authenticated` (§4.2)
+40. `submit_medevac_offer`                  (§4.3)
+41. `consume_aeris_shield_event`            (§4.7)
+42. `subscribe_to_aeris_shield`             (§4.8) — note:
+    inventory item #25 (PR 1) but RPC ships in PR 1
+    migration per §5; the page that calls it ships in PR 2.
+43. `admin_read_medevac_request_detail`    (§4.10 — Round 6
+    PR #75 P1 #2 fix; Round 7 PR #75 P1 #1 fix adds the
+    fail-closed metadata guard.)
+
+**Env vars (1 new in PR 1)** — Round 7 PR #75 P2 #2 fix:
+44. `ADMIN_AUDIT_FINGERPRINT_SECRET` env exists, is a
+    non-empty string of ≥ 32 hex chars. Check via a small
+    Server Action probe endpoint that returns a sanitised
+    boolean (NEVER the value itself). Without this var the
+    admin PII helper fail-closes (Round 7 PR #75 P1 #1
+    fix), so probe 33 MUST verify it before the activation
+    flag flips. `CRON_SECRET` and `ENABLE_MEDEVAC` are
+    NOT checked here (PR 3 and the §7 runbook own those).
+
+**Total: 44 named checks.** All MUST pass before the
+activation flag flip in §7 step 3.
 
 ### Probe 34 — Guest stable medevac request appears in admin queue
 
@@ -1621,8 +1775,26 @@ appears in `skip_reasons['no_certification']`.
 
 ### Production activation (per spec §10 of Phase 11 cargo)
 
-1. Apply PR 1 migration. Run Probe 33 (schema) + Probe 34
-   (guest path).
+0. **Provision PR 1 secrets BEFORE applying the migration**
+   (Round 7 PR #75 P2 #2 fix — the previous runbook only
+   listed `ENABLE_MEDEVAC` and `CRON_SECRET`, missing the
+   new admin audit fingerprint secret):
+   - `ENABLE_MEDEVAC=false` (set to false initially per
+     step 2 below; the var must exist).
+   - `ADMIN_AUDIT_FINGERPRINT_SECRET` — generate a fresh
+     random hex value (`openssl rand -hex 32`) and store it
+     via the Vercel "Environment Variables → Production"
+     UI. The admin PII helper fail-closes if this is
+     missing/empty (Round 7 PR #75 P1 #1 fix), so PR 1's
+     `/admin/medevac/[id]` page will refuse to render
+     until it's set. Re-using a previously generated
+     fingerprint secret across environments is fine; the
+     value never appears in audit logs or HTTP responses.
+   - `CRON_SECRET` is NOT required for PR 1 (no cron
+     entries ship yet — that's PR 3's runbook step 4).
+1. Apply PR 1 migration. Run Probe 33 (schema +
+   constraints + RLS + RPCs + GRANTs + the new env-var
+   sub-check #44) + Probe 34 (guest path).
 2. Set `ENABLE_MEDEVAC=false` initially.
 3. After PR 1 + PR 2 deploy: flip `ENABLE_MEDEVAC=true` →
    redeploy. Run probes 35, 36, 38.
