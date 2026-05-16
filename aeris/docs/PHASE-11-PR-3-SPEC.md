@@ -203,18 +203,22 @@ BEGIN
     p_limit := 100;
   END IF;
 
+  -- Round 3 PR #72 P1 #1 — subquery alias renamed from `inner`
+  -- to `pending_row`. `INNER` is a SQL keyword (JOIN grammar);
+  -- using it as a table alias risks a parse error on certain
+  -- PostgreSQL versions and is hostile to syntax-highlighting.
   RETURN QUERY
     UPDATE cargo_dispatch_events_outbox AS o
        SET claim_id      = p_claim_id,
            claimed_at    = NOW(),
            attempt_count = o.attempt_count + 1
      WHERE o.id IN (
-       SELECT inner.id
-         FROM cargo_dispatch_events_outbox AS inner
-        WHERE inner.processed_at IS NULL
-          AND (inner.claimed_at IS NULL
-               OR inner.claimed_at < NOW() - INTERVAL '5 minutes')
-        ORDER BY inner.emitted_at ASC
+       SELECT pending_row.id
+         FROM cargo_dispatch_events_outbox AS pending_row
+        WHERE pending_row.processed_at IS NULL
+          AND (pending_row.claimed_at IS NULL
+               OR pending_row.claimed_at < NOW() - INTERVAL '5 minutes')
+        ORDER BY pending_row.emitted_at ASC
         LIMIT p_limit
         FOR UPDATE SKIP LOCKED
      )
@@ -328,10 +332,25 @@ EXISTS (
 (The same predicate the §4.3 RPC uses at offer-submit time —
 keeps dispatch + accept in sync.)
 
-`last_dispatched_at` is the max `created_at` from
-`cargo_dispatch_events_outbox` joined through `cargo_requests`
-that reached this operator (recorded in
-`dispatch_result.dispatched_operator_ids`).
+`last_dispatched_at` is the max `processed_at` from
+`cargo_dispatch_events_outbox` rows whose
+`dispatch_result.dispatched_operator_ids` JSONB array contains
+this operator's id (Round 3 PR #72 P2 #2 fix — the table has no
+`created_at` column; the timestamps are `emitted_at`,
+`claimed_at`, `processed_at`. We want "when did THIS operator
+last receive a dispatch," which is the `processed_at` of the
+row whose successful dispatch named them). SQL:
+
+```sql
+SELECT MAX(o.processed_at) AS last_dispatched_at
+  FROM cargo_dispatch_events_outbox o
+ WHERE o.processed_at IS NOT NULL
+   AND o.dispatch_result -> 'dispatched_operator_ids'
+       ? operators.id::TEXT;   -- jsonb ? operator (does array contain?)
+```
+
+`NULL` (never dispatched) yields `recency_score = 1.0` by
+convention — first-time operators get the highest recency boost.
 
 **Step 2 — classify each candidate:**
 
@@ -384,9 +403,10 @@ where:
                              (binary today; future could weight
                              by max_horse_count vs request count)
 
-  recency_score = 1.0 if last_dispatched > 7 days ago
-                  0.5 if 3-7 days
-                  0.0 if < 3 days        ← rate-limit signal
+  recency_score = 1.0 if last_dispatched_at IS NULL  (first time)
+                  1.0 if last_dispatched_at < NOW() - 7 days
+                  0.5 if last_dispatched_at between 3 and 7 days ago
+                  0.0 if last_dispatched_at >= NOW() - 3 days  ← rate-limit signal
 
   rating_score = (operators.rating ?? 3.0) / 5.0
                  (operators table has no `rating` column yet — use
@@ -854,7 +874,8 @@ explicitly excluded for the cargo_type under test (per probe 32).
 8. Run probe 32 → verify only the capable operator received
    the dispatch.
 9. Wait 24h, check `/admin/operators/canary` → 6th card
-   reads `healthy` + dispatch_count_24h ≥ 1.
+   reads `healthy` + `cargo_dispatch_runs_24h ≥ 1` (Round 3 PR
+   #72 P2 #3 — metric name aligned with the §6.3 rename).
 10. Cleanup test data.
 11. Phase 11 closure: all 3 PRs activated, all 5 probes passed.
 
