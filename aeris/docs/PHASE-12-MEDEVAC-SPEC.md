@@ -1,6 +1,10 @@
 # Phase 12 — Aeris MedEvac (Medical Evacuation + Aeris Shield)
 
-> **Status:** Draft (round 0). Awaiting Codex review.
+> **Status:** Spec under active Codex review — rounds 1-12
+> resolved; round 13 in progress (Round 12 PR #75 closed §4
+> RPC layer intro staleness; Round 13 closes the spec-header
+> + review-history staleness via Round 13 PR #75 P2 #1 fix).
+> See §8 below for the full per-round summary.
 > **Scope:** Medical evacuation flights (single-event) + Aeris Shield
 > subscription tier + medical operator certification matrix +
 > per-severity SLA dispatch + insurance snapshot.
@@ -1995,8 +1999,27 @@ appears in `skip_reasons['no_certification']`.
 
 ## §8 Codex review history
 
-(To be filled by Codex during review.)
+Rounds 1-12 resolved; round 13 in progress. Each round's
+fix commits are squash-mergeable on top of the round-0
+draft; inline `Round N PR #75 [P1/P2] #M fix` citations
+throughout this document point back to the row below.
 
-| Round | Findings | Resolved at |
-|---|---|---|
-| 0 | (initial draft) | — |
+| Round | Findings | Severity mix | Resolved at |
+|---|---|---|---|
+| 0 | (initial draft, 969 lines) | — | `c7d6f29` |
+| 1 | 8 (per-actor PII, covered invariant, sub FK, cert-expiry cascade, Shield operator gates, severity ENUM, PR inventory exactness, probes summary) | 5 P1 + 3 P2 | `958dd02` |
+| 2 | 6 (sub dates nullable, two-way covered equivalence, payment_status, Probe 40 reword, PR 3 cert ownership, PR 2 sla_escalated) | 3 P1 + 3 P2 | `38cea14` |
+| 3 | 6 (cert at-least-one trigger, PL/pgSQL no ROLLBACK, Shield service-level matrix, client_id RESTRICT, email_alert DDL, Probe 36 chip lock) | 4 P1 + 2 P2 | `ed79525` |
+| 4 | 4 (repat matrix gap, consume bound to caller+member, plan_terms RLS, D11 30-day reset) | 2 P1 + 2 P2 | `8f5a74e` |
+| 5 | 4 (J3 status, canonical name preserved, D4 enum rename, admin_pii_read owner) | 1 P1 + 3 P2 | `a0f14ad` |
+| 6 | 4 (admin user_id=NULL + fingerprint, atomic PII RPC, (name,dob) match, cancelled NULL dates) | 3 P1 + 1 P2 | `941442f` |
+| 7 | 4 (fail-closed metadata guard, runbook ENV, dob regex, Probe 33 inventory) | 1 P1 + 3 P2 | `723464b` |
+| 8 | 3 (safe_parse_date helper, Probe 33 indexes, isUuid guard) | 0 P1 + 3 P2 | `e6def87` |
+| 9 | 3 (INT age cast + future-DOB guard, ACL probe anon/authenticated, runbook #46 ref) | 1 P1 + 2 P2 | `501746d` |
+| 10 | 2 (D8 admin list PII-free vs detail audited, helper raw-cookie sequence) | 1 P1 + 1 P2 | `113577b` |
+| 11 | 2 (snippet redirect import, fingerprint privacy wording) | 0 P1 + 2 P2 | `82922d5` |
+| 12 | 1 (§4 RPC intro staleness) | 0 P1 + 1 P2 | `69101be` |
+| 13 | 1 (spec-header + review-history staleness — this row) | 0 P1 + 1 P2 | (this commit) |
+
+**Aggregate to date:** 48 findings closed (21 P1 + 27 P2)
+across 13 rounds; 0 outstanding P1 prior to round 14.
