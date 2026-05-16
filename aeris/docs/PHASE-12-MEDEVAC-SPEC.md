@@ -140,7 +140,7 @@ have no offer; the subscription itself is the contract).
 | **D5** | Subscription model: annual upfront fee. Auto-renewal opt-out at end-of-term. `covered_members JSONB` is mutable POST-signup via admin Server Action only (defensive — clients shouldn't add their cousin's husband mid-year). **Round 6 PR #75 P1 #3 fix — every covered person (including the subscription owner) MUST be listed as an entry in `covered_members` with both `name` AND `dob` populated**; the admin Server Action that mutates the JSONB MUST validate uniqueness on the pair `(lower(BTRIM(name)), dob)` before persisting, and §4.8 `subscribe_to_aeris_shield` MUST seed the owner row at signup time (`{name: clients.full_name, relationship: 'self', dob: <payload.dob>}` — payload provides the owner's dob because the `clients` table itself has no `date_of_birth` column). §4.7 covered-event consumption matches the (name, dob) pair, not name alone, so family-plan name collisions can't burn the wrong person's event. The `relationship='self'` entry is the only one created automatically; family members for family/VIP/Diamond plans are admin-added post-activation. | Phase 14 wires HyperPay recurring; Phase 12 only persists the fee + tracks `used_events`. The (name, dob) pair is the stable identifier — covered_members entries are admin-controlled lookup keys, not opaque ids, so audits remain human-readable. |
 | **D6** | Booking shape (identical to Phase 11 PR 2): `offer_id=NULL`, `trip_request_id=NULL`, `source_offer_table='medevac_offers'`, `source_offer_id=<UUID>`, `source_discriminator='medevac'`. EXCEPT for `J5` subscription-covered bookings: `source_offer_table=NULL`, `source_offer_id=NULL` (no offer; subscription is the contract). The Phase 6.2 pair-check constraint allows both-NULL or both-NOT-NULL; covered bookings use both-NULL. | Two booking sub-shapes inside one `source_discriminator='medevac'` value. `/me/bookings` chip renders the same; the source layer differentiates via the pair pattern. |
 | **D7** | Per-aircraft medical certifications stored in `aircraft_medical_certifications` (NEW table, §3.5). Columns: `supports_BMT`, `supports_ALS`, `supports_CCT`, `supports_repatriation` (BOOL each), `certifying_authority` ENUM, `certification_number TEXT`, `certification_expires_at TIMESTAMPTZ`. | Mirrors `cargo_aircraft_capabilities` shape. Adds expiry tracking because medical certs (unlike cargo capability) have regulatory expiry windows. Cron `*/30 * * * *` checks expired rows + flips `supports_*` to `false` (Decision D11). |
-| **D8** | `medevac_requests.patient_name_snapshot` + `patient_age_snapshot` are admin-only displays in **list/index** views. Per-actor visibility (Round 1 PR #75 P2 #7 fix — the original wording confused operator submit-offer with client/admin accept): (a) **Public surfaces** (`/cargo`, marketing) — never visible. (b) **Operator portal** (`/operator/medevac` + `/operator/medevac/[id]/offer`) — operators see MEV-XXXX + service_level + condition_severity + route ONLY while preparing offers; patient_name is REDACTED. (c) **Booked operator post-acceptance** (`/operator/medevac/offers` row for an accepted offer + the dispatch confirmation email/wa.me message sent post-accept) — the winning operator sees the full patient_name because they now need it for actual transport coordination. The transition is gated by `medevac_offers.status='accepted'`. (d) **Client portal** — clients see their own request's patient_name (it's their patient). (e) **Admin** — always sees patient_name (with `admin_pii_read` audit per D12). | PII minimization aligned with PDPL. The "operator sees nothing until they win" model prevents PII fanout — only the 1 booked operator gets the name, not all 5 dispatched operators in the candidate list. |
+| **D8** | `medevac_requests.patient_name_snapshot` + `patient_age_snapshot` are PII; render them only on the audited admin detail surface. Per-actor visibility (Round 1 PR #75 P2 #7 fix — the original wording confused operator submit-offer with client/admin accept; **Round 10 PR #75 P1 #1 fix — admin list/index is NOT a PII surface**, contradicting the original "admin-only displays in list/index views" wording which would have let `/admin/medevac` expose patient_name without an audit row): (a) **Public surfaces** (`/cargo`, marketing) — never visible. (b) **Operator portal** (`/operator/medevac` + `/operator/medevac/[id]/offer`) — operators see MEV-XXXX + service_level + condition_severity + route ONLY while preparing offers; patient_name is REDACTED. (c) **Booked operator post-acceptance** (`/operator/medevac/offers` row for an accepted offer + the dispatch confirmation email/wa.me message sent post-accept) — the winning operator sees the full patient_name because they now need it for actual transport coordination. The transition is gated by `medevac_offers.status='accepted'`. (d) **Client portal** — clients see their own request's patient_name (it's their patient). (e) **Admin list/index (`/admin/medevac` queue, `/admin/medevac/medical-certifications`, future admin search/export endpoints)** — MUST render MEV-XXXX + service_level + condition_severity + route + status only; `patient_name_snapshot` + `patient_age_snapshot` are NEVER selected. PR 1 enforces this via `listAdminMedevacRequests()` whose SELECT projection omits both columns; future admin list paths added in PR 2/PR 3 MUST reuse the same helper or follow the same projection. (f) **Admin detail (`/admin/medevac/[id]` only)** — the single audited PII surface. Loads exclusively via `readAdminMedevacRequestDetail` → SECURITY DEFINER RPC `admin_read_medevac_request_detail` (§4.10), which writes the `admin_pii_read` audit row + returns the patient-bearing payload in one atomic transaction (D12 contract). Any future admin path that needs patient_name MUST go through the same RPC; bypassing it via a direct service-role SELECT is a spec violation. | PII minimization aligned with PDPL. The "operator sees nothing until they win" model prevents PII fanout — only the 1 booked operator gets the name, not all 5 dispatched operators in the candidate list. The split between admin list (redacted) and admin detail (audited) means every privileged read is attributable to a specific admin session window + request UUID; the list view satisfies the operational queue need without spraying PII into pages that don't need it. |
 | **D9** | Insurance integration deferred to Phase 14. Phase 12 snapshots `insurance_provider_snapshot` + `insurance_claim_ref` at intake time but never calls a provider API. | Decoupling. Phase 14 HyperPay payment + ZATCA invoicing layer wires the claim filing pipeline. |
 | **D10** | SLA response windows by severity: `critical=1h`, `moderate=4h`, `stable=24h`. Stored in `medevac_severity_sla` lookup table (§3.6) so admin can tune without code deploy. **No `dispatched` status in the enum** (Round 1 PR #75 P1 #1 fix). The PR 3 dispatch cron stamps `medevac_requests.dispatched_at = NOW()` on first successful claim+notify; the request stays in `status='pending'` (or `'offers_received'` once an operator quotes). The SLA escalation cron uses the timestamp + status filter: `medevac_requests WHERE status IN ('pending', 'offers_received') AND dispatched_at IS NOT NULL AND dispatched_at + sla_interval < NOW() AND sla_escalated_at IS NULL` → auto-escalate to admin via `founder_critical_escalation_email`. | Operator must quote within the SLA or auto-escalate. Critical=1h is the existing industry standard; stable=24h gives buffer for non-urgent transfers. Using `dispatched_at` (a timestamp) instead of a `'dispatched'` status keeps the status machine simple: no new transitions needed; existing `pending → offers_received → accepted` flow is unchanged. |
 | **D11** | Medical cert expiry cron: `*/30 * * * *`. **Round 1 PR #75 P1 #4 fix — warning vs enforcement are SEPARATE actions.** (a) **Warning cascade (no flip):** sends `expired_medical_cert_alert` at 30/14/7/1 day(s) ahead of `certification_expires_at`; each warning email fires exactly once per renewal cycle via per-threshold `warning_{30,14,7,1}d_sent_at` flags on `aircraft_medical_certifications`. The cron sets the flag at send time; the flag stays set until the operator renews the cert (updates `certification_expires_at` to a new future timestamp **strictly more than 30 days out**, i.e. `certification_expires_at > NOW() + INTERVAL '30 days'`, Round 4 PR #75 P2 #4 fix — without the > 30 days condition a cert renewed mid-warning-window would reset the flags and the cron would re-send every threshold on the next tick) at which point the cron resets all 4 flags to NULL. The `supports_*` BOOLs stay TRUE during the warning window — the cert is still valid. (b) **Enforcement flip:** ONLY after the cert has actually expired (`certification_expires_at <= NOW()`) does the cron flip `supports_BMT/ALS/CCT/repatriation` to false AND send a final `medical_cert_expired_now` email. Distribution (PR 3) filters by cert AND `certification_expires_at > NOW()` as a belt-and-suspenders check. | Defensive — gives the operator a clear runway to renew (30/14/7/1 day cascade) without preemptively disabling dispatch. Per-threshold `*_sent_at` flags prevent the cron from re-emailing every 30 min for a month. Reset only on > 30-day renewal keeps the cascade single-fire per cycle and prevents email spam loops on mid-window renewals. |
@@ -1508,17 +1508,55 @@ because `consume_aeris_shield_event` (§4.7) and
   not-found branch instead. Returning `null` (rather than
   throwing) keeps the not-found UX identical to a real
   unknown-UUID query — and crucially avoids writing an
-  audit row for a request that never existed. (2) Calls
-  `requireAdminSession()` to confirm the cookie is valid +
-  collect its `expiry`. (3) Computes the
-  `cookie_fingerprint` (HMAC-SHA256 of the verified cookie
-  value using the env secret; reproducible per-session but
-  irreversible). (4) Calls SECURITY DEFINER RPC
+  audit row for a request that never existed. (2) **Read
+  the raw cookie value, validate it, then hash the SAME
+  raw value** (Round 10 PR #75 P2 #2 fix — the previous
+  wording said "HMAC of the verified cookie value" but
+  `requireAdminSession()` returns only `{valid, expiry}`,
+  not the raw cookie, so an implementer copying that
+  sentence literally would have no value to hash):
+
+  ```typescript
+  import { cookies } from 'next/headers';
+  import {
+    ADMIN_COOKIE_NAME,
+    requireAdminSession,
+  } from '@/lib/admin/auth';
+  import { createHmac } from 'node:crypto';
+
+  const rawCookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
+  // requireAdminSession() re-reads and verifies the same
+  // cookie via verifyAdminCookieValue() internally + redirects
+  // to /admin/login on failure. We rely on that for the
+  // primary validity check; the rawCookie variable is the
+  // SAME string requireAdminSession just verified, so the
+  // HMAC below is over a guaranteed-valid value.
+  const session = requireAdminSession();
+  if (!rawCookie) {
+    // requireAdminSession would already have redirected; this
+    // is belt-and-suspenders for the TS narrowing path.
+    redirect('/admin/login');
+  }
+  const cookie_fingerprint = createHmac(
+    'sha256',
+    process.env.ADMIN_AUDIT_FINGERPRINT_SECRET!
+  ).update(rawCookie, 'utf8').digest('hex');
+  const cookie_expiry = session.expiry; // unix-seconds
+  ```
+
+  Hashing the exact same string Postgres later stores in
+  the audit row's `cookie_fingerprint` makes the
+  fingerprint reproducible for a given session — re-running
+  the helper within the same cookie lifetime produces the
+  same HMAC, which is what makes `audit_logs` queryable
+  per-session. Rotating `ADMIN_AUDIT_FINGERPRINT_SECRET`
+  invalidates the mapping going forward without ever
+  exposing the raw cookie. (3) Calls SECURITY DEFINER RPC
   `admin_read_medevac_request_detail(p_request_id => $1,
   p_session_metadata => jsonb_build_object(
-    'cookie_expiry', $cookie_expiry,
-    'cookie_fingerprint', $fingerprint
-  ))` via `createAdminClient()`. (5) Returns the RPC's
+    'cookie_expiry', cookie_expiry,
+    'cookie_fingerprint', cookie_fingerprint
+  ))` via `createAdminClient()`. (4) Returns the RPC's
   `{request, audit_logged_at}` payload to the page. There
   is NO TS-side INSERT of the audit row — the RPC owns both
   the audit write AND the PII select in one transaction.
