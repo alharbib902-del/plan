@@ -137,14 +137,14 @@ have no offer; the subscription itself is the contract).
 | **D2** | 4 service levels: `BMT`, `ALS`, `CCT`, `repatriation`. ENUM exactly matches Phase 1 scaffold values. | Standard medical transport hierarchy. `BMT` = Basic Medical Transport (stable patient, nurse onboard). `ALS` = Advanced Life Support (paramedic + vital signs monitoring). `CCT` = Critical Care Transport (ICU-grade equipment + critical care physician). `repatriation` = cross-border, includes customs + visa coordination. |
 | **D3** | 3 condition severities: `stable`, `moderate`, `critical`. ENUM matches Phase 1 scaffold. | Triage standard. Severity gates the SLA tier (D10) + the public-form availability (D1). |
 | **D4** | 4 Aeris Shield plans: `individual` (1 ALS event/yr), `family` (4 ALS/yr, ≤4 members), `vip_family` (12 CCT + repatriation, ≤6 members), `diamond` (unlimited CCT + repatriation + dedicated nurse coordinator). | Per business plan tiers. Round 5 PR #75 P2 #3 fix — the enum is `aeris_shield_plan` (defined in §3.1 alongside the other Phase 12 ENUMs); the Phase 1 scaffold's `subscription_plan` type is dropped by the cleanup migration and MUST NOT be resurrected by PR 1. Both `medevac_subscription_plan_terms.plan` (PK) and `medevac_subscriptions.plan` (FK to the lookup) are typed `aeris_shield_plan`. The annual_fee + covered_events + max_members are stored in the `medevac_subscription_plan_terms` lookup table (§3.7) so admin can adjust pricing without code deploy. |
-| **D5** | Subscription model: annual upfront fee. Auto-renewal opt-out at end-of-term. `covered_members JSONB` is mutable POST-signup via admin Server Action only (defensive — clients shouldn't add their cousin's husband mid-year). | Phase 14 wires HyperPay recurring; Phase 12 only persists the fee + tracks `used_events`. |
+| **D5** | Subscription model: annual upfront fee. Auto-renewal opt-out at end-of-term. `covered_members JSONB` is mutable POST-signup via admin Server Action only (defensive — clients shouldn't add their cousin's husband mid-year). **Round 6 PR #75 P1 #3 fix — every covered person (including the subscription owner) MUST be listed as an entry in `covered_members` with both `name` AND `dob` populated**; the admin Server Action that mutates the JSONB MUST validate uniqueness on the pair `(lower(BTRIM(name)), dob)` before persisting, and §4.8 `subscribe_to_aeris_shield` MUST seed the owner row at signup time (`{name: clients.full_name, relationship: 'self', dob: <payload.dob>}` — payload provides the owner's dob because the `clients` table itself has no `date_of_birth` column). §4.7 covered-event consumption matches the (name, dob) pair, not name alone, so family-plan name collisions can't burn the wrong person's event. The `relationship='self'` entry is the only one created automatically; family members for family/VIP/Diamond plans are admin-added post-activation. | Phase 14 wires HyperPay recurring; Phase 12 only persists the fee + tracks `used_events`. The (name, dob) pair is the stable identifier — covered_members entries are admin-controlled lookup keys, not opaque ids, so audits remain human-readable. |
 | **D6** | Booking shape (identical to Phase 11 PR 2): `offer_id=NULL`, `trip_request_id=NULL`, `source_offer_table='medevac_offers'`, `source_offer_id=<UUID>`, `source_discriminator='medevac'`. EXCEPT for `J5` subscription-covered bookings: `source_offer_table=NULL`, `source_offer_id=NULL` (no offer; subscription is the contract). The Phase 6.2 pair-check constraint allows both-NULL or both-NOT-NULL; covered bookings use both-NULL. | Two booking sub-shapes inside one `source_discriminator='medevac'` value. `/me/bookings` chip renders the same; the source layer differentiates via the pair pattern. |
 | **D7** | Per-aircraft medical certifications stored in `aircraft_medical_certifications` (NEW table, §3.5). Columns: `supports_BMT`, `supports_ALS`, `supports_CCT`, `supports_repatriation` (BOOL each), `certifying_authority` ENUM, `certification_number TEXT`, `certification_expires_at TIMESTAMPTZ`. | Mirrors `cargo_aircraft_capabilities` shape. Adds expiry tracking because medical certs (unlike cargo capability) have regulatory expiry windows. Cron `*/30 * * * *` checks expired rows + flips `supports_*` to `false` (Decision D11). |
 | **D8** | `medevac_requests.patient_name_snapshot` + `patient_age_snapshot` are admin-only displays in **list/index** views. Per-actor visibility (Round 1 PR #75 P2 #7 fix — the original wording confused operator submit-offer with client/admin accept): (a) **Public surfaces** (`/cargo`, marketing) — never visible. (b) **Operator portal** (`/operator/medevac` + `/operator/medevac/[id]/offer`) — operators see MEV-XXXX + service_level + condition_severity + route ONLY while preparing offers; patient_name is REDACTED. (c) **Booked operator post-acceptance** (`/operator/medevac/offers` row for an accepted offer + the dispatch confirmation email/wa.me message sent post-accept) — the winning operator sees the full patient_name because they now need it for actual transport coordination. The transition is gated by `medevac_offers.status='accepted'`. (d) **Client portal** — clients see their own request's patient_name (it's their patient). (e) **Admin** — always sees patient_name (with `admin_pii_read` audit per D12). | PII minimization aligned with PDPL. The "operator sees nothing until they win" model prevents PII fanout — only the 1 booked operator gets the name, not all 5 dispatched operators in the candidate list. |
 | **D9** | Insurance integration deferred to Phase 14. Phase 12 snapshots `insurance_provider_snapshot` + `insurance_claim_ref` at intake time but never calls a provider API. | Decoupling. Phase 14 HyperPay payment + ZATCA invoicing layer wires the claim filing pipeline. |
 | **D10** | SLA response windows by severity: `critical=1h`, `moderate=4h`, `stable=24h`. Stored in `medevac_severity_sla` lookup table (§3.6) so admin can tune without code deploy. **No `dispatched` status in the enum** (Round 1 PR #75 P1 #1 fix). The PR 3 dispatch cron stamps `medevac_requests.dispatched_at = NOW()` on first successful claim+notify; the request stays in `status='pending'` (or `'offers_received'` once an operator quotes). The SLA escalation cron uses the timestamp + status filter: `medevac_requests WHERE status IN ('pending', 'offers_received') AND dispatched_at IS NOT NULL AND dispatched_at + sla_interval < NOW() AND sla_escalated_at IS NULL` → auto-escalate to admin via `founder_critical_escalation_email`. | Operator must quote within the SLA or auto-escalate. Critical=1h is the existing industry standard; stable=24h gives buffer for non-urgent transfers. Using `dispatched_at` (a timestamp) instead of a `'dispatched'` status keeps the status machine simple: no new transitions needed; existing `pending → offers_received → accepted` flow is unchanged. |
 | **D11** | Medical cert expiry cron: `*/30 * * * *`. **Round 1 PR #75 P1 #4 fix — warning vs enforcement are SEPARATE actions.** (a) **Warning cascade (no flip):** sends `expired_medical_cert_alert` at 30/14/7/1 day(s) ahead of `certification_expires_at`; each warning email fires exactly once per renewal cycle via per-threshold `warning_{30,14,7,1}d_sent_at` flags on `aircraft_medical_certifications`. The cron sets the flag at send time; the flag stays set until the operator renews the cert (updates `certification_expires_at` to a new future timestamp **strictly more than 30 days out**, i.e. `certification_expires_at > NOW() + INTERVAL '30 days'`, Round 4 PR #75 P2 #4 fix — without the > 30 days condition a cert renewed mid-warning-window would reset the flags and the cron would re-send every threshold on the next tick) at which point the cron resets all 4 flags to NULL. The `supports_*` BOOLs stay TRUE during the warning window — the cert is still valid. (b) **Enforcement flip:** ONLY after the cert has actually expired (`certification_expires_at <= NOW()`) does the cron flip `supports_BMT/ALS/CCT/repatriation` to false AND send a final `medical_cert_expired_now` email. Distribution (PR 3) filters by cert AND `certification_expires_at > NOW()` as a belt-and-suspenders check. | Defensive — gives the operator a clear runway to renew (30/14/7/1 day cascade) without preemptively disabling dispatch. Per-threshold `*_sent_at` flags prevent the cron from re-emailing every 30 min for a month. Reset only on > 30-day renewal keeps the cascade single-fire per cycle and prevents email spam loops on mid-window renewals. |
-| **D12** | PII redaction in `audit_logs`: never store `patient_name` in `new_value` JSONB. Store MEV-XXXX reference + `service_level` + `condition_severity` only. Same rule for any future analytics extracts. Round 5 PR #75 P2 #4 fix — the `admin_pii_read` audit surface is owned by PR 1's `lib/medevac/admin-pii.ts` helper `readAdminMedevacRequestDetail(adminId, requestId)`. The `/admin/medevac/[id]` page (PR 1 §5) calls ONLY this helper to load patient-bearing rows; the helper wraps the SELECT in a service-role client and writes an `audit_logs` row with `entity_type='medevac_request'`, `entity_id=requestId`, `action='admin_pii_read'`, `new_value=jsonb_build_object('admin_id', adminId, 'mev_number', medevac_request_number, 'service_level', service_level, 'condition_severity', condition_severity)`, `user_id=adminId`. No other admin path is allowed to read `patient_name_snapshot` directly — list views call a redacted variant (`listAdminMedevacRequests`) that omits the column entirely. | Aligned with PDPL (Saudi data protection) minimization principle. Patient name lives in `medevac_requests.patient_name_snapshot` ONLY; the `admin_pii_read` event makes every privileged read attributable to a specific admin + request without ever copying the name into the audit row. |
+| **D12** | PII redaction in `audit_logs`: never store `patient_name` in `new_value` JSONB. Store MEV-XXXX reference + `service_level` + `condition_severity` only. Same rule for any future analytics extracts. Round 5 PR #75 P2 #4 fix — the `admin_pii_read` audit surface is owned by PR 1. **Round 6 PR #75 P1 #1 fix — `audit_logs.user_id` is set to `NULL`** because Aeris admin auth is cookie-based (`ADMIN_INBOX_PASSWORD` + HMAC-signed `aeris_admin` cookie per `lib/admin/auth.ts`); `requireAdminSession()` returns a `VerifiedCookie = {valid, expiry}` payload with no `users.id`. Inserting a non-existent UUID would either violate the FK or trail false attribution. Admin identity is therefore captured in `new_value` JSONB via the cookie's `expiry` timestamp + a derived `cookie_fingerprint` (HMAC of the cookie value with a server-only key, so audit logs are queryable per-session without leaking the cookie itself) instead. **Round 6 PR #75 P1 #2 fix — the read is performed by a SECURITY DEFINER RPC `admin_read_medevac_request_detail` (PR 1 §4.10) so the audit INSERT and the PII SELECT live in the same statement-level transaction**. The TS helper `readAdminMedevacRequestDetail` (`lib/medevac/admin-pii.ts`) is now a thin caller that (a) builds the session-metadata JSONB from `requireAdminSession()` plus the cookie fingerprint, (b) calls the RPC, (c) returns its result. If the audit INSERT fails inside the RPC, Postgres aborts the whole call — no PII row is returned, no partial audit lands, and the page surfaces a generic error. The redacted list-view counterpart (`listAdminMedevacRequests`) selects no patient_name_snapshot/patient_age_snapshot at all and writes no audit. | Aligned with PDPL (Saudi data protection) minimization principle. Patient name lives in `medevac_requests.patient_name_snapshot` ONLY; the `admin_pii_read` event makes every privileged read attributable to a specific admin session window + request without ever copying the name into the audit row, and the SECURITY DEFINER RPC makes the "audit before read" claim a database-enforced invariant rather than an application-layer convention. |
 | **D13** | Subscription-funded vs out-of-pocket flow: subscription holder toggles "use subscription" → request `status='covered'`, no operator-quote loop, immediate booking via `aeris_shield_default_operator_id` admin-configured value. Non-subscription or subscription-but-toggle-off → standard `status='pending'` + operator-quote loop. | The "use subscription" toggle is the user's explicit consent to consume one of their covered events (decrementing `used_events`); without toggle, the request stays out-of-pocket even if they have remaining events. |
 | **D14** | Aeris Shield default operator: a single admin-configured operator (stored in `aeris_shield_config` singleton, §3.8) who has signed a master service agreement with Aeris and a guaranteed SLA. Used for covered events only (D13). Non-subscription requests still go through normal operator distribution. | Avoids dispatching covered events to operators who haven't signed the master SLA. Founder picks the operator via `/admin/medevac/shield-config`. |
 | **D15** | `medevac_offers` table mirrors `cargo_offers` shape exactly (per-offer status + 7-day expiry + decided_at + decline/withdraw_reason columns). The PR 2 RPCs (`accept`, `decline`, `withdraw`, `cancel`) mirror Phase 11 PR 2 §4.4-§4.6 contracts verbatim with `cargo_` → `medevac_` rename. | Maximize code reuse + spec-language reuse. Codex review surface shrinks because reviewers can compare to the accepted Phase 11 contracts. |
@@ -761,12 +761,21 @@ CREATE TABLE IF NOT EXISTS medevac_subscriptions (
   CONSTRAINT medevac_subscriptions_date_order_check CHECK (
     start_date IS NULL OR end_date IS NULL OR end_date > start_date
   ),
-  -- The status gate: any non-pending_payment status MUST have
-  -- both dates populated. Covers 'active', 'expired',
-  -- 'cancelled', 'suspended' — these are all post-activation
-  -- states.
+  -- The status gate: enforces dates ONCE the subscription has
+  -- actually been activated. `pending_payment` rows can sit
+  -- with NULL dates pre-activation (Round 2 PR #75 P1 #1 fix).
+  -- `cancelled` rows ALSO permit NULL dates (Round 6 PR #75 P2
+  -- #4 fix) because a user/admin must be able to cancel a
+  -- never-activated subscription cleanly, without inventing a
+  -- start_date / end_date pair that never existed. Pre-
+  -- activation cancellation leaves both dates NULL; post-
+  -- activation cancellation preserves the dates stamped at
+  -- activation time (so the OR's right branch keeps holding).
+  -- `active`, `expired`, and `suspended` ALWAYS require both
+  -- dates, since those states are only reachable after
+  -- activation.
   CONSTRAINT medevac_subscriptions_active_has_dates_check CHECK (
-    status = 'pending_payment'
+    status IN ('pending_payment', 'cancelled')
     OR (start_date IS NOT NULL AND end_date IS NOT NULL AND end_date > start_date)
   ),
   CONSTRAINT medevac_subscriptions_events_within_plan_check CHECK (
@@ -977,19 +986,27 @@ NEW — no Phase 11 equivalent. Atomically (all in one transaction).
 
 **Signature** (Round 4 PR #75 P1 #2 fix — expanded to bind
 the consumption to the authenticated client AND to a covered
-patient):
+patient. Round 6 PR #75 P1 #3 fix — patient identifier
+replaced by the stable `(name, dob)` pair so family-plan
+namesakes can't burn each other's covered events):
 
 ```sql
 consume_aeris_shield_event(
-  p_subscription_id           UUID,    -- subscription to consume
-  p_client_id                 UUID,    -- caller's clients.id
-                                       -- (passed by Server Action
-                                       -- from the verified
-                                       -- requireClientSession())
-  p_patient_member_identifier TEXT,    -- BTRIM/lowercase
-                                       -- normalised; matched
-                                       -- against owner's full
-                                       -- name OR a member's name
+  p_subscription_id     UUID,    -- subscription to consume
+  p_client_id           UUID,    -- caller's clients.id
+                                 -- (passed by Server Action
+                                 -- from the verified
+                                 -- requireClientSession())
+  p_patient_member_name TEXT,    -- canonical name to be
+                                 -- matched in covered_members
+                                 -- (case + whitespace
+                                 -- normalised before
+                                 -- comparison; original casing
+                                 -- preserved on snapshot)
+  p_patient_member_dob  DATE,    -- exact DOB of the covered
+                                 -- person; pairs with name
+                                 -- to form the stable lookup
+                                 -- key per D5
   -- ...the remaining request payload params (service_level,
   -- condition_severity, route, insurance snapshot, etc.)
   -- carried forward from §4.2 inputs
@@ -1018,46 +1035,48 @@ prior writes — see Atomicity note below):
     `used_events < covered_events_at_signup`).
    Failure → `{ok: false, error: 'subscription_not_consumable'}`.
 4. **Verify patient covered-member eligibility** (Round 4
-   PR #75 P1 #2 fix — was missing; without this check a
-   client could consume a family/VIP plan's event for an
-   uncovered person). Compute the normalised lookup key
-   `v_normalised := BTRIM(lower(p_patient_member_identifier))`
-   for comparison only, then scan both the owner row and the
-   `covered_members` JSONB and **resolve the canonical
-   matched name** (Round 5 PR #75 P2 #2 fix — was: "write the
-   normalised identifier into patient_name_snapshot"; that
-   destroyed the canonical casing from `clients.full_name` /
-   `covered_members[].name`, but per D8 the booked operator
-   later needs the canonical patient name for transport
-   coordination):
+   PR #75 P1 #2 fix — was missing; Round 5 PR #75 P2 #2 fix —
+   carry forward the canonical name, not the normalised key;
+   Round 6 PR #75 P1 #3 fix — match the stable `(name, dob)`
+   pair instead of name alone, eliminating family-plan
+   namesake collisions). Compute the normalised name
+   `v_normalised_name := BTRIM(lower(p_patient_member_name))`
+   for comparison only, then look up the single matching
+   entry in `v_subscription.covered_members`:
 
-   - Branch A (owner): if
-     `lower(BTRIM(clients.full_name)) = v_normalised` for
-     `clients.id = v_subscription.client_id`, set
-     `v_canonical_patient_name := clients.full_name` (BTRIM
-     only — preserve the original casing/spelling).
-   - Branch B (member): otherwise, run
-     ```sql
-     SELECT BTRIM(m->>'name')
-       FROM jsonb_array_elements(v_subscription.covered_members) AS m
-      WHERE lower(BTRIM(m->>'name')) = v_normalised
-      LIMIT 1
-     ```
-     and set `v_canonical_patient_name` to the returned
-     value. Multiple covered_members rows with the same
-     normalised name are vanishingly rare (admin Server
-     Action validates uniqueness on insert per D5), but
-     `LIMIT 1` keeps the resolution deterministic.
+   ```sql
+   SELECT BTRIM(m->>'name')           -- canonical, casing kept
+     INTO v_canonical_patient_name
+     FROM jsonb_array_elements(v_subscription.covered_members) AS m
+    WHERE lower(BTRIM(m->>'name')) = v_normalised_name
+      AND (m->>'dob')::DATE          = p_patient_member_dob
+    LIMIT 1;
+   ```
 
-   If neither branch finds a row → `{ok: false, error:
-   'patient_not_covered'}`. Otherwise carry
-   `v_canonical_patient_name` forward into step 8 (it lands
-   in `medevac_requests.patient_name_snapshot`); the
-   normalised key is discarded after this step. Admin-added
+   If `v_canonical_patient_name IS NULL` → `{ok: false,
+   error: 'patient_not_covered'}`. There is no longer an
+   implicit "owner is always covered" branch — per D5 the
+   owner is seeded as a `covered_members` entry with
+   `relationship='self'` by §4.8 `subscribe_to_aeris_shield`
+   at signup time (the owner's DOB comes from the signup
+   payload because the `clients` table has no
+   `date_of_birth` column). Owners and family members
+   therefore go through the same lookup path. Admin-added
    `covered_members` rows are mutable per D5 — this check
-   therefore always reads the row inside the FOR UPDATE lock
-   (step 1) so a concurrent admin edit can't slip an
-   unauthorised member in mid-consume.
+   always reads the row inside the FOR UPDATE lock (step 1)
+   so a concurrent admin edit can't slip an unauthorised
+   member in mid-consume. The admin Server Action that
+   mutates `covered_members` MUST validate uniqueness on
+   `(lower(BTRIM(name)), dob)` before persisting; the
+   `LIMIT 1` above is defensive belt-and-suspenders, not a
+   tie-breaker.
+
+   The canonical name lands in step 8's
+   `medevac_requests.patient_name_snapshot`; the DOB lands
+   in `patient_age_snapshot` computed as `AGE(NOW(),
+   p_patient_member_dob)` years for the audit metadata. The
+   normalised key + raw DOB params are transient compare
+   values and are not otherwise persisted.
 
 5. **Verify service-level eligibility** (Round 3 PR #75 P1 #3
    fix — explicit matrix; do NOT rely on `medevac_service_level`
@@ -1178,12 +1197,110 @@ Snapshots plan_terms into the row. Returns `{ok: true,
 subscription_id, subscription_number, status: 'pending_payment'}`.
 Phase 14 flips status to 'active' after HyperPay tokenization.
 
+**Owner-seeding contract (Round 6 PR #75 P1 #3 fix).** The
+RPC takes a required `p_owner_dob DATE` parameter (the
+subscription owner's date of birth; collected on the
+`/me/medevac/shield/subscribe` form) and prepends the owner
+to `covered_members` before validating size + persisting:
+
+```sql
+v_covered_members := jsonb_build_array(
+  jsonb_build_object(
+    'name', (SELECT full_name FROM clients WHERE id = p_client_id),
+    'relationship', 'self',
+    'dob', to_jsonb(p_owner_dob)
+  )
+) || COALESCE(p_payload_covered_members, '[]'::jsonb);
+```
+
+Then enforce uniqueness on `(lower(BTRIM(name)), dob)`
+across the resulting array (RAISE EXCEPTION
+`covered_members_duplicate_pair` if any pair repeats — the
+admin-side counterpart Server Action that later mutates
+covered_members applies the same check). Owner is therefore
+ALWAYS present at signup with `relationship='self'` and a
+known DOB, which is what §4.7 step 4 looks up; no
+implicit-owner branch is needed in the consume RPC.
+
 ### §4.9 — `admin_activate_subscription` (PR 2)
 
 NEW — admin-only path for Phase 12 (before Phase 14 wires
 HyperPay). Flips `status` from `'pending_payment'` to
 `'active'`, sets `start_date=NOW()` + `end_date=NOW() + INTERVAL '1 year'`,
 + `next_renewal_due=end_date - INTERVAL '30 days'`.
+
+### §4.10 — `admin_read_medevac_request_detail` (PR 1)
+
+NEW — Round 6 PR #75 P1 #2 fix. Atomic admin PII read +
+`admin_pii_read` audit in one SECURITY DEFINER contract so
+the audit-before-read claim is database-enforced.
+
+**Signature:**
+
+```sql
+admin_read_medevac_request_detail(
+  p_request_id        UUID,
+  p_session_metadata  JSONB  -- {cookie_expiry, cookie_fingerprint}
+) RETURNS JSON
+```
+
+**Steps** (single statement-level transaction; any RAISE
+EXCEPTION aborts the call and reverts the audit insert):
+
+1. **INSERT the audit row first** so a SELECT failure can
+   never expose PII unaudited:
+   ```sql
+   INSERT INTO audit_logs (
+     entity_type, entity_id, action, new_value, user_id
+   ) VALUES (
+     'medevac_request',
+     p_request_id,
+     'admin_pii_read',
+     jsonb_build_object(
+       'mev_number', (SELECT medevac_request_number
+                        FROM medevac_requests
+                       WHERE id = p_request_id),
+       'service_level', (SELECT service_level
+                           FROM medevac_requests
+                          WHERE id = p_request_id),
+       'condition_severity', (SELECT condition_severity
+                                FROM medevac_requests
+                               WHERE id = p_request_id),
+       'cookie_expiry', p_session_metadata->>'cookie_expiry',
+       'cookie_fingerprint', p_session_metadata->>'cookie_fingerprint'
+     ),
+     NULL  -- Round 6 PR #75 P1 #1 fix: admin auth is cookie,
+           -- not a users.id; user_id MUST be NULL here.
+   );
+   ```
+   The metadata sub-selects against `medevac_requests` first
+   so the audit row reflects the actual MEV-XXXX even if the
+   later SELECT returns nothing (e.g. caller passed an
+   unknown UUID — the audit still captures the access
+   attempt; the SELECT then returns `{ok: false, error:
+   'request_not_found'}`).
+2. **SELECT** the full row including
+   `patient_name_snapshot` + `patient_age_snapshot` (the
+   PII payload the page renders) plus everything the
+   detail view needs. Wrap in a `row_to_json(...)`.
+3. **Return** `json_build_object('ok', true, 'request',
+   $row_json, 'audit_logged_at', NOW())`. If the row was
+   not found, return `{ok: false, error: 'request_not_found'}`
+   — the audit row from step 1 stays because the function
+   ran to completion.
+
+**Authorisation:** `SECURITY DEFINER` + `REVOKE ALL ON
+FUNCTION ... FROM PUBLIC, anon, authenticated; GRANT EXECUTE
+... TO service_role;` (Phase 9 convention #1). The TS helper
+calls via `createAdminClient()` which uses the service role.
+There is no JWT identity inside the RPC; the caller's
+authority is the service-role key plus the cookie session
+metadata the helper passes through.
+
+**ENV addition:** PR 1 deployment runbook MUST set
+`ADMIN_AUDIT_FINGERPRINT_SECRET` (random 32-byte hex) so
+the helper can compute `cookie_fingerprint`. The secret
+NEVER appears in audit_logs — only the HMAC output.
 
 ---
 
@@ -1228,6 +1345,7 @@ because `consume_aeris_shield_event` (§4.7) and
 | 23 | RPC `submit_medevac_offer` (§4.3) | §4.3 |
 | 24 | RPC `consume_aeris_shield_event` (§4.7) | §4.7 |
 | 25 | RPC `subscribe_to_aeris_shield` (§4.8) | §4.8 |
+| 26 | RPC `admin_read_medevac_request_detail` (§4.10) — Round 6 PR #75 P1 #2 fix; atomic admin PII read + audit | §4.10 |
 
 **Server Actions** (`app/actions/`):
 - `medevac-public.ts`: `submitMedevacRequestPublic` (wraps §4.1)
@@ -1235,21 +1353,28 @@ because `consume_aeris_shield_event` (§4.7) and
   `upsertCargoAircraftCapability`)
 
 **Server-side helpers** (`lib/medevac/`):
-- `admin-pii.ts` — D12 PII surface (Round 5 PR #75 P2 #4 fix).
-  Exports `readAdminMedevacRequestDetail(adminId, requestId)`
-  which: (1) `createAdminClient()` SELECT the row including
-  `patient_name_snapshot` + `patient_age_snapshot`, (2)
-  INSERT one `audit_logs` row with
-  `action='admin_pii_read'`, `entity_type='medevac_request'`,
-  `entity_id=requestId`, `user_id=adminId`, and the redacted
-  metadata listed in D12. Both ops happen inside the same
-  request handler; the SELECT result is returned to the page
-  ONLY after the audit insert succeeds (a Resend-style
-  log-and-fail-open pattern would defeat the audit claim).
+- `admin-pii.ts` — D12 PII surface (Round 5 PR #75 P2 #4 fix;
+  rewritten in Round 6 PR #75 P1 #1 + P1 #2 fixes).
+  Exports `readAdminMedevacRequestDetail(requestId)` which:
+  (1) calls `requireAdminSession()` to confirm the cookie is
+  valid + collect its `expiry`, (2) computes a
+  `cookie_fingerprint` (HMAC-SHA256 of the verified cookie
+  value using `process.env.ADMIN_AUDIT_FINGERPRINT_SECRET`
+  — a NEW env var added in PR 1's deployment runbook; the
+  fingerprint is reproducible per-session but never reverses
+  to the cookie), (3) calls SECURITY DEFINER RPC
+  `admin_read_medevac_request_detail(p_request_id => $1,
+  p_session_metadata => jsonb_build_object(
+    'cookie_expiry', $cookie_expiry,
+    'cookie_fingerprint', $fingerprint
+  ))` via `createAdminClient()`, (4) returns the RPC's
+  `{request, audit_logged_at}` payload to the page. There
+  is NO TS-side INSERT of the audit row — the RPC owns both
+  the audit write AND the PII select in one transaction.
   Also exports `listAdminMedevacRequests()` which is the
   redacted list-view variant that NEVER selects
   `patient_name_snapshot` or `patient_age_snapshot` (D8
-  list/index views are PII-free).
+  list/index views are PII-free) and writes no audit row.
 
 **Pages:**
 - `/medevac` — public intake form (stable only)
