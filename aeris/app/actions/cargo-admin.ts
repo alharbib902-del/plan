@@ -12,14 +12,15 @@ import {
 import type { CargoAircraftCapabilityInsert } from '@/lib/cargo/types';
 
 /**
- * Phase 11 PR 1 + PR 2 — admin Server Actions for the cargo
- * surface.
+ * Phase 11 PR 1 + PR 2 + PR 3 — admin Server Actions for the
+ * cargo surface.
  *
- * 4 actions total:
+ * 5 actions total:
  *   - upsertCargoAircraftCapability (PR 1)
  *   - adminAcceptCargoOfferOnBehalf (PR 2)
  *   - adminDeclineCargoOfferOnBehalf (PR 2)
  *   - adminCancelCargoRequestOnBehalf (PR 2)
+ *   - adminManualDispatchCargoRequest (PR 3 §6.2)
  *
  * Auth (Codex round 1 PR #65 P1 #1 fix): every action calls
  * `requireAdminSession()` BEFORE any validation or write.
@@ -335,4 +336,69 @@ export async function adminCancelCargoRequestOnBehalf(input: {
     cascade_declined_offers: result.cascade_declined_offers ?? 0,
     already_cancelled: result.already_cancelled,
   };
+}
+
+// ============================================================
+// PR 3 §6.2 — adminManualDispatchCargoRequest
+// ============================================================
+//
+// Inserts an outbox row via publish_cargo_dispatch_event RPC
+// with event_type='manual_redispatch'. The next 15-min cron
+// drain picks it up and re-runs distribution + notifications.
+//
+// v1 of this action just inserts the outbox row — no immediate
+// trigger of the cron. Future polish can POST to the internal
+// route with the shared CRON_SECRET for instant dispatch. The
+// admin sees a confirmation banner; the actual notifications
+// land within 15 minutes.
+//
+// Available on BOTH guest and authed cargo requests (admin
+// override is legitimate either way per spec §6.2).
+
+export interface AdminManualDispatchInput {
+  request_id: string;
+}
+
+export type AdminManualDispatchResult =
+  | { ok: true; request_id: string }
+  | CargoAdminActionFailure;
+
+export async function adminManualDispatchCargoRequest(
+  input: AdminManualDispatchInput
+): Promise<AdminManualDispatchResult> {
+  requireAdminSession();
+  if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  // Reuse the existing UUID guard from cancelRequestSchema —
+  // same shape, same validation.
+  const parsed = cancelRequestSchema.safeParse({
+    request_id: input.request_id,
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    };
+  }
+
+  const client = looseClient();
+  const { data, error } = await client.rpc('publish_cargo_dispatch_event', {
+    p_cargo_request_id: parsed.data.request_id,
+    p_event_type: 'manual_redispatch',
+  });
+  if (error) {
+    console.error('[cargo-admin.manualDispatch] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | { ok: true; cargo_request_id: string }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath(`/admin/cargo/${parsed.data.request_id}`);
+
+  return { ok: true, request_id: parsed.data.request_id };
 }

@@ -49,6 +49,10 @@
     {
       "path": "/api/cron/client/redispatch-stale",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/cargo/dispatch-drain",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

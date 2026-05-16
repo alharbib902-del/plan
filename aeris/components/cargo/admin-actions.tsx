@@ -7,6 +7,7 @@ import {
   adminAcceptCargoOfferOnBehalf,
   adminDeclineCargoOfferOnBehalf,
   adminCancelCargoRequestOnBehalf,
+  adminManualDispatchCargoRequest,
 } from '@/app/actions/cargo-admin';
 
 /**
@@ -187,6 +188,68 @@ export function AdminCancelRequestButton({ requestId }: { requestId: string }) {
         className="font-ar inline-flex items-center gap-2 rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-100 transition-colors hover:bg-rose-500/20 disabled:opacity-60"
       >
         {cargoAr.adminCancelRequestCta}
+      </button>
+    </div>
+  );
+}
+
+// ============================================================
+// AdminManualDispatchButton (PR 3 §6.2)
+// ============================================================
+//
+// Inserts a 'manual_redispatch' outbox event for a cargo
+// request; the next 15-min cron drain re-runs distribution +
+// notifications. Available on both guest + authed paths
+// (admin override is legitimate either way per spec §6.2).
+
+export function AdminManualDispatchButton({
+  requestId,
+}: {
+  requestId: string;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const onClick = () => {
+    if (typeof window === 'undefined') return;
+    if (!window.confirm(cargoAr.adminManualDispatchConfirm)) return;
+    setErrorCode(null);
+    setSuccess(false);
+    startTransition(async () => {
+      const result = await adminManualDispatchCargoRequest({
+        request_id: requestId,
+      });
+      if (!result.ok) {
+        setErrorCode(result.error);
+        return;
+      }
+      setSuccess(true);
+    });
+  };
+
+  return (
+    <div className="space-y-1">
+      {errorCode ? (
+        <p
+          role="alert"
+          className="font-ar rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-xs text-rose-100"
+        >
+          {adminErrorMessage(errorCode)}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="font-ar rounded border border-emerald-400/40 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-100">
+          {cargoAr.adminManualDispatchSuccess}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={isPending || success}
+        className="font-ar inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/20 disabled:opacity-60"
+      >
+        {cargoAr.adminManualDispatchCta}
       </button>
     </div>
   );

@@ -37,6 +37,9 @@
     "test:cargo-offer-validators": "tsx lib/cargo/__tests__/cargo-offer-validators.test.ts",
     "test:cargo-accept-flow": "tsx lib/cargo/__tests__/accept-flow.test.ts",
     "test:cargo-booking-shape": "tsx lib/cargo/__tests__/booking-shape.test.ts",
+    "test:cargo-distribution-scoring": "tsx lib/cargo/__tests__/distribution-scoring.test.ts",
+    "test:cargo-outbox-drain": "tsx lib/cargo/__tests__/outbox-drain.test.ts",
+    "test:cargo-cron-auth": "tsx app/api/cron/cargo/__tests__/cron-auth.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

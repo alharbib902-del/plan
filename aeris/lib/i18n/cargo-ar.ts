@@ -282,6 +282,11 @@ export const cargoAr = {
   adminAcceptOnBehalfCta: 'قبول نيابة عن العميل',
   adminDeclineOnBehalfCta: 'رفض نيابة عن العميل',
   adminCancelRequestCta: 'إلغاء الطلب',
+  // Phase 11 PR 3 §6.2 — manual dispatch (admin override)
+  adminManualDispatchCta: 'إعادة توزيع يدوياً',
+  adminManualDispatchConfirm:
+    'سيُعاد توزيع الطلب على المشغّلين المؤهّلين في الدورة القادمة من الـ cron (خلال 15 دقيقة).',
+  adminManualDispatchSuccess: 'تم جدولة إعادة التوزيع.',
   adminConfirmAcceptOnBehalfTitle: 'تأكيد قبول العرض نيابة',
   adminConfirmAcceptOnBehalfBody:
     'سيُنشأ حجز باسم العميل (الضيف) ويُرفض باقي العروض على هذا الطلب.',

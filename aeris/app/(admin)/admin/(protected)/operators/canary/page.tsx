@@ -13,9 +13,12 @@ import {
 } from '@/lib/admin/operators/canary-queries';
 import { getClientNotificationAlertStatus } from '@/lib/notifications/client-email-alert-status';
 import { getClientEmptyLegAlertStatus } from '@/lib/notifications/client-empty-leg-alert-status';
+import { getCargoEmailAlertStatus } from '@/lib/cargo/email-alert-status';
+import { getCargoDispatchRuns24h } from '@/lib/cargo/canary-queries';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { clientsAr } from '@/lib/i18n/clients-ar';
+import { cargoAr } from '@/lib/i18n/cargo-ar';
 
 /**
  * Phase 8 PR 2e — admin canary readout for operator-side
@@ -64,6 +67,8 @@ export default async function AdminOperatorsCanaryPage() {
     alertStatus,
     clientAlertStatus,
     clientEmptyLegAlertStatus,
+    cargoAlertStatus,
+    cargoDispatchRuns24h,
     attemptMix,
     cronHealth,
   ] = await Promise.all([
@@ -75,6 +80,14 @@ export default async function AdminOperatorsCanaryPage() {
     // failed empty-leg email never mislabels client auth as
     // unhealthy + vice versa.
     getClientEmptyLegAlertStatus(adminClient),
+    // Phase 11 PR 3 §6.1 — 6th ChannelHealth card for cargo
+    // operator dispatch + founder batch email. Reads from
+    // cargo_email_alert_status singleton (PR 1 §3.6).
+    getCargoEmailAlertStatus(),
+    // Phase 11 PR 3 §6.3 — cron-health smoke signal next to the
+    // cargo channel card. Round 2 PR #72 P2 #3 — renamed from
+    // per-operator to per-request to match the SQL semantics.
+    getCargoDispatchRuns24h(),
     getSignupAttemptMix(),
     getCronTickHealth(),
   ]);
@@ -104,6 +117,8 @@ export default async function AdminOperatorsCanaryPage() {
         alertStatus={alertStatus}
         clientAlertStatus={clientAlertStatus}
         clientEmptyLegAlertStatus={clientEmptyLegAlertStatus}
+        cargoAlertStatus={cargoAlertStatus}
+        cargoDispatchRuns24h={cargoDispatchRuns24h}
       />
 
       <AttemptMixCard mix={attemptMix} />
@@ -162,6 +177,8 @@ function NotificationHealthCard({
   alertStatus,
   clientAlertStatus,
   clientEmptyLegAlertStatus,
+  cargoAlertStatus,
+  cargoDispatchRuns24h,
 }: {
   alertStatus: Awaited<ReturnType<typeof getOperatorNotificationAlertStatus>>;
   clientAlertStatus: Awaited<
@@ -170,6 +187,8 @@ function NotificationHealthCard({
   clientEmptyLegAlertStatus: Awaited<
     ReturnType<typeof getClientEmptyLegAlertStatus>
   >;
+  cargoAlertStatus: Awaited<ReturnType<typeof getCargoEmailAlertStatus>>;
+  cargoDispatchRuns24h: number;
 }) {
   if (!alertStatus) {
     return (
@@ -225,6 +244,27 @@ function NotificationHealthCard({
             clientEmptyLegAlertStatus?.last_failure_reason ?? null
           }
         />
+        {/* Phase 11 PR 3 §6.1 — 6th ChannelHealth card for the
+            cargo Resend pipeline (operator dispatch + founder
+            batch alert share one singleton per PR 1 §3.6). The
+            cargoDispatchRuns24h footer is a cron-health smoke
+            signal — 0 in 24h likely means cron-down or empty
+            pending queue (Round 2 PR #72 P2 #3 — metric renamed
+            from per-operator). */}
+        <div className="space-y-1">
+          <ChannelHealth
+            label={cargoAr.canaryCargoEmailChannel}
+            status={cargoAlertStatus?.status ?? 'unknown'}
+            lastFailureAt={cargoAlertStatus?.last_failure_at ?? null}
+            lastFailureReason={cargoAlertStatus?.last_failure_reason ?? null}
+          />
+          <p
+            dir="ltr"
+            className="font-ar text-end text-xs text-ink-muted"
+          >
+            آخر 24 ساعة: {cargoDispatchRuns24h} طلب تم توزيعه
+          </p>
+        </div>
       </div>
     </Card>
   );
