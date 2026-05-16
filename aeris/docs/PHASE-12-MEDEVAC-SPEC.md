@@ -982,10 +982,20 @@ freely inside the `jsonb_array_elements` lateral scan.
 
 ## §4 RPC layer
 
-All 9 RPCs mirror Phase 11 cargo signatures exactly with
-`cargo_` → `medevac_` rename; full SQL bodies follow Phase
-11 patterns. Section IDs match Phase 11 numbering for
-side-by-side review.
+Cargo lifecycle RPCs mirror Phase 11 where noted; Shield /
+admin PII RPCs are medevac-specific (Round 12 PR #75 P2 #1
+fix — the previous "All 9 RPCs mirror Phase 11 cargo
+signatures exactly" wording was stale: `consume_aeris_
+shield_event` (§4.7), `subscribe_to_aeris_shield` (§4.8),
+`admin_activate_subscription` (§4.9), and `admin_read_
+medevac_request_detail` (§4.10) have no cargo equivalent,
+§4.5 carries two RPCs (decline + withdraw), and the count
+also includes the §3.11 `safe_parse_date` helper; the bare
+"9" is no longer accurate). Each RPC section below names
+its own Phase 11 mirror when one exists; the medevac-only
+RPCs spell out their full step lists in place. Section IDs
+keep Phase 11 numbering for side-by-side review where the
+mirror applies.
 
 ### §4.1 — `create_medevac_request_guest` (PR 1)
 
