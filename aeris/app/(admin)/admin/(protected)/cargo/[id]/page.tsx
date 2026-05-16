@@ -7,6 +7,7 @@ import {
   AdminAcceptOnBehalfButton,
   AdminDeclineOnBehalfButton,
   AdminCancelRequestButton,
+  AdminManualDispatchButton,
 } from '@/components/cargo/admin-actions';
 import { cargoAr } from '@/lib/i18n/cargo-ar';
 import type { CargoRequestRow, CargoOfferRow } from '@/lib/cargo/types';
@@ -189,6 +190,22 @@ export default async function AdminCargoRequestDetailPage({ params }: PageProps)
             {cargoAr.meDetailConfirmCancelBody}
           </p>
           <AdminCancelRequestButton requestId={request.id} />
+        </div>
+      ) : null}
+
+      {/* PR 3 §6.2 — manual dispatch (admin override). Available
+          when request is still actionable (pending/offers_received)
+          regardless of guest/authed; admin override is legitimate
+          either way. */}
+      {requestOpen ? (
+        <div className="rounded-xl border border-gold/30 bg-gold/5 p-5">
+          <h3 className="font-ar mb-2 text-base text-gold-light">
+            {cargoAr.adminManualDispatchCta}
+          </h3>
+          <p className="font-ar mb-4 text-xs text-ink-muted">
+            {cargoAr.adminManualDispatchConfirm}
+          </p>
+          <AdminManualDispatchButton requestId={request.id} />
         </div>
       ) : null}
     </section>
