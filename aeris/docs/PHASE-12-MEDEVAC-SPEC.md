@@ -1138,12 +1138,45 @@ prior writes — see Atomicity note below):
    `LIMIT 1` above is defensive belt-and-suspenders, not a
    tie-breaker.
 
+   Before the lookup, **reject future-DOB inputs**
+   defensively (Round 9 PR #75 P1 #1 fix):
+
+   ```sql
+   IF p_patient_member_dob IS NULL
+      OR p_patient_member_dob > CURRENT_DATE THEN
+     RETURN json_build_object(
+       'ok', false,
+       'error', 'patient_dob_invalid'
+     );
+   END IF;
+   ```
+
+   The covered_members write path (admin Server Action per
+   D5) applies the SAME check via `safe_parse_date` plus a
+   `dob <= CURRENT_DATE` guard, so a future DOB shouldn't
+   reach consume time; this is belt-and-suspenders against
+   payload drift.
+
    The canonical name lands in step 8's
-   `medevac_requests.patient_name_snapshot`; the DOB lands
-   in `patient_age_snapshot` computed as `AGE(NOW(),
-   p_patient_member_dob)` years for the audit metadata. The
-   normalised key + raw DOB params are transient compare
-   values and are not otherwise persisted.
+   `medevac_requests.patient_name_snapshot`. The age (an
+   INT column per §3.1) is computed and pinned to integer
+   years as **Round 9 PR #75 P1 #1 fix — `AGE(...)` returns
+   an INTERVAL, which cannot insert into INT and would
+   crash the covered path**:
+
+   ```sql
+   patient_age_snapshot :=
+     EXTRACT(YEAR FROM AGE(CURRENT_DATE, p_patient_member_dob))::INT;
+   ```
+
+   `CURRENT_DATE` (date, not timestamptz) keeps the
+   computation deterministic across TZ; `AGE` between two
+   dates is always non-negative once the future-DOB guard
+   above passed; `EXTRACT(YEAR FROM ...)::INT` collapses
+   the year component to a plain INT that the column
+   accepts. The normalised key + raw DOB params are
+   transient compare values and are not otherwise
+   persisted.
 
 5. **Verify service-level eligibility** (Round 3 PR #75 P1 #3
    fix — explicit matrix; do NOT rely on `medevac_service_level`
@@ -1737,10 +1770,20 @@ INDEX (the table's PRIMARY KEY on `aircraft_id` is the only
 implicit index — sufficient for the per-aircraft lookup
 the PR 3 cron uses).
 
-**RPCs + helper functions (7 in PR 1)** — `pg_proc` exists
-AND `has_function_privilege('service_role', $oid, 'EXECUTE')
-= true` AND `has_function_privilege('PUBLIC', $oid,
-'EXECUTE') = false`:
+**RPCs + helper functions (7 in PR 1)** — Round 9 PR #75
+P2 #2 fix tightened the ACL probe: for each function the
+probe asserts ALL FOUR of
+`has_function_privilege('service_role', $oid, 'EXECUTE') =
+true`, `has_function_privilege('PUBLIC', $oid, 'EXECUTE')
+= false`, `has_function_privilege('anon', $oid,
+'EXECUTE') = false`, AND `has_function_privilege(
+'authenticated', $oid, 'EXECUTE') = false`. The migration
+contract issues `REVOKE ALL ... FROM PUBLIC, anon,
+authenticated` but Postgres lets a later migration grant
+`anon`/`authenticated` explicitly without touching the
+`PUBLIC` ACL, so the prior 2-check shape couldn't catch a
+drift that re-exposed the function to anon/authenticated.
+`pg_proc` existence is checked alongside, as before:
 39. `create_medevac_request_guest`         (§4.1)
 40. `create_medevac_request_authenticated` (§4.2)
 41. `submit_medevac_offer`                  (§4.3)
@@ -1880,7 +1923,10 @@ appears in `skip_reasons['no_certification']`.
      entries ship yet — that's PR 3's runbook step 4).
 1. Apply PR 1 migration. Run Probe 33 (schema +
    constraints + RLS + RPCs + GRANTs + the new env-var
-   sub-check #44) + Probe 34 (guest path).
+   sub-check #46 — Round 9 PR #75 P2 #3 fix; the env-var
+   row moved from #44 to #46 after Round 8 added 2 missing
+   `idx_medevac_offers_*` rows + the `safe_parse_date`
+   helper function) + Probe 34 (guest path).
 2. Set `ENABLE_MEDEVAC=false` initially.
 3. After PR 1 + PR 2 deploy: flip `ENABLE_MEDEVAC=true` →
    redeploy. Run probes 35, 36, 38.
