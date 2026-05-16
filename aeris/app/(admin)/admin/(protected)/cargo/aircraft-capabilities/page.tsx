@@ -73,9 +73,13 @@ async function loadAircraftWithCapabilities(): Promise<AircraftWithCaps[]> {
   // Pull all aircraft + their operator_id; join in memory to
   // capability rows (left join shape — keep aircraft without
   // capability rows visible so founder can seed them).
+  // Hotfix (post-Phase 11 activation): the aircraft table from
+  // initial_schema.sql doesn't have a `type` column — the actual
+  // columns are `manufacturer`, `model`, `category`. Selecting
+  // `type` made this page throw 500 on first admin visit.
   const { data: aircraftData, error: aircraftError } = await admin
     .from('aircraft')
-    .select('id, registration, type, operator_id')
+    .select('id, registration, manufacturer, model, category, operator_id')
     .order('registration', { ascending: true });
 
   if (aircraftError) {
@@ -88,7 +92,9 @@ async function loadAircraftWithCapabilities(): Promise<AircraftWithCaps[]> {
   interface RawAircraft {
     id?: string;
     registration?: string | null;
-    type?: string | null;
+    manufacturer?: string | null;
+    model?: string | null;
+    category?: string | null;
     operator_id?: string | null;
   }
   const aircraft = (aircraftData ?? []) as RawAircraft[];
@@ -142,10 +148,13 @@ async function loadAircraftWithCapabilities(): Promise<AircraftWithCaps[]> {
   for (const a of aircraft) {
     if (!a.id) continue;
     const reg = a.registration ?? '—';
-    const type = a.type ?? '';
+    // Hotfix: build a friendly label from manufacturer + model
+    // (e.g. "HZ-XXX (Boeing 747)") instead of the non-existent
+    // `type` column.
+    const modelLabel = [a.manufacturer, a.model].filter(Boolean).join(' ');
     out.push({
       aircraft_id: a.id,
-      aircraft_label: type ? `${reg} (${type})` : reg,
+      aircraft_label: modelLabel ? `${reg} (${modelLabel})` : reg,
       operator_label: a.operator_id
         ? opNameById.get(a.operator_id) ?? '—'
         : '—',

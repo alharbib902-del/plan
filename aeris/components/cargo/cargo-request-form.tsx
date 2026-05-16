@@ -213,18 +213,18 @@ export function CargoRequestForm({
       ) : null}
 
       {/* 1. Cargo type selector */}
-      <fieldset className="space-y-3">
-        <legend className="font-ar mb-2 text-base font-medium text-ink">
+      <fieldset className="space-y-4">
+        <legend className="font-ar mb-3 text-base font-medium text-ink-primary">
           {cargoAr.cargoTypeLabel}
         </legend>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {CARGO_TYPES.map((t) => (
             <label
               key={t}
-              className={`font-ar cursor-pointer rounded-lg border p-4 transition-colors ${
+              className={`font-ar relative block cursor-pointer rounded-xl border-2 p-5 transition-all ${
                 cargoType === t
-                  ? 'border-gold bg-gold/10 text-gold-light'
-                  : 'border-border bg-navy-secondary/40 text-ink hover:border-gold/40'
+                  ? 'border-gold bg-gold/10 text-gold-light shadow-gold'
+                  : 'border-border/60 bg-navy-secondary/40 text-ink hover:border-gold/40 hover:bg-navy-secondary/60'
               }`}
             >
               <input
@@ -235,8 +235,10 @@ export function CargoRequestForm({
                 onChange={() => setCargoType(t)}
                 className="sr-only"
               />
-              <div className="font-medium">{cargoAr.cargoTypes[t]}</div>
-              <p className="mt-1 text-xs text-ink-muted">
+              <div className="text-base font-medium">
+                {cargoAr.cargoTypes[t]}
+              </div>
+              <p className="mt-1.5 text-xs leading-relaxed text-ink-secondary">
                 {cargoAr.cargoTypeDescriptions[t]}
               </p>
             </label>
@@ -250,35 +252,44 @@ export function CargoRequestForm({
           discipline; the form must NOT let an authed user override
           their own identity per request). */}
       {mode === 'guest' ? (
-        <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field
-            label={cargoAr.customerNameLabel}
-            name="customer_name"
-            required
-            error={fieldErrors.customer_name}
-            maxLength={120}
-          />
-          <Field
-            label={cargoAr.customerPhoneLabel}
-            name="customer_phone"
-            required
-            dir="ltr"
-            error={fieldErrors.customer_phone}
-            maxLength={20}
-          />
-          <Field
-            label={cargoAr.customerEmailLabel}
-            name="customer_email"
-            type="email"
-            dir="ltr"
-            error={fieldErrors.customer_email}
-            maxLength={120}
-          />
+        <fieldset className="space-y-4 border-t border-border/50 pt-6">
+          <legend className="font-ar mb-3 text-base font-medium text-ink-primary">
+            بيانات التواصل
+          </legend>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field
+              label={cargoAr.customerNameLabel}
+              name="customer_name"
+              required
+              error={fieldErrors.customer_name}
+              maxLength={120}
+            />
+            <Field
+              label={cargoAr.customerPhoneLabel}
+              name="customer_phone"
+              required
+              dir="ltr"
+              error={fieldErrors.customer_phone}
+              maxLength={20}
+            />
+            <Field
+              label={cargoAr.customerEmailLabel}
+              name="customer_email"
+              type="email"
+              dir="ltr"
+              error={fieldErrors.customer_email}
+              maxLength={120}
+            />
+          </div>
         </fieldset>
       ) : null}
 
       {/* 3. Shared shipment fields */}
-      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset className="space-y-4 border-t border-border/50 pt-6">
+        <legend className="font-ar mb-3 text-base font-medium text-ink-primary">
+          تفاصيل الشحنة
+        </legend>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field
           label={cargoAr.originIataLabel}
           name="origin_iata"
@@ -334,36 +345,52 @@ export function CargoRequestForm({
           dir="ltr"
           error={fieldErrors.estimated_value_sar}
         />
+        </div>
+
+        <div className="pt-2">
+          <Toggle
+            label={cargoAr.insuranceRequiredLabel}
+            name="insurance_required"
+          />
+        </div>
       </fieldset>
 
-      <Toggle
-        label={cargoAr.insuranceRequiredLabel}
-        name="insurance_required"
-      />
-
-      <TextArea
-        label={cargoAr.handlingNotesLabel}
-        name="handling_notes"
-        error={fieldErrors.handling_notes}
-      />
-
       {/* 4. Per-category conditional fields */}
-      {cargoType === 'horse' && <HorseFields fieldErrors={fieldErrors} />}
-      {cargoType === 'luxury_car' && (
-        <LuxuryCarFields fieldErrors={fieldErrors} />
-      )}
-      {cargoType === 'valuables' && (
-        <ValuablesFields fieldErrors={fieldErrors} />
-      )}
-      {cargoType === 'other' && <OtherFields fieldErrors={fieldErrors} />}
+      <div className="border-t border-border/50 pt-6">
+        <h3 className="font-ar mb-3 text-base font-medium text-ink-primary">
+          تفاصيل {cargoAr.cargoTypes[cargoType] ?? cargoType}
+        </h3>
+        {cargoType === 'horse' && <HorseFields fieldErrors={fieldErrors} />}
+        {cargoType === 'luxury_car' && (
+          <LuxuryCarFields fieldErrors={fieldErrors} />
+        )}
+        {cargoType === 'valuables' && (
+          <ValuablesFields fieldErrors={fieldErrors} />
+        )}
+        {cargoType === 'other' && <OtherFields fieldErrors={fieldErrors} />}
+      </div>
 
-      <button
-        type="submit"
-        disabled={isPending}
-        className="font-ar w-full rounded-lg border border-gold/50 bg-gold/15 px-6 py-3 text-base font-medium text-gold-light transition-colors hover:bg-gold/25 disabled:opacity-60 sm:w-auto"
-      >
-        {isPending ? cargoAr.submittingButton : cargoAr.submitButton}
-      </button>
+      {/* 5. Notes (optional) */}
+      <div className="border-t border-border/50 pt-6">
+        <TextArea
+          label={cargoAr.handlingNotesLabel}
+          name="handling_notes"
+          error={fieldErrors.handling_notes}
+        />
+      </div>
+
+      <div className="flex flex-col gap-3 border-t border-border/50 pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <p className="font-ar text-xs text-ink-muted">
+          سنتواصل معك خلال 24 ساعة بعروض من المشغّلين المعتمدين.
+        </p>
+        <button
+          type="submit"
+          disabled={isPending}
+          className="font-ar inline-flex items-center justify-center rounded-lg border border-gold/50 bg-gold/15 px-6 py-3 text-base font-medium text-gold-light shadow-gold transition-all hover:border-gold hover:bg-gold/25 disabled:opacity-60"
+        >
+          {isPending ? cargoAr.submittingButton : cargoAr.submitButton}
+        </button>
+      </div>
     </form>
   );
 }
@@ -400,9 +427,13 @@ function Field({
 }: FieldProps) {
   return (
     <label className="font-ar block text-sm">
-      <span className="text-ink-muted">
+      <span className="mb-1.5 block text-ink-secondary">
         {label}
-        {required ? <span className="ms-1 text-rose-300">*</span> : null}
+        {required ? (
+          <span className="ms-1 text-gold-light" aria-hidden>
+            *
+          </span>
+        ) : null}
       </span>
       <input
         type={type}
@@ -413,10 +444,10 @@ function Field({
         min={min}
         max={max}
         defaultValue={defaultValue}
-        className="mt-1 block w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
+        className="block w-full rounded-lg border border-border bg-navy-secondary/80 px-3.5 py-2.5 text-sm text-ink-primary shadow-sm transition-colors placeholder:text-ink-muted hover:border-border/80 focus:border-gold/60 focus:outline-none focus:ring-1 focus:ring-gold/30"
       />
       {error ? (
-        <p className="mt-1 text-xs text-rose-300" role="alert">
+        <p className="mt-1.5 text-xs text-rose-300" role="alert">
           {error}
         </p>
       ) : null}
@@ -435,14 +466,14 @@ function TextArea({
 }) {
   return (
     <label className="font-ar block text-sm">
-      <span className="text-ink-muted">{label}</span>
+      <span className="mb-1.5 block text-ink-secondary">{label}</span>
       <textarea
         name={name}
         rows={3}
-        className="mt-1 block w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
+        className="block w-full rounded-lg border border-border bg-navy-secondary/80 px-3.5 py-2.5 text-sm text-ink-primary shadow-sm transition-colors placeholder:text-ink-muted hover:border-border/80 focus:border-gold/60 focus:outline-none focus:ring-1 focus:ring-gold/30"
       />
       {error ? (
-        <p className="mt-1 text-xs text-rose-300" role="alert">
+        <p className="mt-1.5 text-xs text-rose-300" role="alert">
           {error}
         </p>
       ) : null}
