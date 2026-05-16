@@ -37,7 +37,7 @@
 | Cron route | `/api/cron/cargo/dispatch-drain` (every 15 min) | Parent §5 PR 3 |
 | Admin | 6th `<ChannelHealth>` card on `/admin/operators/canary` | Parent §3.6 + §5 PR 3 |
 | Admin | `/admin/cargo/[id]/distribute` manual dispatch button | Parent §5 PR 3 |
-| Observability | Per-operator `cargo_dispatch_count_24h` metric | Parent §5 PR 3 |
+| Observability | `cargo_dispatch_runs_24h` cron-health metric on canary; per-operator breakdown deferred to future analytics view | Parent §5 PR 3 (renamed per Round 2 PR #72 P2 #3) |
 | Tests | `distribution-scoring.test.ts` + `outbox-drain.test.ts` + `cron-auth.test.ts` | New, this spec |
 | Probes | 32 (distribution filter by capability) | Parent §6 |
 
@@ -166,7 +166,87 @@ columns — it just starts writing to it from the
 `/api/cron/cargo/dispatch-drain` route via the same
 `mark_*_alert_*` Phase 7+ helpers (no schema change needed).
 
-### §2.5 Schema delta on `cargo_requests` (Round 1 PR #72 P2 #4 fix)
+### §2.5 `claim_cargo_dispatch_events` RPC (Round 2 PR #72 P1 #1 fix)
+
+The claim-before-send semantics in §5.2 require an atomic UPDATE
+with a subquery + `FOR UPDATE SKIP LOCKED` + RETURNING. The
+supabase-js client does NOT support this pattern through its
+`.update()` builder — implementers attempting to express it via
+the builder would silently fall back to a non-atomic "select
+pending rows then update" sequence, reopening the double-send
+race the Round 1 fix closed.
+
+The fix is to ship the claim SQL inside a `SECURITY DEFINER` RPC
+that the Next.js cron route invokes via `.rpc()`. The RPC owns
+the atomic semantics; the route just calls it and iterates.
+
+```sql
+CREATE OR REPLACE FUNCTION claim_cargo_dispatch_events(
+  p_claim_id UUID,
+  p_limit    INT
+) RETURNS TABLE (
+  id                UUID,
+  cargo_request_id  UUID,
+  event_type        TEXT
+)
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+AS $$
+BEGIN
+  -- Defensive: cap p_limit so a buggy caller can't drain the
+  -- whole outbox into a single serverless invocation that then
+  -- times out mid-loop and leaks claims.
+  IF p_limit IS NULL OR p_limit <= 0 THEN
+    p_limit := 20;
+  ELSIF p_limit > 100 THEN
+    p_limit := 100;
+  END IF;
+
+  RETURN QUERY
+    UPDATE cargo_dispatch_events_outbox AS o
+       SET claim_id      = p_claim_id,
+           claimed_at    = NOW(),
+           attempt_count = o.attempt_count + 1
+     WHERE o.id IN (
+       SELECT inner.id
+         FROM cargo_dispatch_events_outbox AS inner
+        WHERE inner.processed_at IS NULL
+          AND (inner.claimed_at IS NULL
+               OR inner.claimed_at < NOW() - INTERVAL '5 minutes')
+        ORDER BY inner.emitted_at ASC
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+     )
+     RETURNING o.id, o.cargo_request_id, o.event_type;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION claim_cargo_dispatch_events(UUID, INT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION claim_cargo_dispatch_events(UUID, INT)
+  TO service_role;
+```
+
+The Next.js cron route calls this exactly once per run:
+
+```ts
+const claimId = crypto.randomUUID();
+const { data: claimed, error } = await admin.rpc(
+  'claim_cargo_dispatch_events',
+  { p_claim_id: claimId, p_limit: 20 }
+);
+// `claimed` is an array of { id, cargo_request_id, event_type }
+// rows that THIS run owns. Concurrent invocations get disjoint
+// arrays thanks to FOR UPDATE SKIP LOCKED inside the RPC.
+```
+
+Mark-processed at the end of each row's iteration uses a normal
+`.update()` builder call with the `claim_id` guard (see §5.2
+step 3.5) — that update is not subject to the same race because
+it targets a single row by id.
+
+### §2.6 Schema delta on `cargo_requests` (Round 1 PR #72 P2 #4 fix)
 
 Add a per-request flag for founder-batch-alert throttling. The
 earlier draft tried to throttle via `dispatch_result.founder_alerted`
@@ -196,7 +276,7 @@ UPDATE cargo_requests
 If the UPDATE returns 0 rows, another worker (or a prior cron
 run) already alerted — skip the email. Atomic + idempotent.
 
-### §2.5 Replay safety
+### §2.7 Replay safety
 
 Same Phase 9 conventions as PR 1 + PR 2:
 - `CREATE TABLE IF NOT EXISTS`
@@ -461,17 +541,40 @@ reads this singleton.
 - **Auth:** `Authorization: Bearer <CRON_SECRET>` (Round 1 PR
   #72 P1 #1 — env var name is `CRON_SECRET`, matching the
   existing Phase 7 helper `verifyCronAuth()` in
-  `lib/empty-legs/cron-auth.ts`). The route reuses this helper
-  verbatim:
+  `lib/empty-legs/cron-auth.ts`).
+
+  The helper signature (Round 2 PR #72 P2 #2 verified):
   ```ts
-  import { verifyCronAuth } from '@/lib/empty-legs/cron-auth';
-  // ...
-  const auth = verifyCronAuth(request.headers);
-  if (auth.kind !== 'ok') return new Response(auth.body, { status: 401 });
+  type CronAuthVerdict =
+    | { ok: true }
+    | { ok: false; reason: 'missing_header' | 'malformed' | 'mismatch' | 'env_missing' };
   ```
+
+  The route reuses both `verifyCronAuth` and the matching
+  `unauthorizedJsonResponse()` helper verbatim — the same shape
+  the Phase 7 `/api/empty-legs/internal/match-trigger` route
+  uses (lines 103-106):
+  ```ts
+  import { verifyCronAuth, unauthorizedJsonResponse } from '@/lib/empty-legs/cron-auth';
+
+  export async function POST(req: NextRequest): Promise<Response> {
+    const auth = verifyCronAuth(req.headers);
+    if (!auth.ok) return unauthorizedJsonResponse();
+    // ... drain loop
+  }
+  ```
+
+  `unauthorizedJsonResponse()` returns a **401** for ALL failure
+  reasons including `env_missing` — there is no `500` special
+  case in the Phase 7 helper, and the cargo route deliberately
+  inherits that behavior so all cron auth failures look identical
+  to external callers (no oracle leak about server config). The
+  `env_missing` reason is still distinguishable in server logs
+  by callers that need to alert on a misconfigured deployment,
+  but the HTTP response is uniformly 401.
+
   The secret is a Vercel-managed env var, NOT shared with any UI
-  surface. The route refuses 401 if missing/wrong, 500 if
-  `CRON_SECRET` env var unset.
+  surface.
 
 ### §5.2 Drain loop — claim-before-send (Round 1 PR #72 P1 #2 fix)
 
@@ -485,32 +588,23 @@ statement, plus `FOR UPDATE SKIP LOCKED` to make concurrent
 workers see disjoint row sets.
 
 ```
-1. Generate a per-run claim_id (uuid_generate_v4() in JS).
+1. Generate a per-run claim_id (crypto.randomUUID() in JS).
 
-2. Atomic claim: stamp claim_id + claimed_at AND return the rows
-   we successfully claimed. The inner SELECT uses FOR UPDATE
-   SKIP LOCKED so a parallel worker sees a disjoint set.
+2. Atomic claim via the §2.5 RPC. The supabase-js .update()
+   builder doesn't express subquery + FOR UPDATE SKIP LOCKED, so
+   the cron calls the SECURITY DEFINER function:
 
-     UPDATE cargo_dispatch_events_outbox
-        SET claim_id = <RUN_CLAIM_ID>,
-            claimed_at = NOW(),
-            attempt_count = attempt_count + 1
-      WHERE id IN (
-        SELECT id FROM cargo_dispatch_events_outbox
-         WHERE processed_at IS NULL
-           AND (claimed_at IS NULL
-                OR claimed_at < NOW() - INTERVAL '5 minutes')
-         ORDER BY emitted_at ASC
-         LIMIT 20
-         FOR UPDATE SKIP LOCKED
-      )
-      RETURNING id, cargo_request_id, event_type;
+     const claimId = crypto.randomUUID();
+     const { data: claimed, error } = await admin.rpc(
+       'claim_cargo_dispatch_events',
+       { p_claim_id: claimId, p_limit: 20 }
+     );
+     // claimed: Array<{ id, cargo_request_id, event_type }>
 
-   - The `OR claimed_at < NOW() - INTERVAL '5 minutes'` clause is
-     a lease-reclaim — a crashed worker's claim becomes
-     reclaimable after 5 minutes so rows don't stick forever.
-   - `attempt_count` increments on every claim (success OR
-     subsequent reclaim), giving observability into stuck rows.
+   The RPC body (see §2.5) is the atomic UPDATE ... RETURNING
+   with the inner SELECT ... FOR UPDATE SKIP LOCKED + 5-minute
+   lease recovery. Concurrent cron invocations get disjoint
+   claimed arrays.
 
 3. For each claimed row (returned from step 2):
    3.1. Load cargo_request by id (skip if status no longer
@@ -605,18 +699,32 @@ The button renders on `/admin/cargo/[id]` only when:
 Label: "إعادة توزيع يدوياً" (gold styling, distinct from accept/
 decline/cancel rows).
 
-### §6.3 Per-operator `cargo_dispatch_count_24h`
+### §6.3 `cargo_dispatch_runs_24h` (Round 2 PR #72 P2 #3 fix)
+
+The earlier draft labeled this metric "per-operator" but the SQL
+counted processed outbox rows globally — those two things mean
+different things. Renaming to reflect what the SQL actually
+measures: the number of cargo requests dispatched (i.e., outbox
+rows processed) in the last 24h. This is a cron-health smoke
+signal, not an operator-level analytic.
 
 Surfaced via canary as a small stat next to the 6th card:
 
 ```sql
-SELECT count(*) AS dispatch_count_24h
+SELECT count(*) AS cargo_dispatch_runs_24h
   FROM cargo_dispatch_events_outbox
  WHERE processed_at >= NOW() - INTERVAL '24 hours';
 ```
 
-The card shows: "آخر 24 ساعة: {N} طلب تم توزيعه". Low/zero
-is a smoke signal for cron-down or operator-pool-empty.
+The card shows: "آخر 24 ساعة: {N} طلب تم توزيعه". Low/zero is a
+smoke signal for cron-down or empty pending queue.
+
+**Deferred:** a true per-operator breakdown (counts derived
+from `dispatch_result->'dispatched_operator_ids'` via
+`jsonb_array_elements_text`) is more valuable for operator
+fairness audits than for the canary card. Track it in a separate
+admin analytics view (e.g. `/admin/cargo/dispatch-analytics`)
+in a future polish PR — out of scope for PR 3.
 
 ---
 
@@ -648,16 +756,25 @@ Layer-1: pure drain-loop logic with mocked Supabase responses:
 
 ### §7.3 `app/api/cron/cargo/__tests__/cron-auth.test.ts` (NEW)
 
-Layer-1: route handler auth:
+Layer-1: route handler auth. Mirror of
+`app/api/empty-legs/__tests__/cron-auth.test.ts` shape — that
+file already covers every `verifyCronAuth` header path 1:1,
+and the cargo route shares the exact same import. This test
+file exercises the route handler binding (verdict →
+`unauthorizedJsonResponse`) rather than re-running the verifier
+unit tests:
 
-| # | Case | Expected |
+| # | Case | Expected response |
 |---|---|---|
-| 1 | Missing Authorization header | 401 |
-| 2 | Wrong bearer | 401 |
-| 3 | Correct bearer | 200 |
-| 4 | Env var unset (CRON_SECRET = "") | 500 |
+| 1 | Missing Authorization header | 401 with `{ ok: false, error: 'unauthorized' }` |
+| 2 | Wrong bearer | 401 with same body |
+| 3 | Correct bearer | 200 + drain loop runs (mocked claim RPC) |
+| 4 | Env var unset (`CRON_SECRET = ""`) | **401** (NOT 500 — Round 2 PR #72 P2 #2 fix; `unauthorizedJsonResponse()` is uniform across all failure reasons including `env_missing`) |
 
-Mirror of `app/api/empty-legs/__tests__/cron-auth.test.ts` shape.
+Test sets `process.env.CRON_SECRET` via `vi.stubEnv` /
+`beforeEach` mutation (matching the Phase 7 cron-auth test
+pattern). The mocked claim RPC returns an empty array so the
+drain loop completes in <50ms.
 
 ---
 
