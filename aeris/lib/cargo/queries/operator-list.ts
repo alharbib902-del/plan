@@ -158,9 +158,13 @@ export async function listCapableAircraftForOperator(
   };
 
   // Step 1: operator's aircraft.
+  // Hotfix: aircraft has no `type` column (initial_schema.sql lines
+  // 180-199 use manufacturer + model + category). Build the friendly
+  // label from manufacturer + model to match the admin capabilities
+  // page hotfix.
   const { data: acData, error: acError } = await admin
     .from('aircraft')
-    .select('id, registration, type')
+    .select('id, registration, manufacturer, model')
     .eq('operator_id', operatorId);
 
   if (acError) {
@@ -171,7 +175,8 @@ export async function listCapableAircraftForOperator(
   interface RawAircraft {
     id?: string;
     registration?: string | null;
-    type?: string | null;
+    manufacturer?: string | null;
+    model?: string | null;
   }
   const aircraft = (acData ?? []) as RawAircraft[];
   if (aircraft.length === 0) return [];
@@ -217,10 +222,15 @@ export async function listCapableAircraftForOperator(
 
   return aircraft
     .filter((a) => a.id && capable.has(a.id))
-    .map((a) => ({
-      id: a.id!,
-      label: a.type ? `${a.registration ?? ''} (${a.type})`.trim() : (a.registration ?? '—'),
-    }));
+    .map((a) => {
+      const modelLabel = [a.manufacturer, a.model].filter(Boolean).join(' ');
+      return {
+        id: a.id!,
+        label: modelLabel
+          ? `${a.registration ?? ''} (${modelLabel})`.trim()
+          : (a.registration ?? '—'),
+      };
+    });
 }
 
 // Helper for table rendering shared between list pages.
