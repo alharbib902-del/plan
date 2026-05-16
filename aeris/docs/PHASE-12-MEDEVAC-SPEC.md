@@ -1,11 +1,11 @@
 # Phase 12 — Aeris MedEvac (Medical Evacuation + Aeris Shield)
 
-> **Status:** Spec under active Codex review — rounds 1-13
-> resolved; round 14 in progress / pending Codex review
-> (Round 13 PR #75 closed the spec-header + review-history
-> staleness; Round 14 PR #75 P2 #1 fix closes the rolled-over
-> "round 13 in progress" wording so the ledger matches §8's
-> aggregate). See §8 below for the full per-round summary.
+> **Status:** Spec under active Codex review — rounds 1-14
+> resolved; round 15 pending / awaiting Codex review
+> (Round 14 PR #75 closed the rolled-over "round 13 in
+> progress" wording; Round 15 PR #75 P2 #1 fix closes the
+> same lag-by-one pattern for round 14 so the ledger matches
+> §8's aggregate). See §8 below for the full per-round summary.
 > **Scope:** Medical evacuation flights (single-event) + Aeris Shield
 > subscription tier + medical operator certification matrix +
 > per-severity SLA dispatch + insurance snapshot.
@@ -2000,7 +2000,7 @@ appears in `skip_reasons['no_certification']`.
 
 ## §8 Codex review history
 
-Rounds 1-13 resolved; round 14 in progress / pending Codex
+Rounds 1-14 resolved; round 15 pending / awaiting Codex
 review. Each round's fix commits are squash-mergeable on
 top of the round-0 draft; inline `Round N PR #75 [P1/P2]
 #M fix` citations throughout this document point back to
@@ -2022,7 +2022,8 @@ the row below.
 | 11 | 2 (snippet redirect import, fingerprint privacy wording) | 0 P1 + 2 P2 | `82922d5` |
 | 12 | 1 (§4 RPC intro staleness) | 0 P1 + 1 P2 | `69101be` |
 | 13 | 1 (spec-header + review-history staleness) | 0 P1 + 1 P2 | `745cc64` |
-| 14 | 1 (status wording rolled over to "1-13 resolved / 14 in progress" — this row) | 0 P1 + 1 P2 | (this commit) |
+| 14 | 1 (status wording rolled over to "1-13 resolved / 14 in progress") | 0 P1 + 1 P2 | `85f872f` |
+| 15 | 1 (same lag-by-one — status now reads "1-14 resolved / 15 pending" — this row) | 0 P1 + 1 P2 | (this commit) |
 
-**Aggregate to date:** 49 findings closed (21 P1 + 28 P2)
-across 14 rounds; 0 outstanding P1 prior to round 15.
+**Aggregate to date:** 50 findings closed (21 P1 + 29 P2)
+across 15 rounds; 0 outstanding P1 prior to round 16.
