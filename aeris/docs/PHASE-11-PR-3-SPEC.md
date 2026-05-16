@@ -63,6 +63,16 @@ CREATE TABLE IF NOT EXISTS cargo_dispatch_events_outbox (
   event_type        TEXT NOT NULL
                       CHECK (event_type IN ('initial', 'manual_redispatch')),
   emitted_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Round 1 PR #72 P1 #2 — claim-before-send columns.
+  -- claim_id stamps a UUID at SELECT time; the marker UPDATE
+  -- later writes processed_at only if the same claim_id matches.
+  -- Combined with FOR UPDATE SKIP LOCKED in §5.2, two concurrent
+  -- cron runs CANNOT both notify the same operators (the second
+  -- worker skips locked rows entirely, so it never reads them).
+  -- claimed_at also enables a 5-minute lease recovery: a crashed
+  -- worker's claim is reclaimable so rows don't stick forever.
+  claim_id          UUID,
+  claimed_at        TIMESTAMPTZ,
   processed_at      TIMESTAMPTZ,
   -- Per-attempt metadata so the cron can record what happened
   -- (success count, failure count, skipped reasons) without
@@ -71,11 +81,8 @@ CREATE TABLE IF NOT EXISTS cargo_dispatch_events_outbox (
   attempt_count     INT NOT NULL DEFAULT 0
 );
 
--- Drain partial index (Phase 7 pattern):
--- "SELECT id WHERE processed_at IS NULL ORDER BY emitted_at LIMIT N"
--- then "UPDATE WHERE id IN (...) AND processed_at IS NULL".
--- The IS NULL guard prevents double-processing under concurrent
--- workers — no FOR UPDATE SKIP LOCKED needed.
+-- Drain partial index — pending AND not currently claimed (or
+-- claim lease expired). The cron's claim UPDATE reads from this.
 CREATE INDEX IF NOT EXISTS idx_cargo_dispatch_outbox_pending
   ON cargo_dispatch_events_outbox(emitted_at ASC)
   WHERE processed_at IS NULL;
@@ -159,6 +166,36 @@ columns — it just starts writing to it from the
 `/api/cron/cargo/dispatch-drain` route via the same
 `mark_*_alert_*` Phase 7+ helpers (no schema change needed).
 
+### §2.5 Schema delta on `cargo_requests` (Round 1 PR #72 P2 #4 fix)
+
+Add a per-request flag for founder-batch-alert throttling. The
+earlier draft tried to throttle via `dispatch_result.founder_alerted`
+on the outbox row, but `manual_redispatch` creates a new outbox
+row so the previous row's flag is invisible. Fix: store the
+"already alerted" timestamp on the parent `cargo_requests` row
+so EVERY outbox event for the same request sees the same flag.
+
+```sql
+ALTER TABLE cargo_requests
+  ADD COLUMN IF NOT EXISTS founder_batch_alerted_at TIMESTAMPTZ;
+```
+
+Replay-safe (`IF NOT EXISTS`). No CHECK constraint needed — the
+column is purely informational + serves as the throttle predicate.
+The `sendFounderCargoBatchAlert` helper (§4.2) reads + sets this
+in a single round-trip:
+
+```sql
+UPDATE cargo_requests
+   SET founder_batch_alerted_at = NOW()
+ WHERE id = <cargo_request_id>
+   AND founder_batch_alerted_at IS NULL
+ RETURNING id;
+```
+
+If the UPDATE returns 0 rows, another worker (or a prior cron
+run) already alerted — skip the email. Atomic + idempotent.
+
 ### §2.5 Replay safety
 
 Same Phase 9 conventions as PR 1 + PR 2:
@@ -172,32 +209,85 @@ Same Phase 9 conventions as PR 1 + PR 2:
 
 ## §3 Distribution engine (`lib/cargo/distribution.ts`)
 
-### §3.1 Eligibility filter
+### §3.1 Candidate enumeration + skip-reason reporting (Round 1 PR #72 P1 #3 fix)
 
-Given a `cargo_request`, the eligible operator set is:
+The earlier draft pre-filtered the candidate set by capability
+join, which meant non-capable operators never appeared in the
+result — but probe 32 expects them in `skip_reasons` with
+`'no_capability'`. Fix: enumerate ALL approved operators, then
+classify each into `dispatched | skipped` with an explicit
+reason.
 
-```ts
-operators WHERE
-  signup_status = 'approved'
-  AND EXISTS (
-    SELECT 1 FROM aircraft a
-      JOIN cargo_aircraft_capabilities cac ON cac.aircraft_id = a.id
-     WHERE a.operator_id = operators.id
-       AND a.status = 'active'
-       AND CASE <cargo_request.cargo_type>
-             WHEN 'horse'      THEN cac.supports_horse
-             WHEN 'luxury_car' THEN cac.supports_luxury_car
-             WHEN 'valuables'  THEN cac.supports_valuables
-             WHEN 'other'      THEN cac.supports_other
-           END
-  )
+**Step 1 — load all approved operators:**
+
+```sql
+SELECT id, contact_email, contact_phone, company_name,
+       <subquery for has_capability(cargo_type)>
+       <subquery for last_dispatched_at>
+  FROM operators
+ WHERE signup_status = 'approved';
 ```
 
-i.e., operator must (a) be approved AND (b) own at least one
-active aircraft with a capability row matching the request's
-`cargo_type`. The capability check is the SAME predicate used at
-offer-submit time (§4.3 RPC), so the dispatch never targets an
-operator whose offer would later be rejected.
+`has_capability(cargo_type)` is computed inline per row:
+
+```sql
+EXISTS (
+  SELECT 1 FROM aircraft a
+    JOIN cargo_aircraft_capabilities cac ON cac.aircraft_id = a.id
+   WHERE a.operator_id = operators.id
+     AND a.status = 'active'
+     AND CASE <cargo_request.cargo_type>
+           WHEN 'horse'      THEN cac.supports_horse
+           WHEN 'luxury_car' THEN cac.supports_luxury_car
+           WHEN 'valuables'  THEN cac.supports_valuables
+           WHEN 'other'      THEN cac.supports_other
+         END
+) AS has_capability
+```
+
+(The same predicate the §4.3 RPC uses at offer-submit time —
+keeps dispatch + accept in sync.)
+
+`last_dispatched_at` is the max `created_at` from
+`cargo_dispatch_events_outbox` joined through `cargo_requests`
+that reached this operator (recorded in
+`dispatch_result.dispatched_operator_ids`).
+
+**Step 2 — classify each candidate:**
+
+```
+for each operator in candidates:
+  if not has_capability:
+    skip_reasons[id] = 'no_capability'
+    continue
+  recency_score = compute_recency(last_dispatched_at)
+  if recency_score == 0:
+    skip_reasons[id] = 'recently_dispatched'
+    continue
+  rating_score = (operators.rating ?? 3.0) / 5.0
+  score = 0.4 * 1.0 + 0.3 * recency_score + 0.3 * rating_score
+  push { id, score } to eligible
+```
+
+(Step 2 never produces `'not_approved'` because Step 1 already
+filtered. The reason remains in the union for completeness —
+e.g. for a future variant that also accepts pending operators
+for canary tests, where pre-approved would surface as a skip
+reason. Today no code path writes it; the type union just
+permits it.)
+
+**Step 3 — rank + cap:**
+
+```
+sort eligible by score desc
+dispatched = eligible[0..5]
+for each o in eligible[5..]:
+  skip_reasons[o.id] = 'lower_score'
+```
+
+Step 3 captures the operators that were qualified but didn't
+make the top-5 cut so the cron operator log shows why each
+operator did or didn't receive a dispatch.
 
 ### §3.2 Scoring formula
 
@@ -235,11 +325,19 @@ export interface CargoDispatchInput {
   event_type: 'initial' | 'manual_redispatch';
 }
 
+export type CargoDispatchSkipReason =
+  | 'no_capability'        // operator lacks an active aircraft with the cargo_type capability (§3.1 step 2)
+  | 'recently_dispatched'  // operator received a dispatch < 3 days ago (§3.2 recency_score=0)
+  | 'lower_score'          // operator qualified but didn't make the top-5 cut (§3.1 step 3)
+  | 'not_approved'         // reserved for a future variant that enumerates non-approved operators
+  | 'notify_failed';       // dispatch attempted but the notification helper failed (§5.3)
+
 export interface CargoDispatchResult {
   ok: true;
   dispatched_operator_ids: string[];
   skipped_operator_ids: string[];
-  skip_reasons: Record<string, 'recently_dispatched' | 'no_capability' | 'not_approved'>;
+  skip_reasons: Record<string, CargoDispatchSkipReason>;
+  founder_alerted: boolean;  // set true iff sendFounderCargoBatchAlert returned sent=true
 }
 
 export async function dispatchCargoRequest(
@@ -301,15 +399,39 @@ founder admin inbox:
 export async function sendFounderCargoBatchAlert(args: {
   cargo_request: CargoRequestRow;
   dispatched_operator_ids: string[];
-}): Promise<{ sent: boolean }>;
+}): Promise<{ sent: boolean; reason?: 'already_alerted' | 'send_failed' }>;
 ```
 
 Subject line: `[Aeris Cargo] طلب شحن جديد دُفع إلى {N} مشغّل`.
 Body: snapshot of cargo_request + list of operator names + link
-to `/admin/cargo/[id]`. Throttled to once per cargo_request via
-the `cargo_dispatch_events_outbox.dispatch_result.founder_alerted`
-flag (set on first dispatch, checked on subsequent
-`manual_redispatch` events).
+to `/admin/cargo/[id]`.
+
+**Throttle (Round 1 PR #72 P2 #4 fix):** the function uses the
+new `cargo_requests.founder_batch_alerted_at` column (§2.5) for
+per-REQUEST throttling (NOT per outbox row, which would let
+`manual_redispatch` re-trigger). Atomic claim:
+
+```ts
+// 1. Try to claim the alert via a single conditional UPDATE.
+const { data: claim } = await admin
+  .from('cargo_requests')
+  .update({ founder_batch_alerted_at: new Date().toISOString() })
+  .eq('id', cargo_request.id)
+  .is('founder_batch_alerted_at', null)
+  .select('id')
+  .maybeSingle();
+
+if (!claim) {
+  // Another worker (or prior cron run) already alerted.
+  return { sent: false, reason: 'already_alerted' };
+}
+
+// 2. Send the email; if Resend fails, the alerted_at flag stays
+//    so we don't spam. (Cargo demand patterns are not
+//    "must-deliver" — a single alert lost to a Resend outage is
+//    acceptable; the operator-facing notifications are the
+//    business-critical channel.)
+```
 
 ### §4.3 Resend health → singleton
 
@@ -336,47 +458,111 @@ reads this singleton.
 
 - **Schedule:** `*/15 * * * *` (every 15 minutes — same cadence as
   Phase 7 empty-leg drain). Configured in `vercel.json` cron entry.
-- **Auth:** `Authorization: Bearer <CRON_AUTH_SECRET>` (Phase 7
-  pattern; the secret is a Vercel-managed env var, NOT shared
-  with any UI surface). The route refuses 401 if the header is
-  missing or doesn't match.
+- **Auth:** `Authorization: Bearer <CRON_SECRET>` (Round 1 PR
+  #72 P1 #1 — env var name is `CRON_SECRET`, matching the
+  existing Phase 7 helper `verifyCronAuth()` in
+  `lib/empty-legs/cron-auth.ts`). The route reuses this helper
+  verbatim:
+  ```ts
+  import { verifyCronAuth } from '@/lib/empty-legs/cron-auth';
+  // ...
+  const auth = verifyCronAuth(request.headers);
+  if (auth.kind !== 'ok') return new Response(auth.body, { status: 401 });
+  ```
+  The secret is a Vercel-managed env var, NOT shared with any UI
+  surface. The route refuses 401 if missing/wrong, 500 if
+  `CRON_SECRET` env var unset.
 
-### §5.2 Drain loop
+### §5.2 Drain loop — claim-before-send (Round 1 PR #72 P1 #2 fix)
+
+The earlier draft had a "SELECT then UPDATE WHERE processed_at IS
+NULL" pattern that only prevented double-MARK, not double-SEND:
+two concurrent cron runs could both read the same pending rows
+and notify the same operators before either marked them. The
+fix is **claim-before-send** via an atomic UPDATE that stamps a
+`claim_id` + `claimed_at` and reads the rows in the same
+statement, plus `FOR UPDATE SKIP LOCKED` to make concurrent
+workers see disjoint row sets.
 
 ```
-1. Claim up to N=20 pending outbox rows (batch size cap to avoid
-   serverless timeout):
-     SELECT id, cargo_request_id, event_type
-       FROM cargo_dispatch_events_outbox
-      WHERE processed_at IS NULL
-      ORDER BY emitted_at ASC
-      LIMIT 20;
-2. For each claimed row:
-   2.1. Load cargo_request by id (skip if status no longer
+1. Generate a per-run claim_id (uuid_generate_v4() in JS).
+
+2. Atomic claim: stamp claim_id + claimed_at AND return the rows
+   we successfully claimed. The inner SELECT uses FOR UPDATE
+   SKIP LOCKED so a parallel worker sees a disjoint set.
+
+     UPDATE cargo_dispatch_events_outbox
+        SET claim_id = <RUN_CLAIM_ID>,
+            claimed_at = NOW(),
+            attempt_count = attempt_count + 1
+      WHERE id IN (
+        SELECT id FROM cargo_dispatch_events_outbox
+         WHERE processed_at IS NULL
+           AND (claimed_at IS NULL
+                OR claimed_at < NOW() - INTERVAL '5 minutes')
+         ORDER BY emitted_at ASC
+         LIMIT 20
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, cargo_request_id, event_type;
+
+   - The `OR claimed_at < NOW() - INTERVAL '5 minutes'` clause is
+     a lease-reclaim — a crashed worker's claim becomes
+     reclaimable after 5 minutes so rows don't stick forever.
+   - `attempt_count` increments on every claim (success OR
+     subsequent reclaim), giving observability into stuck rows.
+
+3. For each claimed row (returned from step 2):
+   3.1. Load cargo_request by id (skip if status no longer
         actionable — e.g. cancelled in flight).
-   2.2. Call dispatchCargoRequest() → eligible + scored operators.
-   2.3. For each dispatched operator: notifyOperatorOfCargo().
-   2.4. If 5 operators dispatched: sendFounderCargoBatchAlert().
-   2.5. Update the outbox row:
+   3.2. Call dispatchCargoRequest() → eligible + scored operators.
+   3.3. For each dispatched operator: notifyOperatorOfCargo().
+   3.4. If exactly N=5 operators dispatched AND request hasn't
+        been founder-alerted before: sendFounderCargoBatchAlert()
+        (see §4.2 throttle).
+   3.5. Mark processed — ONLY if our claim still owns the row.
+        The `AND claim_id = <RUN_CLAIM_ID>` guard prevents
+        clobbering a row that a reclaim-worker has since claimed.
           UPDATE cargo_dispatch_events_outbox
              SET processed_at = NOW(),
-                 attempt_count = attempt_count + 1,
                  dispatch_result = <JSONB summary>
            WHERE id = <claimed id>
-             AND processed_at IS NULL;        ← double-process guard
-3. Return JSON summary: { ok: true, processed: N, skipped: M, errors: K }
+             AND claim_id = <RUN_CLAIM_ID>
+             AND processed_at IS NULL;
+
+4. Return JSON summary: { ok: true, claimed: N, processed: M,
+                          skipped: K, errors: E }.
 ```
+
+Why this is safe under concurrent cron runs:
+- **No double-send:** step 2's `FOR UPDATE SKIP LOCKED` makes
+  worker B see a disjoint row set from worker A. Each worker
+  only sends notifications for rows IT claimed.
+- **No double-mark:** step 3.5's `claim_id = <RUN_CLAIM_ID>`
+  guard ensures only the claiming worker writes the result.
+- **Crash recovery:** the 5-minute lease lets a new run reclaim
+  rows whose worker died mid-flight (no stuck rows after a
+  cold-start timeout).
 
 ### §5.3 Error handling
 
-- Individual operator notify failure: log to console + record in
-  `dispatch_result.skip_reasons[operator_id] = 'notify_failed'`,
-  continue with next operator.
-- Whole-request failure (e.g. cargo_request deleted mid-drain):
-  mark `processed_at = NOW()` with `dispatch_result = { skipped:
-  'request_not_actionable' }` so the row doesn't retry forever.
-- Resend down: caught by the singleton update (§4.3); cron
-  continues with WhatsApp-link-only dispatch.
+- **Individual operator notify failure:** the operator was
+  chosen by the scoring loop (so they're in
+  `dispatched_operator_ids` at first), but `notifyOperatorOfCargo`
+  threw. Move the id from `dispatched_operator_ids` to
+  `skipped_operator_ids` and record
+  `skip_reasons[operator_id] = 'notify_failed'` (in the
+  `CargoDispatchSkipReason` union — Round 1 PR #72 P2 #5 fix
+  added this variant). Continue with next operator.
+- **Whole-request failure** (e.g. cargo_request deleted
+  mid-drain): mark `processed_at = NOW()` with
+  `dispatch_result = { error: 'request_not_actionable' }` (NOT
+  a `skip_reasons` entry — that union is per-operator; this is
+  the per-request error envelope) so the row doesn't retry forever.
+- **Resend down:** caught by the singleton update (§4.3); cron
+  continues with WhatsApp-link-only dispatch. Operators who
+  received only the WhatsApp link are still in
+  `dispatched_operator_ids`.
 
 ---
 
@@ -469,7 +655,7 @@ Layer-1: route handler auth:
 | 1 | Missing Authorization header | 401 |
 | 2 | Wrong bearer | 401 |
 | 3 | Correct bearer | 200 |
-| 4 | Env var unset (CRON_AUTH_SECRET = "") | 500 |
+| 4 | Env var unset (CRON_SECRET = "") | 500 |
 
 Mirror of `app/api/empty-legs/__tests__/cron-auth.test.ts` shape.
 
@@ -489,7 +675,7 @@ Per parent spec §6 probe 32.
 2. Trigger the cron route manually:
    ```bash
    curl -X POST 'https://aeris-flax.vercel.app/api/cron/cargo/dispatch-drain' \
-        -H 'Authorization: Bearer <CRON_AUTH_SECRET>'
+        -H 'Authorization: Bearer <CRON_SECRET>'
    ```
 3. Verify the outbox row:
    ```sql
@@ -524,7 +710,7 @@ PR 3 is mergeable when ALL of the following hold:
    - All prior Phase 7-10 test scripts (regression)
 5. **Migration:** replay-safe (Phase 9 convention).
 6. **Flag discipline:** `ENABLE_CARGO` continues to gate the new
-   surfaces. Cron route additionally checks `CRON_AUTH_SECRET`.
+   surfaces. Cron route additionally checks `CRON_SECRET`.
 7. **Activation runbook** (§10) ran cleanly on production with
    probe 32 green.
 
@@ -538,7 +724,7 @@ explicitly excluded for the cargo_type under test (per probe 32).
 
 1. Apply migration `20260520000032_phase_11_pr_3_cargo_distribution.sql`
    on production Supabase via SQL Editor.
-2. Set `CRON_AUTH_SECRET` env var on Vercel (if not already set
+2. Set `CRON_SECRET` env var on Vercel (if not already set
    for Phase 7 — re-use the same secret).
 3. Add the cron entry to `vercel.json`:
    ```json
