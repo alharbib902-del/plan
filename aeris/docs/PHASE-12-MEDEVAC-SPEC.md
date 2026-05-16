@@ -91,9 +91,13 @@ status `'pending'` and the operator-quote loop runs.
 Authed client visits `/me/medevac/shield/subscribe`. Picks a
 plan (individual / family / vip_family / diamond) + lists
 covered_members (JSONB array). Signs up via Server Action that
-INSERTs into `medevac_subscriptions` with `status='pending'`
-(Phase 14 will flip to `'active'` after HyperPay tokenization
-+ first annual charge succeeds). For Phase 12, admin manually
+INSERTs into `medevac_subscriptions` with
+`status='pending_payment'` (Round 5 PR #75 P1 #1 fix — the
+`aeris_shield_subscription_status` ENUM is `pending_payment /
+active / expired / cancelled / suspended`; the legacy
+`'pending'` value never existed and would fail the cast).
+Phase 14 will flip to `'active'` after HyperPay tokenization
++ first annual charge succeeds. For Phase 12, admin manually
 flips status via `/admin/medevac/subscriptions/[id]/activate`
 after offline payment confirmation — same pattern as Phase 11
 admin-on-behalf actions.
@@ -132,7 +136,7 @@ have no offer; the subscription itself is the contract).
 | **D1** | Public `/medevac` form is restricted to `severity='stable'` ONLY. Moderate + critical require authed account. | Critical/moderate cases involve life-threatening conditions + insurance + immediate dispatch coordination — identity verification (client session) is non-negotiable. Stable cases are pre-planned transfers (e.g. specialist appointment in another city), low-PII-risk, suitable for anonymous intake. |
 | **D2** | 4 service levels: `BMT`, `ALS`, `CCT`, `repatriation`. ENUM exactly matches Phase 1 scaffold values. | Standard medical transport hierarchy. `BMT` = Basic Medical Transport (stable patient, nurse onboard). `ALS` = Advanced Life Support (paramedic + vital signs monitoring). `CCT` = Critical Care Transport (ICU-grade equipment + critical care physician). `repatriation` = cross-border, includes customs + visa coordination. |
 | **D3** | 3 condition severities: `stable`, `moderate`, `critical`. ENUM matches Phase 1 scaffold. | Triage standard. Severity gates the SLA tier (D10) + the public-form availability (D1). |
-| **D4** | 4 Aeris Shield plans: `individual` (1 ALS event/yr), `family` (4 ALS/yr, ≤4 members), `vip_family` (12 CCT + repatriation, ≤6 members), `diamond` (unlimited CCT + repatriation + dedicated nurse coordinator). | Per business plan tiers (`subscription_plan` ENUM from Phase 1 scaffold). The annual_fee + covered_events + max_members are stored in a `medevac_subscription_plan_terms` lookup table (`§3.7`) so admin can adjust pricing without code deploy. |
+| **D4** | 4 Aeris Shield plans: `individual` (1 ALS event/yr), `family` (4 ALS/yr, ≤4 members), `vip_family` (12 CCT + repatriation, ≤6 members), `diamond` (unlimited CCT + repatriation + dedicated nurse coordinator). | Per business plan tiers. Round 5 PR #75 P2 #3 fix — the enum is `aeris_shield_plan` (defined in §3.1 alongside the other Phase 12 ENUMs); the Phase 1 scaffold's `subscription_plan` type is dropped by the cleanup migration and MUST NOT be resurrected by PR 1. Both `medevac_subscription_plan_terms.plan` (PK) and `medevac_subscriptions.plan` (FK to the lookup) are typed `aeris_shield_plan`. The annual_fee + covered_events + max_members are stored in the `medevac_subscription_plan_terms` lookup table (§3.7) so admin can adjust pricing without code deploy. |
 | **D5** | Subscription model: annual upfront fee. Auto-renewal opt-out at end-of-term. `covered_members JSONB` is mutable POST-signup via admin Server Action only (defensive — clients shouldn't add their cousin's husband mid-year). | Phase 14 wires HyperPay recurring; Phase 12 only persists the fee + tracks `used_events`. |
 | **D6** | Booking shape (identical to Phase 11 PR 2): `offer_id=NULL`, `trip_request_id=NULL`, `source_offer_table='medevac_offers'`, `source_offer_id=<UUID>`, `source_discriminator='medevac'`. EXCEPT for `J5` subscription-covered bookings: `source_offer_table=NULL`, `source_offer_id=NULL` (no offer; subscription is the contract). The Phase 6.2 pair-check constraint allows both-NULL or both-NOT-NULL; covered bookings use both-NULL. | Two booking sub-shapes inside one `source_discriminator='medevac'` value. `/me/bookings` chip renders the same; the source layer differentiates via the pair pattern. |
 | **D7** | Per-aircraft medical certifications stored in `aircraft_medical_certifications` (NEW table, §3.5). Columns: `supports_BMT`, `supports_ALS`, `supports_CCT`, `supports_repatriation` (BOOL each), `certifying_authority` ENUM, `certification_number TEXT`, `certification_expires_at TIMESTAMPTZ`. | Mirrors `cargo_aircraft_capabilities` shape. Adds expiry tracking because medical certs (unlike cargo capability) have regulatory expiry windows. Cron `*/30 * * * *` checks expired rows + flips `supports_*` to `false` (Decision D11). |
@@ -140,7 +144,7 @@ have no offer; the subscription itself is the contract).
 | **D9** | Insurance integration deferred to Phase 14. Phase 12 snapshots `insurance_provider_snapshot` + `insurance_claim_ref` at intake time but never calls a provider API. | Decoupling. Phase 14 HyperPay payment + ZATCA invoicing layer wires the claim filing pipeline. |
 | **D10** | SLA response windows by severity: `critical=1h`, `moderate=4h`, `stable=24h`. Stored in `medevac_severity_sla` lookup table (§3.6) so admin can tune without code deploy. **No `dispatched` status in the enum** (Round 1 PR #75 P1 #1 fix). The PR 3 dispatch cron stamps `medevac_requests.dispatched_at = NOW()` on first successful claim+notify; the request stays in `status='pending'` (or `'offers_received'` once an operator quotes). The SLA escalation cron uses the timestamp + status filter: `medevac_requests WHERE status IN ('pending', 'offers_received') AND dispatched_at IS NOT NULL AND dispatched_at + sla_interval < NOW() AND sla_escalated_at IS NULL` → auto-escalate to admin via `founder_critical_escalation_email`. | Operator must quote within the SLA or auto-escalate. Critical=1h is the existing industry standard; stable=24h gives buffer for non-urgent transfers. Using `dispatched_at` (a timestamp) instead of a `'dispatched'` status keeps the status machine simple: no new transitions needed; existing `pending → offers_received → accepted` flow is unchanged. |
 | **D11** | Medical cert expiry cron: `*/30 * * * *`. **Round 1 PR #75 P1 #4 fix — warning vs enforcement are SEPARATE actions.** (a) **Warning cascade (no flip):** sends `expired_medical_cert_alert` at 30/14/7/1 day(s) ahead of `certification_expires_at`; each warning email fires exactly once per renewal cycle via per-threshold `warning_{30,14,7,1}d_sent_at` flags on `aircraft_medical_certifications`. The cron sets the flag at send time; the flag stays set until the operator renews the cert (updates `certification_expires_at` to a new future timestamp **strictly more than 30 days out**, i.e. `certification_expires_at > NOW() + INTERVAL '30 days'`, Round 4 PR #75 P2 #4 fix — without the > 30 days condition a cert renewed mid-warning-window would reset the flags and the cron would re-send every threshold on the next tick) at which point the cron resets all 4 flags to NULL. The `supports_*` BOOLs stay TRUE during the warning window — the cert is still valid. (b) **Enforcement flip:** ONLY after the cert has actually expired (`certification_expires_at <= NOW()`) does the cron flip `supports_BMT/ALS/CCT/repatriation` to false AND send a final `medical_cert_expired_now` email. Distribution (PR 3) filters by cert AND `certification_expires_at > NOW()` as a belt-and-suspenders check. | Defensive — gives the operator a clear runway to renew (30/14/7/1 day cascade) without preemptively disabling dispatch. Per-threshold `*_sent_at` flags prevent the cron from re-emailing every 30 min for a month. Reset only on > 30-day renewal keeps the cascade single-fire per cycle and prevents email spam loops on mid-window renewals. |
-| **D12** | PII redaction in `audit_logs`: never store `patient_name` in `new_value` JSONB. Store MEV-XXXX reference + `service_level` + `condition_severity` only. Same rule for any future analytics extracts. | Aligned with PDPL (Saudi data protection) minimization principle. Patient name lives in `medevac_requests.patient_name_snapshot` ONLY; admin queries against that column are logged separately as `admin_pii_read` events. |
+| **D12** | PII redaction in `audit_logs`: never store `patient_name` in `new_value` JSONB. Store MEV-XXXX reference + `service_level` + `condition_severity` only. Same rule for any future analytics extracts. Round 5 PR #75 P2 #4 fix — the `admin_pii_read` audit surface is owned by PR 1's `lib/medevac/admin-pii.ts` helper `readAdminMedevacRequestDetail(adminId, requestId)`. The `/admin/medevac/[id]` page (PR 1 §5) calls ONLY this helper to load patient-bearing rows; the helper wraps the SELECT in a service-role client and writes an `audit_logs` row with `entity_type='medevac_request'`, `entity_id=requestId`, `action='admin_pii_read'`, `new_value=jsonb_build_object('admin_id', adminId, 'mev_number', medevac_request_number, 'service_level', service_level, 'condition_severity', condition_severity)`, `user_id=adminId`. No other admin path is allowed to read `patient_name_snapshot` directly — list views call a redacted variant (`listAdminMedevacRequests`) that omits the column entirely. | Aligned with PDPL (Saudi data protection) minimization principle. Patient name lives in `medevac_requests.patient_name_snapshot` ONLY; the `admin_pii_read` event makes every privileged read attributable to a specific admin + request without ever copying the name into the audit row. |
 | **D13** | Subscription-funded vs out-of-pocket flow: subscription holder toggles "use subscription" → request `status='covered'`, no operator-quote loop, immediate booking via `aeris_shield_default_operator_id` admin-configured value. Non-subscription or subscription-but-toggle-off → standard `status='pending'` + operator-quote loop. | The "use subscription" toggle is the user's explicit consent to consume one of their covered events (decrementing `used_events`); without toggle, the request stays out-of-pocket even if they have remaining events. |
 | **D14** | Aeris Shield default operator: a single admin-configured operator (stored in `aeris_shield_config` singleton, §3.8) who has signed a master service agreement with Aeris and a guaranteed SLA. Used for covered events only (D13). Non-subscription requests still go through normal operator distribution. | Avoids dispatching covered events to operators who haven't signed the master SLA. Founder picks the operator via `/admin/medevac/shield-config`. |
 | **D15** | `medevac_offers` table mirrors `cargo_offers` shape exactly (per-offer status + 7-day expiry + decided_at + decline/withdraw_reason columns). The PR 2 RPCs (`accept`, `decline`, `withdraw`, `cancel`) mirror Phase 11 PR 2 §4.4-§4.6 contracts verbatim with `cargo_` → `medevac_` rename. | Maximize code reuse + spec-language reuse. Codex review surface shrinks because reviewers can compare to the accepted Phase 11 contracts. |
@@ -1016,28 +1020,44 @@ prior writes — see Atomicity note below):
 4. **Verify patient covered-member eligibility** (Round 4
    PR #75 P1 #2 fix — was missing; without this check a
    client could consume a family/VIP plan's event for an
-   uncovered person). Normalise `p_patient_member_identifier`
-   (`BTRIM(lower($1))`) and accept the request iff EITHER:
-   - the normalised identifier equals
-     `lower(BTRIM(clients.full_name))` where `clients.id =
-     v_subscription.client_id` (the subscription owner is
-     always implicitly covered), OR
-   - the normalised identifier appears as a member's `name`
-     inside `v_subscription.covered_members` JSONB array
-     (lookup via `EXISTS (SELECT 1 FROM
-     jsonb_array_elements(v_subscription.covered_members) AS m
-     WHERE lower(BTRIM(m->>'name')) = $normalised)`).
+   uncovered person). Compute the normalised lookup key
+   `v_normalised := BTRIM(lower(p_patient_member_identifier))`
+   for comparison only, then scan both the owner row and the
+   `covered_members` JSONB and **resolve the canonical
+   matched name** (Round 5 PR #75 P2 #2 fix — was: "write the
+   normalised identifier into patient_name_snapshot"; that
+   destroyed the canonical casing from `clients.full_name` /
+   `covered_members[].name`, but per D8 the booked operator
+   later needs the canonical patient name for transport
+   coordination):
 
-   Failure → `{ok: false, error: 'patient_not_covered'}`.
+   - Branch A (owner): if
+     `lower(BTRIM(clients.full_name)) = v_normalised` for
+     `clients.id = v_subscription.client_id`, set
+     `v_canonical_patient_name := clients.full_name` (BTRIM
+     only — preserve the original casing/spelling).
+   - Branch B (member): otherwise, run
+     ```sql
+     SELECT BTRIM(m->>'name')
+       FROM jsonb_array_elements(v_subscription.covered_members) AS m
+      WHERE lower(BTRIM(m->>'name')) = v_normalised
+      LIMIT 1
+     ```
+     and set `v_canonical_patient_name` to the returned
+     value. Multiple covered_members rows with the same
+     normalised name are vanishingly rare (admin Server
+     Action validates uniqueness on insert per D5), but
+     `LIMIT 1` keeps the resolution deterministic.
 
-   The normalised identifier is also written into
-   `medevac_requests.patient_name_snapshot` in step 8 so the
-   audit log + post-acceptance dispatch email can show the
-   exact matched name. Admin-added `covered_members` rows
-   are mutable per D5 — this check therefore always reads
-   the row inside the FOR UPDATE lock (step 1) so a
-   concurrent admin edit can't slip an unauthorised member
-   in mid-consume.
+   If neither branch finds a row → `{ok: false, error:
+   'patient_not_covered'}`. Otherwise carry
+   `v_canonical_patient_name` forward into step 8 (it lands
+   in `medevac_requests.patient_name_snapshot`); the
+   normalised key is discarded after this step. Admin-added
+   `covered_members` rows are mutable per D5 — this check
+   therefore always reads the row inside the FOR UPDATE lock
+   (step 1) so a concurrent admin edit can't slip an
+   unauthorised member in mid-consume.
 
 5. **Verify service-level eligibility** (Round 3 PR #75 P1 #3
    fix — explicit matrix; do NOT rely on `medevac_service_level`
@@ -1125,9 +1145,11 @@ prior writes — see Atomicity note below):
    established in step 6).
 10. **Audit log entry** (PII redacted per D12 — store
     MEV-XXXX + service_level + condition_severity only; the
-    matched patient identifier from step 4 is the normalised
-    snapshot stored on `medevac_requests.patient_name_snapshot`
-    and is NEVER written into `audit_logs.new_value` JSONB).
+    canonical patient name resolved in step 4 lands on
+    `medevac_requests.patient_name_snapshot` per step 8 and
+    is NEVER written into `audit_logs.new_value` JSONB. The
+    normalised lookup key from step 4 is a transient compare
+    value; it is not persisted anywhere).
 
 Returns `{ok: true, medevac_request_id, booking_id,
 covered_events_remaining, dispatched_operator_id}`.
@@ -1212,10 +1234,30 @@ because `consume_aeris_shield_event` (§4.7) and
 - `medevac-admin.ts`: `upsertMedicalCertification` (mirrors
   `upsertCargoAircraftCapability`)
 
+**Server-side helpers** (`lib/medevac/`):
+- `admin-pii.ts` — D12 PII surface (Round 5 PR #75 P2 #4 fix).
+  Exports `readAdminMedevacRequestDetail(adminId, requestId)`
+  which: (1) `createAdminClient()` SELECT the row including
+  `patient_name_snapshot` + `patient_age_snapshot`, (2)
+  INSERT one `audit_logs` row with
+  `action='admin_pii_read'`, `entity_type='medevac_request'`,
+  `entity_id=requestId`, `user_id=adminId`, and the redacted
+  metadata listed in D12. Both ops happen inside the same
+  request handler; the SELECT result is returned to the page
+  ONLY after the audit insert succeeds (a Resend-style
+  log-and-fail-open pattern would defeat the audit claim).
+  Also exports `listAdminMedevacRequests()` which is the
+  redacted list-view variant that NEVER selects
+  `patient_name_snapshot` or `patient_age_snapshot` (D8
+  list/index views are PII-free).
+
 **Pages:**
 - `/medevac` — public intake form (stable only)
-- `/admin/medevac` — queue
-- `/admin/medevac/[id]` — detail (patient_name admin-only)
+- `/admin/medevac` — queue (uses `listAdminMedevacRequests`
+  — PII-free)
+- `/admin/medevac/[id]` — detail (patient_name admin-only;
+  loads via `readAdminMedevacRequestDetail` so the
+  `admin_pii_read` audit row fires on every view)
 - `/admin/medevac/medical-certifications` — per-aircraft matrix
 
 **Tests** (`lib/medevac/__tests__/`):
