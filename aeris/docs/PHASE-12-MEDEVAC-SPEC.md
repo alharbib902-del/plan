@@ -339,14 +339,24 @@ CREATE TABLE IF NOT EXISTS medevac_requests (
   ),
 
   -- Covered status invariant (D13) + subscription linkage
-  -- invariant (Round 1 PR #75 P2 #6 fix). A covered request
-  -- MUST have a non-NULL subscription_id — the subscription is
-  -- the contract that backs the no-quote booking. The FK uses
+  -- invariant (Round 1 PR #75 P2 #6 fix; tightened to two-way
+  -- in Round 2 PR #75 P1 #2 fix). A covered request MUST have
+  -- a non-NULL subscription_id — the subscription is the
+  -- contract that backs the no-quote booking. The FK uses
   -- ON DELETE RESTRICT (§3.7 below) so deleting an active
   -- subscription that backs covered requests is blocked.
-  CONSTRAINT medevac_requests_covered_invariant_check CHECK (
-    (is_covered = false)
-    OR (is_covered = true AND status = 'covered' AND subscription_id IS NOT NULL)
+  -- The first CHECK enforces the two-way equivalence
+  -- `(is_covered = true) = (status = 'covered')` so we cannot
+  -- ship a "covered" request without a Shield contract NOR a
+  -- non-covered request that still sits in `status='covered'`
+  -- (which would otherwise bypass the normal quote/dispatch
+  -- flow). The second CHECK enforces `status='covered' →
+  -- subscription_id IS NOT NULL`.
+  CONSTRAINT medevac_requests_covered_status_equiv_check CHECK (
+    (is_covered = true) = (status = 'covered')
+  ),
+  CONSTRAINT medevac_requests_covered_has_subscription_check CHECK (
+    status <> 'covered' OR subscription_id IS NOT NULL
   ),
 
   -- Accepted requests must have accepted_offer_id OR be covered
@@ -522,10 +532,13 @@ CREATE TABLE IF NOT EXISTS aircraft_medical_certifications (
   certifying_authority medical_certifying_authority NOT NULL,
   certification_number TEXT,
   certification_expires_at TIMESTAMPTZ NOT NULL,
-  -- PR 3 — per-threshold warning state. Each flag is set when
-  -- the matching warning email has been queued exactly once
-  -- per renewal cycle; the cron resets all 4 flags to false
-  -- when certification_expires_at is bumped forward (renewal).
+  -- Per-threshold warning state. Owned by PR 1 schema
+  -- (Round 1 PR #75 P1 #4 fix landed these columns here);
+  -- consumed by the PR 3 cron `expire-certifications` which
+  -- sets each flag exactly once per renewal cycle when the
+  -- matching warning email has been queued, then resets all
+  -- 4 flags to NULL when `certification_expires_at` is bumped
+  -- forward (renewal). PR 3 does NOT re-add the columns.
   warning_30d_sent_at TIMESTAMPTZ,
   warning_14d_sent_at TIMESTAMPTZ,
   warning_7d_sent_at  TIMESTAMPTZ,
@@ -648,8 +661,15 @@ CREATE TABLE IF NOT EXISTS medevac_subscriptions (
   used_events INT NOT NULL DEFAULT 0
     CHECK (used_events >= 0),
 
-  start_date DATE NOT NULL,
-  end_date DATE NOT NULL,
+  -- Round 2 PR #75 P1 #1 fix — nullable until activation. §4.8
+  -- `subscribe_to_aeris_shield` inserts the row with
+  -- status='pending_payment' BEFORE any payment lands; the dates
+  -- are stamped by §4.9 admin_activate_subscription (Phase 12)
+  -- or HyperPay webhook (Phase 14). The status-conditional CHECK
+  -- (medevac_subscriptions_active_has_dates_check below) enforces
+  -- the dates ONCE status hits 'active'.
+  start_date DATE,
+  end_date DATE,
   auto_renew BOOLEAN NOT NULL DEFAULT true,
   status aeris_shield_subscription_status NOT NULL DEFAULT 'pending_payment',
 
@@ -664,8 +684,20 @@ CREATE TABLE IF NOT EXISTS medevac_subscriptions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
+  -- Round 2 PR #75 P1 #1 fix — date order check is now
+  -- conditional on the dates being populated. Pending_payment
+  -- rows can sit with NULL dates; activation MUST populate both
+  -- with end_date > start_date.
   CONSTRAINT medevac_subscriptions_date_order_check CHECK (
-    end_date > start_date
+    start_date IS NULL OR end_date IS NULL OR end_date > start_date
+  ),
+  -- The status gate: any non-pending_payment status MUST have
+  -- both dates populated. Covers 'active', 'expired',
+  -- 'cancelled', 'suspended' — these are all post-activation
+  -- states.
+  CONSTRAINT medevac_subscriptions_active_has_dates_check CHECK (
+    status = 'pending_payment'
+    OR (start_date IS NOT NULL AND end_date IS NOT NULL AND end_date > start_date)
   ),
   CONSTRAINT medevac_subscriptions_events_within_plan_check CHECK (
     -- Diamond (-1 unlimited) skips the cap; others enforce
@@ -844,9 +876,15 @@ NEW — no Phase 11 equivalent. Atomically (all in one transaction):
    `source_offer_table=NULL`, `source_offer_id=NULL` (D6 covered
    variant), `source_discriminator='medevac'`,
    `operator_id` + snapshots from step 4, customer snapshots
-   from the client + medevac_request, `payment_status='covered'`
-   (NEW value — added in PR 1 migration alongside cargo's
-   `'pending_offline'`).
+   from the client + medevac_request, `payment_status =
+   'pending_offline'` (Round 2 PR #75 P1 #3 fix — no enum
+   extension; the row is recognisable as covered via the
+   composite signal `source_discriminator='medevac'` + both
+   `source_offer_table` and `source_offer_id` NULL, which is
+   already enforced by Phase 6.2
+   `bookings_source_offer_pair_check`; the Shield contract
+   stays linked through `medevac_requests.subscription_id`
+   established in step 6).
 8. **Audit log entry** (PII redacted per D12 — store
    MEV-XXXX + service_level + condition_severity only).
 
@@ -941,10 +979,18 @@ because `consume_aeris_shield_event` (§4.7) and
 | 3 | RPC `withdraw_medevac_offer` (§4.5) | §4.5 |
 | 4 | RPC `cancel_medevac_request` (§4.6) | §4.6 |
 | 5 | RPC `admin_activate_subscription` (§4.9) | §4.9 |
-| 6 | Column `medevac_requests.founder_sla_escalated_at` (per-request escalation throttle) | §3.1 |
 
-(All schema deltas wrapped in `IF NOT EXISTS` / pg_constraint
-guards. No new tables — only the column + 5 new RPCs.)
+> Round 2 PR #75 P2 #6 fix — PR 2 does NOT re-add a
+> per-request escalation throttle column. The
+> `medevac_requests.sla_escalated_at TIMESTAMPTZ` column is
+> owned by PR 1's §3.1 `CREATE TABLE` and is the single
+> throttle source consumed by PR 3's `sla-escalation` cron;
+> there is no separate `founder_sla_escalated_at` column.
+
+(No new tables and no new columns in PR 2 — only the 5 new
+RPCs above. All RPC bodies wrapped in `CREATE OR REPLACE
+FUNCTION`; any incidental schema deltas in helper migrations
+use `IF NOT EXISTS` / `pg_constraint` guards.)
 
 **Server Actions** (`app/actions/`):
 - `medevac-clients.ts`: 5 wrappers
@@ -1003,7 +1049,14 @@ Admin extensions:
 | 3 | RPC `claim_medevac_dispatch_events` | (mirror Phase 11 PR 3 §4) |
 | 4 | RPC `medevac_operator_last_dispatch_map` | (mirror Phase 11 PR 3 §5) |
 | 5 | Trigger `medevac_requests` AFTER INSERT → publish 'initial' for `is_covered=false` rows only | NEW (covered rows skip the outbox entirely since they self-book in §4.7) |
-| 6 | Cert expiry tracking columns on `aircraft_medical_certifications` (per-threshold flags) | §3.5 + Round 1 PR #75 P1 #4 |
+
+> Round 2 PR #75 P2 #5 fix — the four
+> `warning_{30,14,7,1}d_sent_at` columns on
+> `aircraft_medical_certifications` are NOT re-added by PR 3.
+> They are owned by PR 1's §3.5 `CREATE TABLE` block (added
+> there via the Round 1 PR #75 P1 #4 fix). PR 3 only consumes
+> them via the `/api/cron/medevac/expire-certifications`
+> warning cascade + renewal-reset logic described below.
 
 **TS pipeline** (`lib/medevac/`):
 - `scoring.ts` — pure scoring
@@ -1115,9 +1168,20 @@ appears in `skip_reasons['no_certification']`.
 ### Probe 40 — Expired medical cert removal
 
 1. Insert aircraft_medical_certification with
-   `certification_expires_at = NOW() - INTERVAL '1 day'`.
-2. Trigger `/api/cron/medevac/expire-certifications`.
-3. Verify all `supports_*` flipped to `false`.
+   `certification_expires_at = NOW() + INTERVAL '7 days'`
+   and at least one `supports_*` flag TRUE. (Round 2 PR #75
+   P2 #4 fix — the §3.5 `reject_past_expiry_trigger` BEFORE
+   INSERT path rejects past timestamps with SQLSTATE 22023,
+   so we MUST insert a future cert first.)
+2. UPDATE the same row to set
+   `certification_expires_at = NOW() - INTERVAL '1 day'`
+   WITHOUT touching any `supports_*` flag. (The trigger's
+   UPDATE branch only blocks RE-ENABLING a flag on an expired
+   cert; backdating the timestamp on a row whose flags are
+   already TRUE is the intended admin path for simulating
+   expiry in probes + tests.)
+3. Trigger `/api/cron/medevac/expire-certifications`.
+4. Verify all `supports_*` flipped to `false`.
 
 ---
 
