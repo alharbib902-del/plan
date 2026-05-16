@@ -195,10 +195,25 @@ export interface NotifyOperatorArgs {
   cargo_request: CargoRequestRow;
 }
 
+/**
+ * Round 1 PR #73 P1 #3 fix — `sent` is now an honest signal: it
+ * is TRUE iff we actively delivered the notification through a
+ * channel that pushes to the operator (currently: Resend email).
+ * The wa.me URL is surfaced separately as `whatsapp_link_url`
+ * for the cron route to record in `dispatch_result.whatsapp_links`
+ * as audit metadata; the operator only sees it if they ALSO
+ * received the email (which embeds the same link via the CTA).
+ *
+ * Earlier behavior counted a built-but-unsent wa.me URL as a
+ * successful channel, which let cron mark an operator
+ * "dispatched" even when Resend was misconfigured / the operator
+ * had no email — in practice the operator received nothing.
+ */
 export interface NotifyOperatorResult {
   sent: boolean;
-  channels_attempted: Array<'email' | 'whatsapp_link'>;
-  channels_succeeded: Array<'email' | 'whatsapp_link'>;
+  channels_attempted: Array<'email'>;
+  channels_succeeded: Array<'email'>;
+  whatsapp_link_url: string | null;
 }
 
 export async function notifyOperatorOfCargo(
@@ -209,73 +224,76 @@ export async function notifyOperatorOfCargo(
     sent: false,
     channels_attempted: [],
     channels_succeeded: [],
+    whatsapp_link_url: null,
   };
 
-  // WhatsApp link — always buildable if we have a phone. The
-  // "send" here is just recording the link in the cron's audit
-  // trail (the operator clicks it themselves; we never push to
-  // the WhatsApp API). For cron observability we count it as a
-  // succeeded channel iff we had a phone to point at.
+  // Build the wa.me URL as audit metadata if we have a phone.
+  // This is NOT a delivery — operator only follows the link if
+  // they ALSO get the email (which embeds it via the CTA) OR if
+  // a founder/admin manually shares it from the dispatch log.
   if (args.operator_phone) {
-    result.channels_attempted.push('whatsapp_link');
-    // Build but don't store the link here; cron route can
-    // include it in dispatch_result if desired.
-    buildOperatorWhatsAppLink({
+    result.whatsapp_link_url = buildOperatorWhatsAppLink({
       operator_phone: args.operator_phone,
       cargo_request: args.cargo_request,
       offer_form_url: offerUrl,
     });
-    result.channels_succeeded.push('whatsapp_link');
   }
 
-  // Email — only attempt if we have credentials + a target.
+  // Email — the ONLY active delivery channel today. If creds or
+  // target email are missing, return sent=false; the cron route
+  // will record the operator under skip_reasons['notify_failed']
+  // and the wa.me link remains in dispatch_result.whatsapp_links
+  // for audit / manual outreach.
   const creds = envCredentials();
-  if (creds && args.operator_email) {
-    result.channels_attempted.push('email');
-    try {
-      const resend = new Resend(creds.apiKey);
-      const content = buildOperatorCargoEmail({
-        cargo_request: args.cargo_request,
-        offer_form_url: offerUrl,
-      });
-      const { error } = await resend.emails.send({
-        from: creds.from,
-        to: args.operator_email,
-        subject: content.subject,
-        html: content.html,
-        text: content.text,
-      });
-      if (error) {
-        console.error(
-          '[cargo.notifications] Resend send error',
-          error
-        );
-        await recordCargoEmailAlertStatus({
-          status: 'send_failed',
-          reason: typeof error === 'string' ? error : JSON.stringify(error).slice(0, 200),
-        });
-      } else {
-        result.channels_succeeded.push('email');
-        await recordCargoEmailAlertStatus({ status: 'healthy' });
-      }
-    } catch (err) {
-      console.error('[cargo.notifications] Resend threw', err);
+  if (!creds) {
+    await recordCargoEmailAlertStatus({
+      status: 'config_missing',
+      reason: 'RESEND_API_KEY or RESEND_FROM_EMAIL not set',
+    });
+    return result;
+  }
+  if (!args.operator_email) {
+    // Operator has no email on file → email cannot be sent.
+    // We don't flip the singleton (that would mislabel a missing
+    // operator email as a Resend-side issue), but the operator
+    // does count as notify_failed.
+    return result;
+  }
+
+  result.channels_attempted.push('email');
+  try {
+    const resend = new Resend(creds.apiKey);
+    const content = buildOperatorCargoEmail({
+      cargo_request: args.cargo_request,
+      offer_form_url: offerUrl,
+    });
+    const { error } = await resend.emails.send({
+      from: creds.from,
+      to: args.operator_email,
+      subject: content.subject,
+      html: content.html,
+      text: content.text,
+    });
+    if (error) {
+      console.error('[cargo.notifications] Resend send error', error);
       await recordCargoEmailAlertStatus({
         status: 'send_failed',
-        reason: err instanceof Error ? err.message.slice(0, 200) : 'unknown',
+        reason:
+          typeof error === 'string'
+            ? error
+            : JSON.stringify(error).slice(0, 200),
       });
+      return result;
     }
-  } else if (!creds) {
-    // Don't surface config_missing to the canary on every dispatch
-    // run — only flip the singleton on actual delivery failures.
-    // A misconfigured deployment will surface separately when the
-    // founder visits /admin/operators/canary and sees zero
-    // cargo_dispatch_runs_24h.
-    console.warn(
-      '[cargo.notifications] RESEND_API_KEY or RESEND_FROM_EMAIL missing; skipping email send'
-    );
+    result.channels_succeeded.push('email');
+    result.sent = true;
+    await recordCargoEmailAlertStatus({ status: 'healthy' });
+  } catch (err) {
+    console.error('[cargo.notifications] Resend threw', err);
+    await recordCargoEmailAlertStatus({
+      status: 'send_failed',
+      reason: err instanceof Error ? err.message.slice(0, 200) : 'unknown',
+    });
   }
-
-  result.sent = result.channels_succeeded.length > 0;
   return result;
 }

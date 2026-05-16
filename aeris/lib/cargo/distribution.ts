@@ -49,13 +49,31 @@ export interface CargoDispatchResult {
   skip_reasons: Record<string, CargoDispatchSkipReason>;
 }
 
+/**
+ * Outcome envelope (Round 1 PR #73 P1 #2 fix).
+ *
+ * Distinguishes two failure modes so the cron route can choose
+ * between mark-processed (permanent abort) vs leave-unclaimed
+ * (transient — let the next 15-min tick retry):
+ *
+ *   - 'request_not_actionable' = cargo_request deleted/cancelled
+ *     between trigger and drain. PERMANENT — mark processed with
+ *     `dispatch_result.error = 'request_not_actionable'`.
+ *
+ *   - 'retryable_failure' = infrastructure failure (operators
+ *     read, aircraft read, capability read, or last-dispatch RPC
+ *     errored). DO NOT mark processed; the row stays claimed
+ *     for 5 minutes (the lease) then becomes reclaimable by the
+ *     next cron run.
+ */
 export type CargoDispatchOutcome =
   | CargoDispatchResult
-  | { ok: false; error: 'request_not_actionable' };
+  | { ok: false; error: 'request_not_actionable' }
+  | { ok: false; error: 'retryable_failure'; reason: string };
 
 // Loose-cast pattern (PR 1 convention): cargo_dispatch_events_outbox
-// is added by the PR 3 migration but not yet registered in
-// types/database.ts.
+// + cargo_operator_last_dispatch_map RPC are added by the PR 3
+// migration but not yet registered in types/database.ts.
 type LooseClient = {
   from: (table: string) => {
     select: (cols: string) => {
@@ -73,6 +91,13 @@ type LooseClient = {
       }>;
     };
   };
+  rpc: (
+    name: string,
+    args?: Record<string, unknown>
+  ) => Promise<{
+    data: unknown;
+    error: { code?: string; message?: string } | null;
+  }>;
 };
 
 // Re-export classifyCandidates for testability + admin use.
@@ -83,7 +108,10 @@ export async function dispatchCargoRequest(
 ): Promise<CargoDispatchOutcome> {
   const admin = createAdminClient() as unknown as LooseClient;
 
-  // 1. Load cargo_request (skip if status no longer actionable)
+  // 1. Load cargo_request.
+  // Round 1 PR #73 P1 #2 — distinguish:
+  //   - request gone / cancelled (permanent abort)
+  //   - read errored (retryable)
   const { data: requestRaw, error: requestError } = await admin
     .from('cargo_requests')
     .select('*')
@@ -92,7 +120,11 @@ export async function dispatchCargoRequest(
 
   if (requestError) {
     console.error('[cargo.distribution] cargo_request read failed', requestError);
-    return { ok: false, error: 'request_not_actionable' };
+    return {
+      ok: false,
+      error: 'retryable_failure',
+      reason: `cargo_requests read: ${requestError.message ?? 'unknown'}`,
+    };
   }
   if (!requestRaw) {
     return { ok: false, error: 'request_not_actionable' };
@@ -102,12 +134,19 @@ export async function dispatchCargoRequest(
     return { ok: false, error: 'request_not_actionable' };
   }
 
-  // 2. Enumerate approved operators + per-row has_capability +
-  //    last_dispatched_at + rating.
-  const candidates = await loadCandidates(admin, request.cargo_type);
+  // 2. Enumerate candidates. Returns either the list or a
+  //    LoadFailure indicating which read failed.
+  const candidatesOutcome = await loadCandidates(admin, request.cargo_type);
+  if (!candidatesOutcome.ok) {
+    return {
+      ok: false,
+      error: 'retryable_failure',
+      reason: candidatesOutcome.reason,
+    };
+  }
 
   // 3. Classify (pure)
-  const classified = classifyCandidates(candidates);
+  const classified = classifyCandidates(candidatesOutcome.candidates);
 
   return {
     ok: true,
@@ -133,10 +172,23 @@ export async function dispatchCargoRequest(
 // + ratings populate in a future iteration once we have
 // real dispatch history + Phase 13 rating aggregation.
 
+/**
+ * Round 1 PR #73 P1 #2 fix — loadCandidates returns a tagged
+ * outcome. Any infrastructure failure surfaces as
+ * `{ ok: false, reason }` so the caller propagates it as
+ * `retryable_failure` and the cron route LEAVES THE ROW
+ * UNPROCESSED (so the next 15-min tick retries). The previous
+ * "log + return empty" behavior silently consumed outbox rows
+ * on transient DB outages.
+ */
+type LoadCandidatesOutcome =
+  | { ok: true; candidates: CargoCandidate[] }
+  | { ok: false; reason: string };
+
 async function loadCandidates(
   admin: LooseClient,
   cargoType: CargoType
-): Promise<CargoCandidate[]> {
+): Promise<LoadCandidatesOutcome> {
   const adminTyped = admin as unknown as {
     from: (table: string) => {
       select: (cols: string) => {
@@ -166,7 +218,10 @@ async function loadCandidates(
 
   if (opError) {
     console.error('[cargo.distribution] operators read failed', opError);
-    return [];
+    return {
+      ok: false,
+      reason: `operators read: ${opError.message ?? 'unknown'}`,
+    };
   }
 
   interface OpRow {
@@ -176,7 +231,13 @@ async function loadCandidates(
     contact_phone?: string | null;
   }
   const operators = (opData ?? []) as OpRow[];
-  if (operators.length === 0) return [];
+  if (operators.length === 0) {
+    // Genuinely empty operator pool → success with no candidates.
+    // Cron marks processed; the request is "dispatched to 0",
+    // which is recoverable via manual_redispatch once operators
+    // sign up.
+    return { ok: true, candidates: [] };
+  }
 
   // Step b — aircraft (active, with operator_id)
   const { data: aircraftData, error: aircraftError } = await adminTyped
@@ -186,15 +247,10 @@ async function loadCandidates(
 
   if (aircraftError) {
     console.error('[cargo.distribution] aircraft read failed', aircraftError);
-    return operators.map((op) => ({
-      operator_id: op.id ?? '',
-      contact_email: op.contact_email ?? null,
-      contact_phone: op.contact_phone ?? null,
-      company_name: op.company_name ?? '',
-      has_capability: false,
-      last_dispatched_at: null,
-      rating: null,
-    }));
+    return {
+      ok: false,
+      reason: `aircraft read: ${aircraftError.message ?? 'unknown'}`,
+    };
   }
 
   interface AircraftRow {
@@ -222,12 +278,15 @@ async function loadCandidates(
       .in('aircraft_id', aircraftIds);
     if (capError) {
       console.error('[cargo.distribution] capabilities read failed', capError);
-    } else {
-      type CapRow = Record<string, unknown>;
-      for (const c of (capData ?? []) as CapRow[]) {
-        if (c[supportsCol] === true && typeof c.aircraft_id === 'string') {
-          capableAircraftIds.add(c.aircraft_id);
-        }
+      return {
+        ok: false,
+        reason: `cargo_aircraft_capabilities read: ${capError.message ?? 'unknown'}`,
+      };
+    }
+    type CapRow = Record<string, unknown>;
+    for (const c of (capData ?? []) as CapRow[]) {
+      if (c[supportsCol] === true && typeof c.aircraft_id === 'string') {
+        capableAircraftIds.add(c.aircraft_id);
       }
     }
   }
@@ -240,13 +299,51 @@ async function loadCandidates(
     }
   }
 
-  return operators.map((op) => ({
-    operator_id: op.id ?? '',
-    contact_email: op.contact_email ?? null,
-    contact_phone: op.contact_phone ?? null,
-    company_name: op.company_name ?? '',
-    has_capability: opHasCapability.get(op.id ?? '') === true,
-    last_dispatched_at: null,
-    rating: null,
-  }));
+  // Step d — per-operator last_dispatched_at via the RPC
+  // (Round 1 PR #73 P1 #1 fix). Without this, every operator
+  // is treated as first-time forever → recently_dispatched
+  // never short-circuits → same operators receive every cargo
+  // request.
+  const operatorIds = operators
+    .map((op) => op.id)
+    .filter((id): id is string => typeof id === 'string');
+  const lastDispatchedMap = new Map<string, string | null>();
+  if (operatorIds.length > 0) {
+    const { data: lastData, error: lastError } = await admin.rpc(
+      'cargo_operator_last_dispatch_map',
+      { p_operator_ids: operatorIds }
+    );
+    if (lastError) {
+      console.error(
+        '[cargo.distribution] last_dispatched_at RPC failed',
+        lastError
+      );
+      return {
+        ok: false,
+        reason: `cargo_operator_last_dispatch_map: ${lastError.message ?? 'unknown'}`,
+      };
+    }
+    interface LastDispatchRow {
+      operator_id?: string;
+      last_dispatched_at?: string | null;
+    }
+    for (const row of (lastData ?? []) as LastDispatchRow[]) {
+      if (row.operator_id) {
+        lastDispatchedMap.set(row.operator_id, row.last_dispatched_at ?? null);
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    candidates: operators.map((op) => ({
+      operator_id: op.id ?? '',
+      contact_email: op.contact_email ?? null,
+      contact_phone: op.contact_phone ?? null,
+      company_name: op.company_name ?? '',
+      has_capability: opHasCapability.get(op.id ?? '') === true,
+      last_dispatched_at: lastDispatchedMap.get(op.id ?? '') ?? null,
+      rating: null,
+    })),
+  };
 }

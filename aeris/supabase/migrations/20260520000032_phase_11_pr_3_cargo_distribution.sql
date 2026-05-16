@@ -220,7 +220,67 @@ GRANT EXECUTE ON FUNCTION claim_cargo_dispatch_events(UUID, INT)
 
 
 -- =============================================================
--- §5 cargo_requests.founder_batch_alerted_at column
+-- §5 cargo_operator_last_dispatch_map RPC
+--    (Round 1 PR #73 P1 #1 fix)
+-- =============================================================
+--
+-- Per-operator last_dispatched_at lookup for the distribution
+-- recency check. Without this, the spec §3.1 recency_score would
+-- always be 1.0 (every operator looks first-time forever) and
+-- the `recently_dispatched` short-circuit would never fire — same
+-- operators would receive every cargo request unbounded.
+--
+-- Implementation: scan processed outbox rows, expand the
+-- dispatched_operator_ids JSONB array via jsonb_array_elements_text,
+-- and aggregate the MAX(processed_at) per operator. Filtered to
+-- the operator_ids the caller cares about so the JSONB unnest only
+-- touches relevant rows.
+--
+-- Returns rows ONLY for operators that have at least one prior
+-- dispatch; the caller treats missing keys as NULL → first-time
+-- boost (recency_score=1.0).
+
+CREATE OR REPLACE FUNCTION cargo_operator_last_dispatch_map(
+  p_operator_ids UUID[]
+) RETURNS TABLE (
+  operator_id        UUID,
+  last_dispatched_at TIMESTAMPTZ
+)
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+    SELECT
+      expanded.operator_id::UUID AS operator_id,
+      MAX(expanded.processed_at) AS last_dispatched_at
+    FROM (
+      SELECT
+        jsonb_array_elements_text(
+          o.dispatch_result -> 'dispatched_operator_ids'
+        ) AS operator_id,
+        o.processed_at
+      FROM cargo_dispatch_events_outbox AS o
+      WHERE o.processed_at IS NOT NULL
+        AND o.dispatch_result -> 'dispatched_operator_ids' IS NOT NULL
+        AND jsonb_typeof(
+              o.dispatch_result -> 'dispatched_operator_ids'
+            ) = 'array'
+    ) AS expanded
+    WHERE expanded.operator_id::UUID = ANY(p_operator_ids)
+    GROUP BY expanded.operator_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION cargo_operator_last_dispatch_map(UUID[])
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION cargo_operator_last_dispatch_map(UUID[])
+  TO service_role;
+
+
+-- =============================================================
+-- §6 cargo_requests.founder_batch_alerted_at column
 --    (per spec §2.6, Round 1 P2 #4)
 -- =============================================================
 --
