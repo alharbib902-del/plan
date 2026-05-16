@@ -30,18 +30,28 @@ export const metadata: Metadata = {
 export default function PublicCargoPage() {
   if (process.env.ENABLE_CARGO !== 'true') notFound();
 
+  // The site-header is `position: fixed`; pt-32 mirrors the
+  // homepage hero offset so the page title clears the navbar
+  // (Hero uses pt-32 too — see components/sections/hero.tsx:18).
+  // max-w-4xl + mx-auto centers the form column with comfortable
+  // gutters on desktop, while px-4..lg:px-8 keeps mobile readable.
   return (
-    <section className="space-y-8 pb-16">
-      <header className="space-y-3">
-        <h1 className="font-ar text-3xl text-ink-primary sm:text-4xl">
-          {cargoAr.publicPageTitle}
-        </h1>
-        <p className="font-ar max-w-2xl text-base text-ink-muted">
-          {cargoAr.publicPageSubtitle}
-        </p>
-      </header>
+    <div className="relative bg-navy">
+      <section className="mx-auto max-w-4xl space-y-10 px-4 pb-24 pt-32 sm:px-6 lg:px-8">
+        <header className="space-y-4 text-center">
+          <span className="font-ar inline-flex items-center rounded-full border border-gold/30 bg-gold/5 px-4 py-1.5 text-xs uppercase tracking-tagged text-gold-light">
+            {cargoAr.navCargo}
+          </span>
+          <h1 className="font-ar text-3xl leading-tight text-ink-primary sm:text-4xl md:text-5xl">
+            {cargoAr.publicPageTitle}
+          </h1>
+          <p className="font-ar mx-auto max-w-2xl text-base leading-7 text-ink-secondary">
+            {cargoAr.publicPageSubtitle}
+          </p>
+        </header>
 
-      <CargoRequestForm />
-    </section>
+        <CargoRequestForm />
+      </section>
+    </div>
   );
 }
