@@ -1,10 +1,11 @@
 # Phase 12 — Aeris MedEvac (Medical Evacuation + Aeris Shield)
 
-> **Status:** Spec under active Codex review — rounds 1-12
-> resolved; round 13 in progress (Round 12 PR #75 closed §4
-> RPC layer intro staleness; Round 13 closes the spec-header
-> + review-history staleness via Round 13 PR #75 P2 #1 fix).
-> See §8 below for the full per-round summary.
+> **Status:** Spec under active Codex review — rounds 1-13
+> resolved; round 14 in progress / pending Codex review
+> (Round 13 PR #75 closed the spec-header + review-history
+> staleness; Round 14 PR #75 P2 #1 fix closes the rolled-over
+> "round 13 in progress" wording so the ledger matches §8's
+> aggregate). See §8 below for the full per-round summary.
 > **Scope:** Medical evacuation flights (single-event) + Aeris Shield
 > subscription tier + medical operator certification matrix +
 > per-severity SLA dispatch + insurance snapshot.
@@ -1999,10 +2000,11 @@ appears in `skip_reasons['no_certification']`.
 
 ## §8 Codex review history
 
-Rounds 1-12 resolved; round 13 in progress. Each round's
-fix commits are squash-mergeable on top of the round-0
-draft; inline `Round N PR #75 [P1/P2] #M fix` citations
-throughout this document point back to the row below.
+Rounds 1-13 resolved; round 14 in progress / pending Codex
+review. Each round's fix commits are squash-mergeable on
+top of the round-0 draft; inline `Round N PR #75 [P1/P2]
+#M fix` citations throughout this document point back to
+the row below.
 
 | Round | Findings | Severity mix | Resolved at |
 |---|---|---|---|
@@ -2019,7 +2021,8 @@ throughout this document point back to the row below.
 | 10 | 2 (D8 admin list PII-free vs detail audited, helper raw-cookie sequence) | 1 P1 + 1 P2 | `113577b` |
 | 11 | 2 (snippet redirect import, fingerprint privacy wording) | 0 P1 + 2 P2 | `82922d5` |
 | 12 | 1 (§4 RPC intro staleness) | 0 P1 + 1 P2 | `69101be` |
-| 13 | 1 (spec-header + review-history staleness — this row) | 0 P1 + 1 P2 | (this commit) |
+| 13 | 1 (spec-header + review-history staleness) | 0 P1 + 1 P2 | `745cc64` |
+| 14 | 1 (status wording rolled over to "1-13 resolved / 14 in progress" — this row) | 0 P1 + 1 P2 | (this commit) |
 
-**Aggregate to date:** 48 findings closed (21 P1 + 27 P2)
-across 13 rounds; 0 outstanding P1 prior to round 14.
+**Aggregate to date:** 49 findings closed (21 P1 + 28 P2)
+across 14 rounds; 0 outstanding P1 prior to round 15.
