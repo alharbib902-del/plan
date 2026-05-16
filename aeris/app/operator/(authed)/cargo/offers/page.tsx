@@ -97,20 +97,14 @@ export default async function OperatorMyCargoOffersPage() {
             <tbody className="divide-y divide-border bg-navy-card/20">
               {offers.map((o) => (
                 <tr key={o.id} className="hover:bg-navy-card/40">
-                  <td
-                    dir="ltr"
-                    className="px-4 py-3 font-mono text-sm text-gold-light"
-                  >
-                    {o.cargo_request_id.slice(0, 8)}…
+                  <td className="px-4 py-3 font-mono text-sm text-gold-light">
+                    <span dir="ltr">{o.cargo_request_id.slice(0, 8)}…</span>
                   </td>
                   <td className="px-4 py-3 text-sm text-ink-secondary">
                     {formatDateTimeAr(o.created_at)}
                   </td>
-                  <td
-                    dir="ltr"
-                    className="px-4 py-3 text-sm text-ink-secondary"
-                  >
-                    {formatSAR(o.total_price_sar)} SAR
+                  <td className="px-4 py-3 text-sm text-ink-secondary">
+                    <span dir="ltr">{formatSAR(o.total_price_sar)} SAR</span>
                   </td>
                   <td className="font-ar px-4 py-3 text-sm text-ink-secondary">
                     {cargoAr.statusLabels[o.status] ?? o.status}

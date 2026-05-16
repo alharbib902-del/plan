@@ -106,29 +106,20 @@ export default async function OperatorCargoListPage() {
             <tbody className="divide-y divide-border bg-navy-card/20">
               {rows.map((row) => (
                 <tr key={row.id} className="hover:bg-navy-card/40">
-                  <td
-                    dir="ltr"
-                    className="px-4 py-3 font-mono text-sm text-gold-light"
-                  >
-                    {row.cargo_request_number}
+                  <td className="px-4 py-3 font-mono text-sm text-gold-light">
+                    <span dir="ltr">{row.cargo_request_number}</span>
                   </td>
                   <td className="font-ar px-4 py-3 text-sm text-ink">
                     {cargoAr.cargoTypes[row.cargo_type] ?? row.cargo_type}
                   </td>
-                  <td
-                    dir="ltr"
-                    className="px-4 py-3 text-sm text-ink-secondary"
-                  >
-                    {formatCargoRoute(row)}
+                  <td className="px-4 py-3 text-sm text-ink-secondary">
+                    <span dir="ltr">{formatCargoRoute(row)}</span>
                   </td>
                   <td className="px-4 py-3 text-sm text-ink-secondary">
                     {formatDateAr(row.pickup_date)}
                   </td>
-                  <td
-                    dir="ltr"
-                    className="px-4 py-3 text-sm text-ink-secondary"
-                  >
-                    {formatSAR(row.estimated_value_sar)} SAR
+                  <td className="px-4 py-3 text-sm text-ink-secondary">
+                    <span dir="ltr">{formatSAR(row.estimated_value_sar)} SAR</span>
                   </td>
                   <td className="px-4 py-3">
                     {row.pending_offer_from_me ? (
