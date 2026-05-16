@@ -752,27 +752,42 @@ in a future polish PR — out of scope for PR 3.
 
 ### §7.1 `lib/cargo/__tests__/distribution-scoring.test.ts` (NEW)
 
-Layer-1 (no DB). Pure scoring function tests:
+Layer-1 (no DB). Pure scoring function tests. Test cases pin the
+§3.1 step 2 classification contract: `recency_score == 0` skips
+the operator with `skip_reasons[id] = 'recently_dispatched'`
+(NOT a low-but-positive score). Round 4 PR #72 P2 #1 fix —
+test 3 was previously written as if the operator stayed eligible
+with a 0.58 score; in reality the algorithm short-circuits.
 
 | # | Case | Expected |
 |---|---|---|
-| 1 | 1 capable operator, last dispatched 10 days ago | score ≈ 0.4 + 0.3 + 0.18 = 0.88 |
-| 2 | 1 capable operator, last dispatched 5 days ago | score with recency=0.5 → ≈ 0.73 |
-| 3 | 1 capable operator, last dispatched 1 day ago | score with recency=0.0 → ≈ 0.58 |
-| 4 | 0 capable operators | result.dispatched_operator_ids = [] |
-| 5 | 7 capable operators all 10 days ago | result returns top 5 |
+| 1 | 1 capable operator, last_dispatched_at NULL (first time) | dispatched=[op1], score ≈ 0.4 + 0.3 + 0.18 = 0.88 |
+| 2 | 1 capable operator, last dispatched 10 days ago | dispatched=[op1], same score ≈ 0.88 (recency=1.0) |
+| 3 | 1 capable operator, last dispatched 5 days ago | dispatched=[op1], score with recency=0.5 → ≈ 0.73 |
+| 4 | 1 capable operator, last dispatched 1 day ago | dispatched=[], skip_reasons[op1]='recently_dispatched' (§3.1 step 2 short-circuit) |
+| 5 | 0 capable operators | dispatched=[], skip_reasons[op1]='no_capability' |
+| 6 | 7 capable operators all 10 days ago | dispatched=top 5 by tie-break; skip_reasons[op6]=skip_reasons[op7]='lower_score' |
 
 ### §7.2 `lib/cargo/__tests__/outbox-drain.test.ts` (NEW)
 
-Layer-1: pure drain-loop logic with mocked Supabase responses:
+Layer-1: pure drain-loop logic with mocked Supabase responses.
+Round 4 PR #72 P2 #2 fix — case 2 now uses the per-request
+`dispatch_result.error` envelope (§5.3 contract) instead of
+`skip_reasons['request_not_actionable']`. The two envelopes are
+intentionally separate: `skip_reasons` is **per-operator**
+(`CargoDispatchSkipReason` union — §3.1+§5.3), and
+`dispatch_result.error` is **per-request** (a whole-request
+abort signal). Cross-contaminating them in tests would teach
+the implementation to violate the split.
 
 | # | Case | Expected |
 |---|---|---|
-| 1 | 1 pending outbox row | claims + processes + marks processed |
-| 2 | 1 pending row, cargo_request cancelled mid-drain | marks processed + skip_reason='request_not_actionable' |
-| 3 | 1 pending row, dispatchCargoRequest returns 0 operators | marks processed + dispatch_result.dispatched=[] |
-| 4 | 5 operators dispatched | sendFounderCargoBatchAlert called once |
-| 5 | < 5 operators dispatched | sendFounderCargoBatchAlert NOT called |
+| 1 | 1 pending outbox row, dispatch succeeds | claims via RPC + processes + marks `processed_at = NOW()` + writes `dispatch_result = { dispatched_operator_ids: [...], skipped_operator_ids: [...], skip_reasons: {...}, founder_alerted: false }` |
+| 2 | 1 pending row, cargo_request cancelled mid-drain | marks processed + writes `dispatch_result = { error: 'request_not_actionable' }` (per-request envelope — NOT a per-operator skip_reasons entry) |
+| 3 | 1 pending row, dispatchCargoRequest returns 0 operators | marks processed + `dispatch_result.dispatched_operator_ids = []` |
+| 4 | 5 operators dispatched, founder_batch_alerted_at IS NULL | `sendFounderCargoBatchAlert()` called once + cargo_requests UPDATE succeeds |
+| 5 | 5 operators dispatched, founder_batch_alerted_at already SET | `sendFounderCargoBatchAlert()` called but returns `sent=false, reason='already_alerted'` (atomic claim lost — §4.2 throttle) |
+| 6 | < 5 operators dispatched | `sendFounderCargoBatchAlert()` NOT called at all |
 
 ### §7.3 `app/api/cron/cargo/__tests__/cron-auth.test.ts` (NEW)
 
@@ -841,8 +856,8 @@ PR 3 is mergeable when ALL of the following hold:
 3. **Lint:** `npm run lint` clean (zero warnings).
 4. **Tests:** all of:
    - All Phase 11 PR 1 + PR 2 tests (51, regression)
-   - `npm run test:cargo-distribution-scoring` (NEW, ≥5/5)
-   - `npm run test:cargo-outbox-drain` (NEW, ≥5/5)
+   - `npm run test:cargo-distribution-scoring` (NEW, ≥6/6)
+   - `npm run test:cargo-outbox-drain` (NEW, ≥6/6)
    - `npm run test:cargo-cron-auth` (NEW, ≥4/4)
    - All prior Phase 7-10 test scripts (regression)
 5. **Migration:** replay-safe (Phase 9 convention).
