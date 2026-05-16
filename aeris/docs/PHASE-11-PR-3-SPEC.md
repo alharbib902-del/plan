@@ -631,9 +631,21 @@ workers see disjoint row sets.
         actionable — e.g. cancelled in flight).
    3.2. Call dispatchCargoRequest() → eligible + scored operators.
    3.3. For each dispatched operator: notifyOperatorOfCargo().
-   3.4. If exactly N=5 operators dispatched AND request hasn't
-        been founder-alerted before: sendFounderCargoBatchAlert()
-        (see §4.2 throttle).
+   3.4. If exactly N=5 operators dispatched: call
+        sendFounderCargoBatchAlert() UNCONDITIONALLY. The helper
+        owns the atomic `founder_batch_alerted_at` claim
+        internally (§4.2) — it returns `{ sent: true }` on first
+        success, or `{ sent: false, reason: 'already_alerted' }`
+        if a prior run / concurrent worker won the claim. The
+        drain loop just records the helper's verdict in
+        `dispatch_result.founder_alerted`. Round 5 PR #72 P2 #1
+        fix — earlier wording said "...AND request hasn't been
+        founder-alerted before" which would bypass the helper in
+        the already-set case and make §7.2 case 5 unreachable.
+        The pre-check ALSO race-condition'd: two concurrent
+        workers could both read `founder_batch_alerted_at IS NULL`
+        and both call the helper. The atomic UPDATE inside the
+        helper is the only correct gate.
    3.5. Mark processed — ONLY if our claim still owns the row.
         The `AND claim_id = <RUN_CLAIM_ID>` guard prevents
         clobbering a row that a reclaim-worker has since claimed.
