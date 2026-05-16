@@ -1,11 +1,10 @@
 # Phase 12 — Aeris MedEvac (Medical Evacuation + Aeris Shield)
 
-> **Status:** Spec under active Codex review — rounds 1-14
-> resolved; round 15 pending / awaiting Codex review
-> (Round 14 PR #75 closed the rolled-over "round 13 in
-> progress" wording; Round 15 PR #75 P2 #1 fix closes the
-> same lag-by-one pattern for round 14 so the ledger matches
-> §8's aggregate). See §8 below for the full per-round summary.
+> **Status:** Spec under active Codex review; see §8 for the
+> current resolved-round ledger. (Round 16 PR #75 P2 #1 fix
+> retired the per-round rolling wording — that pattern was
+> stale by the next round every time. The §8 table is now
+> the single source of truth for the latest resolved round.)
 > **Scope:** Medical evacuation flights (single-event) + Aeris Shield
 > subscription tier + medical operator certification matrix +
 > per-severity SLA dispatch + insurance snapshot.
@@ -2000,11 +1999,16 @@ appears in `skip_reasons['no_certification']`.
 
 ## §8 Codex review history
 
-Rounds 1-14 resolved; round 15 pending / awaiting Codex
-review. Each round's fix commits are squash-mergeable on
-top of the round-0 draft; inline `Round N PR #75 [P1/P2]
-#M fix` citations throughout this document point back to
-the row below.
+Spec under active Codex review; see the table below for
+the current resolved-round ledger. (Round 16 PR #75 P2 #1
+fix retired the per-round rolling wording — every previous
+round had to update the prior round's "in progress" line,
+which was itself stale by the next review. The table is
+now the single source of truth; the latest row is the most
+recently resolved round.) Each round's fix commits are
+squash-mergeable on top of the round-0 draft; inline
+`Round N PR #75 [P1/P2] #M fix` citations throughout this
+document point back to the row below.
 
 | Round | Findings | Severity mix | Resolved at |
 |---|---|---|---|
@@ -2023,7 +2027,8 @@ the row below.
 | 12 | 1 (§4 RPC intro staleness) | 0 P1 + 1 P2 | `69101be` |
 | 13 | 1 (spec-header + review-history staleness) | 0 P1 + 1 P2 | `745cc64` |
 | 14 | 1 (status wording rolled over to "1-13 resolved / 14 in progress") | 0 P1 + 1 P2 | `85f872f` |
-| 15 | 1 (same lag-by-one — status now reads "1-14 resolved / 15 pending" — this row) | 0 P1 + 1 P2 | (this commit) |
+| 15 | 1 (same lag-by-one — status rolled to "1-14 resolved / 15 pending") | 0 P1 + 1 P2 | `dc0a1e9` |
+| 16 | 1 (retired the per-round rolling wording entirely; header + §8 intro now point at this table — this row) | 0 P1 + 1 P2 | (this commit) |
 
-**Aggregate to date:** 50 findings closed (21 P1 + 29 P2)
-across 15 rounds; 0 outstanding P1 prior to round 16.
+**Aggregate to date:** 51 findings closed (21 P1 + 30 P2)
+across 16 rounds; 0 outstanding P1.
