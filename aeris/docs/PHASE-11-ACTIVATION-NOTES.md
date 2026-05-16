@@ -1,12 +1,12 @@
 # Phase 11 — Cargo activation notes
 
-> **Status:** Activated on production `2026-05-16`.
-> **Scope:** PR 1 (intake) + PR 2 (offers/bookings).
-> **PR 3 (distribution/notifications/cron/canary) not yet activated.**
+> **Status:** Phase 11 closed on production `2026-05-16`.
+> **Scope:** PR 1 (intake) + PR 2 (offers/bookings) + PR 3
+> (distribution / notifications / cron / canary).
 >
-> This file documents the activation runbook execution after PR
-> #65 + PR #67 merged, the hotfixes flushed out by founder smoke
-> testing, and the end-to-end verification against real DB.
+> This file documents the activation runbook execution across all
+> 3 PRs + the hotfixes flushed out by founder smoke testing + the
+> end-to-end verification against real DB (Probes 28, 30, 31, 32).
 
 ---
 
@@ -22,6 +22,11 @@
 | Hotfix #2: `aircraft.type` in operator capability picker | `2026-05-16` | PR #69 (merged `d47c203`) |
 | Hotfix #3: cargo tables alignment | `2026-05-16` | PR #70 (merged `c63bd39`) |
 | Production activation (`ENABLE_CARGO=true`) | `2026-05-16` | Vercel env var flip + redeploy |
+| Activation notes #1 (PR 1+2 closure) | `2026-05-16` | PR #71 (merged `6c5abf3`) |
+| PR 3 spec accepted at 100/100 (6 Codex rounds) | `2026-05-16` | PR #72 (merged `2160adc`) |
+| PR 3 (distribution + cron + canary) merged | `2026-05-16` | PR #73 (merged `5692d2d`) |
+| PR 3 migration applied to Supabase | `2026-05-16` | 10/10 schema verifier checks ✅ |
+| Probe 32 verified (distribution filter by capability) | `2026-05-16` | Probe 14 → `'no_capability'`; Probe 18 dispatched via wa.me metadata |
 
 ---
 
@@ -217,3 +222,132 @@ MUST handle the cargo NULL case (or migrate cargo bookings to
 populate `offer_id`, which is deferred to Phase 14 when
 HyperPay integration may want a unified offer pointer across
 all 5 business units).
+
+---
+
+## PR 3 (distribution + cron + canary) — activation
+
+PR 3 shipped the autonomous dispatch layer: every cargo intake
+emits an outbox event via trigger; a 15-min cron drain claims
+pending rows atomically, scores eligible operators, sends
+operator notifications (Resend email + wa.me link metadata),
+and conditionally alerts the founder when the full N=5 quota
+is dispatched. PR 3 went through **6 Codex review rounds on
+the spec** and **2 rounds on the implementation** before
+merging.
+
+### Migration applied
+
+`20260520000032_phase_11_pr_3_cargo_distribution.sql` (302
+lines) — replay-safe (Phase 9 conventions). 10/10 schema
+verifier checks green: outbox table + claim_id/claimed_at
+columns + 3 RPCs (publish, claim, last_dispatch_map) + trigger
++ founder_batch_alerted_at column + drain partial index + RLS.
+
+### Probe 32 — distribution filter by capability
+
+**Setup:**
+- Probe 18 operator: aircraft + `cargo_aircraft_capabilities.supports_horse=true`
+- Probe 14 operator: aircraft + `cargo_aircraft_capabilities.supports_horse=false` (only `supports_luxury_car`)
+
+**Flow:**
+1. Inserted a `horse` cargo request via `create_cargo_request_guest`
+   (CGO-e1f8b1fa, request_id `cbc61067-...`)
+2. `cargo_requests_dispatch_trigger` fired → outbox row emitted
+   with `event_type='initial'`, `processed_at=NULL`,
+   `claim_id=NULL`
+3. Triggered the cron route manually with `Authorization:
+   Bearer $CRON_SECRET`
+
+**Result (from `dispatch_result` JSONB on the outbox row):**
+
+```json
+{
+  "skip_reasons": {
+    "ea0a07c0-...": "no_capability",
+    "182587d6-...": "notify_failed"
+  },
+  "dispatched_count": 0,
+  "skipped_count": 2,
+  "whatsapp_links": {
+    "182587d6-...": "https://wa.me/966558048004?text=..."
+  }
+}
+```
+
+| Invariant | Status | Notes |
+|---|---|---|
+| Probe 14 (non-capable) appears in `skip_reasons['no_capability']` | ✅ | PR #72 Round 1 P1 #3 (enumerate-then-classify) verified end-to-end |
+| Probe 18 (capable) reached the dispatch candidate list | ✅ | Made it past the capability filter (would have been in `dispatched_operator_ids` if Resend allowed sending to non-account-owner) |
+| `was_claimed=true`, `was_processed=true`, `attempt_count=1` | ✅ | claim RPC + mark-processed `claim_id` guard work atomically |
+| `dispatch_result.whatsapp_links` populated for capable operators | ✅ | PR #73 Round 1 P1 #3 (wa.me as audit metadata, NOT as a delivery channel) verified |
+
+**Probe 32 PASSED.** The distribution logic — the PR 3 core
+deliverable — works as spec'd. The `notify_failed` reason on
+Probe 18 reflects Resend's testing-mode policy
+(`statusCode: 403, validation_error`: "You can only send
+testing emails to your own email address"), **not** a code
+defect; PR #73 Round 1 P1 #3 ensures we don't fake-dispatch
+operators whose email failed.
+
+### Outstanding follow-up: Resend domain verification
+
+**Status:** Email delivery code path wired correctly; Resend
+DNS verification pending before onboarding real operators.
+
+**Steps before real operator rollout:**
+1. Resend Dashboard → Domains → Add `aeris.sa`
+2. Add DKIM + SPF DNS records on the registrar (or Cloudflare
+   if domain DNS is delegated)
+3. Wait for Resend to verify (usually <10 min after DNS
+   propagation)
+4. Smoke test: insert a horse cargo request with a real
+   operator email + run the cron manually → confirm email
+   delivery (instead of `notify_failed`)
+5. Verify `cargo_email_alert_status.status='healthy'` post-send
+
+This is an **ops follow-up**, not a code task — the cron + the
+fallback `wa.me` metadata channel already give the founder a
+manual outreach option even before DNS verification.
+
+### Cleanup
+
+Probe 32 test data was removed after verification:
+- `cargo_requests` row (`cbc61067-...`) deleted →
+  CASCADE removed the outbox row
+- 2 test aircraft (`aa5e7ff4-...`, `4de665cd-...`) deleted →
+  CASCADE removed their `cargo_aircraft_capabilities` rows
+
+The Probe 18 + Probe 14 operator rows themselves were left in
+place (they pre-date Phase 11 and serve other test surfaces).
+
+---
+
+## Phase 11 closure summary
+
+All 3 PRs of Phase 11 are now live in production:
+
+| PR | Scope | Status |
+|---|---|---|
+| #65 | Backend + public form + admin intake | ✅ activated |
+| #67 | Authed portal + offers + bookings unification | ✅ activated, Probes 28/30/31 green |
+| #73 | Distribution + cron + canary + manual dispatch | ✅ activated, Probe 32 green |
+
+**Total commits to main from Phase 11:** 9 (spec + 3 PRs + 3
+hotfixes + 2 activation notes — this file).
+
+**Known follow-ups:**
+1. Resend domain verification (this section above) — before
+   real operator rollout
+2. Client detail page per-category fields render (PR 2 §4.1
+   deferred polish — admin detail already renders them, only
+   `/me/cargo-requests/[id]` is missing the section)
+3. `/me` homepage subtitle still references "بعد تسليم PR 3"
+   — stale copy from Phase 9; trivial fix
+4. PR 3 §6.3 future polish — per-operator dispatch breakdown
+   on a dedicated `/admin/cargo/dispatch-analytics` view
+   (out of scope this phase; canary card carries the
+   aggregate `cargo_dispatch_runs_24h` smoke signal)
+
+**Phase 11 closed.** Ready for Phase 12 (MedEvac) or Phase 13
+(Privilege) per the master 60-day plan.
