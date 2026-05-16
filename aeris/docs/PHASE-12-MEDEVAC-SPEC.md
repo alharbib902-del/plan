@@ -139,7 +139,7 @@ have no offer; the subscription itself is the contract).
 | **D8** | `medevac_requests.patient_name_snapshot` + `patient_age_snapshot` are admin-only displays in **list/index** views. Per-actor visibility (Round 1 PR #75 P2 #7 fix — the original wording confused operator submit-offer with client/admin accept): (a) **Public surfaces** (`/cargo`, marketing) — never visible. (b) **Operator portal** (`/operator/medevac` + `/operator/medevac/[id]/offer`) — operators see MEV-XXXX + service_level + condition_severity + route ONLY while preparing offers; patient_name is REDACTED. (c) **Booked operator post-acceptance** (`/operator/medevac/offers` row for an accepted offer + the dispatch confirmation email/wa.me message sent post-accept) — the winning operator sees the full patient_name because they now need it for actual transport coordination. The transition is gated by `medevac_offers.status='accepted'`. (d) **Client portal** — clients see their own request's patient_name (it's their patient). (e) **Admin** — always sees patient_name (with `admin_pii_read` audit per D12). | PII minimization aligned with PDPL. The "operator sees nothing until they win" model prevents PII fanout — only the 1 booked operator gets the name, not all 5 dispatched operators in the candidate list. |
 | **D9** | Insurance integration deferred to Phase 14. Phase 12 snapshots `insurance_provider_snapshot` + `insurance_claim_ref` at intake time but never calls a provider API. | Decoupling. Phase 14 HyperPay payment + ZATCA invoicing layer wires the claim filing pipeline. |
 | **D10** | SLA response windows by severity: `critical=1h`, `moderate=4h`, `stable=24h`. Stored in `medevac_severity_sla` lookup table (§3.6) so admin can tune without code deploy. **No `dispatched` status in the enum** (Round 1 PR #75 P1 #1 fix). The PR 3 dispatch cron stamps `medevac_requests.dispatched_at = NOW()` on first successful claim+notify; the request stays in `status='pending'` (or `'offers_received'` once an operator quotes). The SLA escalation cron uses the timestamp + status filter: `medevac_requests WHERE status IN ('pending', 'offers_received') AND dispatched_at IS NOT NULL AND dispatched_at + sla_interval < NOW() AND sla_escalated_at IS NULL` → auto-escalate to admin via `founder_critical_escalation_email`. | Operator must quote within the SLA or auto-escalate. Critical=1h is the existing industry standard; stable=24h gives buffer for non-urgent transfers. Using `dispatched_at` (a timestamp) instead of a `'dispatched'` status keeps the status machine simple: no new transitions needed; existing `pending → offers_received → accepted` flow is unchanged. |
-| **D11** | Medical cert expiry cron: `*/30 * * * *`. **Round 1 PR #75 P1 #4 fix — warning vs enforcement are SEPARATE actions.** (a) **Warning cascade (no flip):** sends `expired_medical_cert_alert` at 30/14/7/1 day(s) ahead of `certification_expires_at`; each warning email fires exactly once per renewal cycle via per-threshold `warning_{30,14,7,1}d_sent_at` flags on `aircraft_medical_certifications`. The cron sets the flag at send time; the flag stays set until the operator renews the cert (updates `certification_expires_at` to a new future timestamp) at which point the cron resets all 4 flags to NULL. The `supports_*` BOOLs stay TRUE during the warning window — the cert is still valid. (b) **Enforcement flip:** ONLY after the cert has actually expired (`certification_expires_at <= NOW()`) does the cron flip `supports_BMT/ALS/CCT/repatriation` to false AND send a final `medical_cert_expired_now` email. Distribution (PR 3) filters by cert AND `certification_expires_at > NOW()` as a belt-and-suspenders check. | Defensive — gives the operator a clear runway to renew (30/14/7/1 day cascade) without preemptively disabling dispatch. Per-threshold `*_sent_at` flags prevent the cron from re-emailing every 30 min for a month. Reset on renewal keeps the cascade reusable. |
+| **D11** | Medical cert expiry cron: `*/30 * * * *`. **Round 1 PR #75 P1 #4 fix — warning vs enforcement are SEPARATE actions.** (a) **Warning cascade (no flip):** sends `expired_medical_cert_alert` at 30/14/7/1 day(s) ahead of `certification_expires_at`; each warning email fires exactly once per renewal cycle via per-threshold `warning_{30,14,7,1}d_sent_at` flags on `aircraft_medical_certifications`. The cron sets the flag at send time; the flag stays set until the operator renews the cert (updates `certification_expires_at` to a new future timestamp **strictly more than 30 days out**, i.e. `certification_expires_at > NOW() + INTERVAL '30 days'`, Round 4 PR #75 P2 #4 fix — without the > 30 days condition a cert renewed mid-warning-window would reset the flags and the cron would re-send every threshold on the next tick) at which point the cron resets all 4 flags to NULL. The `supports_*` BOOLs stay TRUE during the warning window — the cert is still valid. (b) **Enforcement flip:** ONLY after the cert has actually expired (`certification_expires_at <= NOW()`) does the cron flip `supports_BMT/ALS/CCT/repatriation` to false AND send a final `medical_cert_expired_now` email. Distribution (PR 3) filters by cert AND `certification_expires_at > NOW()` as a belt-and-suspenders check. | Defensive — gives the operator a clear runway to renew (30/14/7/1 day cascade) without preemptively disabling dispatch. Per-threshold `*_sent_at` flags prevent the cron from re-emailing every 30 min for a month. Reset only on > 30-day renewal keeps the cascade single-fire per cycle and prevents email spam loops on mid-window renewals. |
 | **D12** | PII redaction in `audit_logs`: never store `patient_name` in `new_value` JSONB. Store MEV-XXXX reference + `service_level` + `condition_severity` only. Same rule for any future analytics extracts. | Aligned with PDPL (Saudi data protection) minimization principle. Patient name lives in `medevac_requests.patient_name_snapshot` ONLY; admin queries against that column are logged separately as `admin_pii_read` events. |
 | **D13** | Subscription-funded vs out-of-pocket flow: subscription holder toggles "use subscription" → request `status='covered'`, no operator-quote loop, immediate booking via `aeris_shield_default_operator_id` admin-configured value. Non-subscription or subscription-but-toggle-off → standard `status='pending'` + operator-quote loop. | The "use subscription" toggle is the user's explicit consent to consume one of their covered events (decrementing `used_events`); without toggle, the request stays out-of-pocket even if they have remaining events. |
 | **D14** | Aeris Shield default operator: a single admin-configured operator (stored in `aeris_shield_config` singleton, §3.8) who has signed a master service agreement with Aeris and a guaranteed SLA. Used for covered events only (D13). Non-subscription requests still go through normal operator distribution. | Avoids dispatching covered events to operators who haven't signed the master SLA. Founder picks the operator via `/admin/medevac/shield-config`. |
@@ -688,6 +688,24 @@ INSERT INTO medevac_subscription_plan_terms VALUES
   ('diamond',     400000, -1, 'CCT', true, 10, 'Diamond — unlimited CCT + repatriation + dedicated nurse coordinator')
 ON CONFLICT (plan) DO NOTHING;
 
+-- Round 4 PR #75 P2 #3 fix — Probe 33 enforces RLS on every
+-- new table. The plan-terms table holds pricing + caps + the
+-- repatriation flag, which are part of the public commercial
+-- offering (the /medevac/subscribe page renders them) but the
+-- READ path goes through a server-side helper, NOT a direct
+-- REST query, so we keep RLS enabled with NO public policies
+-- (service-role bypass only). The pricing surface fetches the
+-- 4 rows via `getAerisShieldPlanTerms()` (PR 2 helper in
+-- `lib/medevac/plan-terms.ts`) which uses `createAdminClient()`
+-- and returns a sanitised projection { plan, annual_fee_sar,
+-- covered_events, service_level, includes_repatriation,
+-- max_covered_members, description } to the marketing page.
+-- Admin price updates go through a future
+-- `admin_update_plan_terms` Server Action (Phase 14 + HyperPay
+-- recurring) that's also service-role; clients cannot touch
+-- this table directly at any tier.
+ALTER TABLE medevac_subscription_plan_terms ENABLE ROW LEVEL SECURITY;
+
 CREATE TABLE IF NOT EXISTS medevac_subscriptions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   subscription_number VARCHAR(30) NOT NULL UNIQUE
@@ -951,69 +969,151 @@ Mirror of Phase 11 §4.6.
 
 ### §4.7 — `consume_aeris_shield_event` (PR 1)
 
-NEW — no Phase 11 equivalent. Atomically (all in one transaction):
+NEW — no Phase 11 equivalent. Atomically (all in one transaction).
+
+**Signature** (Round 4 PR #75 P1 #2 fix — expanded to bind
+the consumption to the authenticated client AND to a covered
+patient):
+
+```sql
+consume_aeris_shield_event(
+  p_subscription_id           UUID,    -- subscription to consume
+  p_client_id                 UUID,    -- caller's clients.id
+                                       -- (passed by Server Action
+                                       -- from the verified
+                                       -- requireClientSession())
+  p_patient_member_identifier TEXT,    -- BTRIM/lowercase
+                                       -- normalised; matched
+                                       -- against owner's full
+                                       -- name OR a member's name
+  -- ...the remaining request payload params (service_level,
+  -- condition_severity, route, insurance snapshot, etc.)
+  -- carried forward from §4.2 inputs
+) RETURNS JSON
+```
+
+Step list (executes inside a single statement-level
+transaction; any RAISE EXCEPTION aborts and reverts all
+prior writes — see Atomicity note below):
 
 1. **Lock the subscription FOR UPDATE** so concurrent calls
    can't double-consume the same event slot.
-2. **Verify subscription state:** `status='active'` AND
+2. **Verify subscription ownership** (Round 4 PR #75 P1 #2
+   fix — was missing; a bad caller or buggy Server Action
+   could otherwise consume another client's covered event).
+   The locked row's `client_id` MUST equal `p_client_id`.
+   Failure → `{ok: false, error: 'subscription_not_owned'}`.
+   The error code is intentionally identical to
+   `subscription_not_consumable` from the caller's point of
+   view ONLY when surfaced through the Server Action wrapper,
+   so a bad actor can't probe ownership; the RPC-level error
+   stays distinct for ops/audit.
+3. **Verify subscription state:** `status='active'` AND
    `end_date > NOW()` AND
    (`covered_events_at_signup = -1` OR
     `used_events < covered_events_at_signup`).
    Failure → `{ok: false, error: 'subscription_not_consumable'}`.
-3. **Verify service-level eligibility** (Round 3 PR #75 P1 #3
+4. **Verify patient covered-member eligibility** (Round 4
+   PR #75 P1 #2 fix — was missing; without this check a
+   client could consume a family/VIP plan's event for an
+   uncovered person). Normalise `p_patient_member_identifier`
+   (`BTRIM(lower($1))`) and accept the request iff EITHER:
+   - the normalised identifier equals
+     `lower(BTRIM(clients.full_name))` where `clients.id =
+     v_subscription.client_id` (the subscription owner is
+     always implicitly covered), OR
+   - the normalised identifier appears as a member's `name`
+     inside `v_subscription.covered_members` JSONB array
+     (lookup via `EXISTS (SELECT 1 FROM
+     jsonb_array_elements(v_subscription.covered_members) AS m
+     WHERE lower(BTRIM(m->>'name')) = $normalised)`).
+
+   Failure → `{ok: false, error: 'patient_not_covered'}`.
+
+   The normalised identifier is also written into
+   `medevac_requests.patient_name_snapshot` in step 8 so the
+   audit log + post-acceptance dispatch email can show the
+   exact matched name. Admin-added `covered_members` rows
+   are mutable per D5 — this check therefore always reads
+   the row inside the FOR UPDATE lock (step 1) so a
+   concurrent admin edit can't slip an unauthorised member
+   in mid-consume.
+
+5. **Verify service-level eligibility** (Round 3 PR #75 P1 #3
    fix — explicit matrix; do NOT rely on `medevac_service_level`
    ENUM ordering since that's a label set, not a business
-   hierarchy, and `repatriation` is gated by a separate flag).
-   The requested `service_level` MUST satisfy:
+   hierarchy. Round 4 PR #75 P1 #1 fix — decomposed into two
+   orthogonal checks so the seeded `vip_family` / `diamond`
+   plans, which use `service_level_at_signup='CCT'` +
+   `includes_repatriation=true`, can in fact claim a
+   `repatriation` request. The previous matrix wording
+   listed `repatriation` only under `service_level_at_signup
+   = 'repatriation'`, which blocked the realistic case).
 
-   | subscription `service_level_at_signup` | allowed request `service_level` values |
+   The two checks run as an OR — the request is entitled iff
+   EITHER applies:
+
+   **(a) Non-repatriation entitlement matrix.** Applies when
+   the requested `service_level` is NOT `'repatriation'`. The
+   matrix below gives the allowed request values keyed by the
+   subscription's `service_level_at_signup`; the flag plays no
+   role here.
+
+   | subscription `service_level_at_signup` | allowed non-repatriation request `service_level` |
    |---|---|
    | `BMT`           | `BMT`                                    |
    | `ALS`           | `BMT`, `ALS`                             |
    | `CCT`           | `BMT`, `ALS`, `CCT`                      |
-   | `repatriation`  | `BMT`, `ALS`, `CCT` (and `repatriation` if `includes_repatriation_at_signup = true`) |
+   | `repatriation`  | `BMT`, `ALS`, `CCT`                      |
 
-   AND the additional rule: if the requested `service_level`
-   is `'repatriation'`, the subscription MUST have
-   `includes_repatriation_at_signup = true` regardless of the
-   `service_level_at_signup` column (the flag is the single
-   source of truth for the repatriation entitlement; the four
-   plan tiers in D4 set it as vip_family / diamond → true,
-   individual / family → false).
+   **(b) Repatriation entitlement.** Applies when the
+   requested `service_level` IS `'repatriation'`. Only one
+   condition matters: `includes_repatriation_at_signup =
+   true`. The `service_level_at_signup` value is irrelevant —
+   the flag is the single source of truth (D4 sets it as
+   vip_family / diamond → true, individual / family → false).
 
-   Implementation: encode the matrix as a CASE expression on
+   Implementation: encode (a) as a CASE expression on
    `service_level_at_signup` returning a `text[]` of allowed
-   request values, then test
-   `p_requested_service_level = ANY(allowed_levels)` AND the
-   repatriation flag rule. Failure of either check →
-   `{ok: false, error: 'service_level_not_entitled'}`.
-4. **Load + verify aeris_shield_config.default_operator_id**
+   non-repatriation request values; then evaluate
+
+   ```sql
+   (p_requested_service_level <> 'repatriation'
+    AND p_requested_service_level = ANY(non_repat_allowed))
+   OR
+   (p_requested_service_level = 'repatriation'
+    AND v_subscription.includes_repatriation_at_signup = true)
+   ```
+
+   Failure of the disjunction → `{ok: false, error:
+   'service_level_not_entitled'}`.
+6. **Load + verify aeris_shield_config.default_operator_id**
    (Round 1 PR #75 P1 #5 fix — was implicit; now an explicit
    structured-error gate):
-   - 4a. `default_operator_id IS NOT NULL` → else
+   - 6a. `default_operator_id IS NOT NULL` → else
      `{ok: false, error: 'shield_default_operator_missing'}`
-   - 4b. Operator exists AND `signup_status='approved'` → else
+   - 6b. Operator exists AND `signup_status='approved'` → else
      `{ok: false, error: 'shield_default_operator_not_approved'}`
-   - 4c. Operator has at least one aircraft with
+   - 6c. Operator has at least one aircraft with
      `aircraft_medical_certifications` matching the requested
      `service_level` AND `certification_expires_at > NOW()`
      → else `{ok: false, error: 'shield_default_operator_not_certified'}`
-   - 4d. Operator has non-NULL `contact_email` + `contact_phone`
+   - 6d. Operator has non-NULL `contact_email` + `contact_phone`
      (we need usable snapshots for the booking row) → else
      `{ok: false, error: 'shield_default_operator_missing_contact'}`
-   - 4e. Pick the FIRST capable aircraft from the result of 4c
+   - 6e. Pick the FIRST capable aircraft from the result of 6c
      (ordered by `aircraft_medical_certifications.updated_at DESC`
      for determinism); snapshot its `id` + manufacturer/model
      into the booking row.
-5. **Increment `used_events`** on the subscription.
-6. **Insert the `medevac_requests` row** with `is_covered=true`,
+7. **Increment `used_events`** on the subscription.
+8. **Insert the `medevac_requests` row** with `is_covered=true`,
    `subscription_id=p_subscription_id`, `status='covered'`.
    (Per §3.1 `medevac_requests_covered_invariant_check`, this
    pairing is enforced at the DB layer.)
-7. **Insert the `bookings` row** with
+9. **Insert the `bookings` row** with
    `source_offer_table=NULL`, `source_offer_id=NULL` (D6 covered
    variant), `source_discriminator='medevac'`,
-   `operator_id` + snapshots from step 4, customer snapshots
+   `operator_id` + snapshots from step 6, customer snapshots
    from the client + medevac_request, `payment_status =
    'pending_offline'` (Round 2 PR #75 P1 #3 fix — no enum
    extension; the row is recognisable as covered via the
@@ -1023,8 +1123,11 @@ NEW — no Phase 11 equivalent. Atomically (all in one transaction):
    `bookings_source_offer_pair_check`; the Shield contract
    stays linked through `medevac_requests.subscription_id`
    established in step 6).
-8. **Audit log entry** (PII redacted per D12 — store
-   MEV-XXXX + service_level + condition_severity only).
+10. **Audit log entry** (PII redacted per D12 — store
+    MEV-XXXX + service_level + condition_severity only; the
+    matched patient identifier from step 4 is the normalised
+    snapshot stored on `medevac_requests.patient_name_snapshot`
+    and is NEVER written into `audit_logs.new_value` JSONB).
 
 Returns `{ok: true, medevac_request_id, booking_id,
 covered_events_remaining, dispatched_operator_id}`.
@@ -1032,9 +1135,9 @@ covered_events_remaining, dispatched_operator_id}`.
 **Atomicity (Round 3 PR #75 P1 #2 fix).** PL/pgSQL functions
 cannot issue `ROLLBACK` directly — Postgres already runs the
 entire RPC inside a single statement-level transaction, so any
-unhandled exception thrown from step 4-8 aborts the whole
-function and reverts the `used_events` increment (step 5)
-together with the request + booking inserts (steps 6-7).
+unhandled exception thrown from step 2-10 aborts the whole
+function and reverts the `used_events` increment (step 7)
+together with the request + booking inserts (steps 8-9).
 Implementation: do NOT add transaction-control statements
 inside the function body; just let domain errors propagate by
 calling `RAISE EXCEPTION ... USING ERRCODE = '<sqlstate>'`
