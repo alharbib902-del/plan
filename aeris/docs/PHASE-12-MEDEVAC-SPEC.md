@@ -278,8 +278,20 @@ CREATE TABLE IF NOT EXISTS medevac_requests (
   medevac_request_number VARCHAR(20) NOT NULL UNIQUE
     DEFAULT 'MEV-' || substring(uuid_generate_v4()::TEXT, 1, 8),
 
-  -- Path discriminator (guest vs authed)
-  client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+  -- Path discriminator (guest vs authed). Round 3 PR #75
+  -- P2 #4 fix — `ON DELETE RESTRICT` (was `SET NULL`). With
+  -- SET NULL, deleting an authed client would null this row's
+  -- `client_id` and instantly turn it into a "guest" row,
+  -- which would then violate `medevac_requests_guest_severity_check`
+  -- for any row whose severity is not `'stable'`. RESTRICT
+  -- forces admin to first archive / null-out the request
+  -- (e.g. anonymise via a future GDPR/PDPL erasure
+  -- Server Action that snapshots the patient PII into
+  -- audit_logs and either deletes or hard-anonymises the
+  -- row) before the client row can be removed. Guest rows
+  -- (`client_id IS NULL`) are unaffected because they hold
+  -- no FK reference.
+  client_id UUID REFERENCES clients(id) ON DELETE RESTRICT,
   -- Snapshots (Phase 9 PR 2 immutable-snapshot discipline)
   patient_name_snapshot VARCHAR(200) NOT NULL,
   patient_age_snapshot INT,
@@ -544,34 +556,47 @@ CREATE TABLE IF NOT EXISTS aircraft_medical_certifications (
   warning_7d_sent_at  TIMESTAMPTZ,
   warning_1d_sent_at  TIMESTAMPTZ,
   notes TEXT,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-  CONSTRAINT aircraft_medical_certifications_at_least_one_check CHECK (
-    supports_BMT OR supports_ALS OR supports_CCT OR supports_repatriation
-  )
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  -- Round 3 PR #75 P1 #1 fix — the "at least one supports_*
+  -- must be true" rule used to be a table-level CHECK
+  -- (`aircraft_medical_certifications_at_least_one_check`).
+  -- That blocked the PR 3 expire-certifications cron from
+  -- flipping all four flags to false on actual expiry, so
+  -- expired certs could never be disabled. The rule is now
+  -- enforced inside the BEFORE INSERT OR UPDATE trigger
+  -- below, which differentiates an admin/operator edit
+  -- (must keep at least one flag true) from the cron
+  -- enforcement path (allowed to flip all to false when
+  -- `certification_expires_at <= NOW()`).
 );
 
--- Insert-time guard: a brand-new cert row CANNOT carry a past
--- expiry (would be useless). Trigger rejects this case. UPDATE
--- paths bypass the check — the cron's enforcement flip
--- (supports_* = false on actual expiry) intentionally leaves
--- the past-expiry timestamp in place so the row's history
--- stays auditable.
-CREATE OR REPLACE FUNCTION reject_past_expiry_on_insert()
+-- Insert/update guard. Centralises three rules:
+--   (a) a brand-new cert row CANNOT carry a past expiry
+--       (would be useless);
+--   (b) admin/operator UPDATEs CANNOT re-enable a `supports_*`
+--       flag on a cert that has already expired (would let an
+--       expired cert silently come back online without
+--       renewing the timestamp);
+--   (c) an UPDATE that would leave the row with ALL FOUR
+--       `supports_*` = false is only permitted when the cert
+--       has already expired (i.e. the PR 3 cron enforcement
+--       flip). Any other path (admin edit, operator self-
+--       service) must keep at least one flag true.
+-- INSERTs must also satisfy the at-least-one rule.
+CREATE OR REPLACE FUNCTION enforce_aircraft_medical_certifications()
   RETURNS TRIGGER
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = public, pg_temp
 AS $$
 BEGIN
+  -- (a) INSERT: future expiry only.
   IF TG_OP = 'INSERT' AND NEW.certification_expires_at <= NOW() THEN
     RAISE EXCEPTION 'certification_expires_at must be in the future'
       USING ERRCODE = '22023';  -- invalid_parameter_value
   END IF;
-  -- On UPDATE: only reject if the operator is RE-ENABLING a
-  -- `supports_*` flag AND the cert is past expiry. This is the
-  -- one path the trigger blocks for UPDATEs: an admin trying to
-  -- un-flip an expired cert without renewing the timestamp.
+
+  -- (b) UPDATE on expired cert: forbid re-enable of any flag.
   IF TG_OP = 'UPDATE'
      AND NEW.certification_expires_at <= NOW()
      AND (
@@ -584,15 +609,38 @@ BEGIN
     RAISE EXCEPTION 'cannot re-enable supports_* on an expired certification'
       USING ERRCODE = '22023';
   END IF;
+
+  -- (c) "At least one supports_* true" rule (Round 3 PR #75
+  -- P1 #1 fix — was a table CHECK; moved here so the cron
+  -- enforcement flip can pass).
+  IF NOT (NEW.supports_BMT OR NEW.supports_ALS
+          OR NEW.supports_CCT OR NEW.supports_repatriation)
+  THEN
+    -- INSERTs may never start with all-false.
+    IF TG_OP = 'INSERT' THEN
+      RAISE EXCEPTION 'at least one supports_* flag must be true on insert'
+        USING ERRCODE = '23514';  -- check_violation
+    END IF;
+    -- UPDATEs may go to all-false ONLY when the cert is
+    -- already expired (the cron enforcement path). Any
+    -- other caller has to keep at least one flag true.
+    IF TG_OP = 'UPDATE' AND NEW.certification_expires_at > NOW() THEN
+      RAISE EXCEPTION 'at least one supports_* flag must remain true on non-expiry update'
+        USING ERRCODE = '23514';  -- check_violation
+    END IF;
+  END IF;
+
   RETURN NEW;
 END;
 $$;
 
 DROP TRIGGER IF EXISTS reject_past_expiry_trigger
   ON aircraft_medical_certifications;
-CREATE TRIGGER reject_past_expiry_trigger
+DROP TRIGGER IF EXISTS enforce_aircraft_medical_certifications_trigger
+  ON aircraft_medical_certifications;
+CREATE TRIGGER enforce_aircraft_medical_certifications_trigger
   BEFORE INSERT OR UPDATE ON aircraft_medical_certifications
-  FOR EACH ROW EXECUTE FUNCTION reject_past_expiry_on_insert();
+  FOR EACH ROW EXECUTE FUNCTION enforce_aircraft_medical_certifications();
 
 ALTER TABLE aircraft_medical_certifications ENABLE ROW LEVEL SECURITY;
 ```
@@ -772,9 +820,76 @@ ALTER TABLE aeris_shield_config ENABLE ROW LEVEL SECURITY;
 
 ### §3.9 — `medevac_email_alert_status` singleton (NEW)
 
-Mirrors `cargo_email_alert_status` (Phase 11 PR 1 §3.6). Powers
-the 7th `<ChannelHealth>` card on `/admin/operators/canary` in
-PR 3.
+**Round 3 PR #75 P2 #5 fix — full DDL + helper semantics
+inlined (was: "mirrors cargo, see PR 1 §3.6").** PR 1 ships
+the table + seed exactly as below. PR 3 ships the consumer
+(7th `<ChannelHealth>` card on `/admin/operators/canary`) and
+the writer (operator dispatch + founder-batch emails).
+
+```sql
+CREATE TABLE IF NOT EXISTS medevac_email_alert_status (
+  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  status TEXT NOT NULL DEFAULT 'healthy'
+    CHECK (status IN ('healthy', 'config_missing', 'send_failed')),
+  last_failure_at TIMESTAMPTZ,
+  last_failure_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO medevac_email_alert_status (id, status)
+  VALUES (1, 'healthy')
+  ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE medevac_email_alert_status ENABLE ROW LEVEL SECURITY;
+```
+
+**Status values (identical to cargo):**
+- `'healthy'` — last Resend call succeeded.
+- `'config_missing'` — env vars missing (e.g. RESEND_API_KEY,
+  RESEND_FROM_EMAIL). Distinct from `send_failed` so the
+  canary card can render a different remediation hint.
+- `'send_failed'` — last Resend call returned a non-2xx or
+  threw; `last_failure_reason` truncated to 200 chars.
+
+**Helper contract** (`lib/medevac/email-alert-status.ts`,
+PR 3 — mirror of `lib/cargo/email-alert-status.ts`):
+
+```typescript
+export interface MedevacEmailAlertStatusRow {
+  id: 1;
+  status: 'healthy' | 'config_missing' | 'send_failed';
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+  updated_at: string;
+}
+
+export interface RecordArgs {
+  status: 'healthy' | 'config_missing' | 'send_failed';
+  reason?: string;
+}
+
+// Called by lib/medevac/notifications.ts (operator dispatch
+// emails) AND lib/medevac/founder-batch-email.ts after every
+// Resend send. On `'healthy'`, clears `last_failure_*`; on
+// failure statuses, stamps `last_failure_at = NOW()` and
+// truncates `reason` to 200 chars. Wraps the Supabase call in
+// try/catch and logs (never throws — the alert path must not
+// break the parent send).
+export async function recordMedevacEmailAlertStatus(
+  args: RecordArgs
+): Promise<void>;
+
+// Called by the 7th canary card reader. Returns NULL on any
+// read error (so the card renders an "unknown" state rather
+// than crashing the page).
+export async function getMedevacEmailAlertStatus():
+  Promise<MedevacEmailAlertStatusRow | null>;
+```
+
+Both helpers use `createAdminClient()` (service-role). The
+table is RLS-enabled with no public/anon/authenticated
+policies, so direct REST reads are blocked — only the
+service-role helpers above can touch the row.
 
 ### §3.10 — `medevac_dispatch_events_outbox` (PR 3 only, NEW)
 
@@ -845,10 +960,33 @@ NEW — no Phase 11 equivalent. Atomically (all in one transaction):
    (`covered_events_at_signup = -1` OR
     `used_events < covered_events_at_signup`).
    Failure → `{ok: false, error: 'subscription_not_consumable'}`.
-3. **Verify service-level eligibility:** the requested
-   `service_level` must be ≤ subscription's
-   `service_level_at_signup` (e.g. individual plan can't claim
-   CCT). Failure → `{ok: false, error: 'service_level_above_plan'}`.
+3. **Verify service-level eligibility** (Round 3 PR #75 P1 #3
+   fix — explicit matrix; do NOT rely on `medevac_service_level`
+   ENUM ordering since that's a label set, not a business
+   hierarchy, and `repatriation` is gated by a separate flag).
+   The requested `service_level` MUST satisfy:
+
+   | subscription `service_level_at_signup` | allowed request `service_level` values |
+   |---|---|
+   | `BMT`           | `BMT`                                    |
+   | `ALS`           | `BMT`, `ALS`                             |
+   | `CCT`           | `BMT`, `ALS`, `CCT`                      |
+   | `repatriation`  | `BMT`, `ALS`, `CCT` (and `repatriation` if `includes_repatriation_at_signup = true`) |
+
+   AND the additional rule: if the requested `service_level`
+   is `'repatriation'`, the subscription MUST have
+   `includes_repatriation_at_signup = true` regardless of the
+   `service_level_at_signup` column (the flag is the single
+   source of truth for the repatriation entitlement; the four
+   plan tiers in D4 set it as vip_family / diamond → true,
+   individual / family → false).
+
+   Implementation: encode the matrix as a CASE expression on
+   `service_level_at_signup` returning a `text[]` of allowed
+   request values, then test
+   `p_requested_service_level = ANY(allowed_levels)` AND the
+   repatriation flag rule. Failure of either check →
+   `{ok: false, error: 'service_level_not_entitled'}`.
 4. **Load + verify aeris_shield_config.default_operator_id**
    (Round 1 PR #75 P1 #5 fix — was implicit; now an explicit
    structured-error gate):
@@ -891,9 +1029,21 @@ NEW — no Phase 11 equivalent. Atomically (all in one transaction):
 Returns `{ok: true, medevac_request_id, booking_id,
 covered_events_remaining, dispatched_operator_id}`.
 
-The whole RPC body is wrapped in `BEGIN ... EXCEPTION WHEN
-OTHERS THEN ROLLBACK; RAISE; END;` so a failure at any step
-leaves the subscription's `used_events` unchanged.
+**Atomicity (Round 3 PR #75 P1 #2 fix).** PL/pgSQL functions
+cannot issue `ROLLBACK` directly — Postgres already runs the
+entire RPC inside a single statement-level transaction, so any
+unhandled exception thrown from step 4-8 aborts the whole
+function and reverts the `used_events` increment (step 5)
+together with the request + booking inserts (steps 6-7).
+Implementation: do NOT add transaction-control statements
+inside the function body; just let domain errors propagate by
+calling `RAISE EXCEPTION ... USING ERRCODE = '<sqlstate>'`
+from each guard. The only acceptable `BEGIN … EXCEPTION WHEN
+... END;` blocks are nested ones used purely for structured
+error mapping (e.g. catching a specific `unique_violation`
+from the booking insert and re-raising it as a friendlier
+error code) — they must NOT contain `ROLLBACK`, `COMMIT`, or
+`SET TRANSACTION`.
 
 ### §4.8 — `subscribe_to_aeris_shield` (PR 2)
 
@@ -1133,9 +1283,15 @@ table + 7 indexes. Mirrors Phase 11 Probe 28 (33 checks).
 3. Verify booking row shape: `source_offer_table='medevac_offers'`,
    `source_discriminator='medevac'`, `offer_id=NULL`,
    `trip_request_id=NULL`.
-4. Verify `/me/bookings` chip shows "إخلاء طبي" (NEW emerald
-   color or red — Phase 12 spec decides; recommendation:
-   red/rose since medevac is medical-urgent).
+4. Verify `/me/bookings` chip shows "إخلاء طبي" rendered with
+   the **rose** Tailwind palette (`bg-rose-50`, `text-rose-700`,
+   `border-rose-200` light mode; `bg-rose-500/15`,
+   `text-rose-300`, `border-rose-500/30` dark mode). Round 3
+   PR #75 P2 #6 fix — decision locked: medevac is the only
+   medical-urgent product, so the chip MUST visually
+   differentiate from charter (gold), empty-legs (emerald),
+   and cargo (slate). Probe 36 fails if the chip uses any
+   other palette.
 
 ### Probe 37 — Distribution filters by medical certification
 
