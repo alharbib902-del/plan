@@ -1518,6 +1518,7 @@ because `consume_aeris_shield_event` (§4.7) and
 
   ```typescript
   import { cookies } from 'next/headers';
+  import { redirect } from 'next/navigation';  // Round 11 PR #75 P2 #1 fix
   import {
     ADMIN_COOKIE_NAME,
     requireAdminSession,
@@ -1544,12 +1545,17 @@ because `consume_aeris_shield_event` (§4.7) and
   const cookie_expiry = session.expiry; // unix-seconds
   ```
 
-  Hashing the exact same string Postgres later stores in
-  the audit row's `cookie_fingerprint` makes the
-  fingerprint reproducible for a given session — re-running
-  the helper within the same cookie lifetime produces the
-  same HMAC, which is what makes `audit_logs` queryable
-  per-session. Rotating `ADMIN_AUDIT_FINGERPRINT_SECRET`
+  Hashing the exact same raw cookie string on every call
+  and storing the resulting HMAC in the audit row's
+  `cookie_fingerprint` column makes the fingerprint
+  reproducible for a given session — re-running the helper
+  within the same cookie lifetime produces the same HMAC,
+  which is what makes `audit_logs` queryable per-session
+  (Round 11 PR #75 P2 #2 fix — the prior wording said
+  "the exact same string Postgres later stores," which
+  could imply the raw cookie was persisted; the database
+  only ever sees the HMAC output, never the cookie
+  itself). Rotating `ADMIN_AUDIT_FINGERPRINT_SECRET`
   invalidates the mapping going forward without ever
   exposing the raw cookie. (3) Calls SECURITY DEFINER RPC
   `admin_read_medevac_request_detail(p_request_id => $1,
