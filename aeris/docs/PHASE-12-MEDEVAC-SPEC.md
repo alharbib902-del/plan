@@ -928,6 +928,56 @@ Mirrors `cargo_dispatch_events_outbox` (Phase 11 PR 3 §1) — same
 claim_id + claimed_at + processed_at + dispatch_result shape.
 PR 3 ships this; PR 1+2 leave it for the distribution layer.
 
+### §3.11 — `safe_parse_date` helper (PR 1, NEW)
+
+**Round 8 PR #75 P2 #1 fix.** Used by §4.7 step 4 (consume-
+side `covered_members.dob` filter) AND by the admin
+covered_members Server Action's write-time validator, so a
+malformed/overflowed date in JSONB can never raise a raw
+Postgres error. Returns NULL for ANY parse failure: NULL
+input, non-ISO-8601 shape, OR shape-valid-but-semantically-
+invalid date like `"2026-02-31"` / `"2026-13-01"` /
+`"2026-99-99"`. The nested `BEGIN ... EXCEPTION ... END;`
+block catches `invalid_datetime_format` (SQLSTATE 22007)
+AND `datetime_field_overflow` (22008); no other exception
+class is swallowed so genuine bugs still surface.
+
+```sql
+CREATE OR REPLACE FUNCTION safe_parse_date(p_text TEXT)
+  RETURNS DATE
+  LANGUAGE plpgsql
+  IMMUTABLE
+  PARALLEL SAFE
+  SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF p_text IS NULL THEN
+    RETURN NULL;
+  END IF;
+  IF p_text !~ '^\d{4}-\d{2}-\d{2}$' THEN
+    RETURN NULL;
+  END IF;
+  -- Nested exception block for structured error mapping
+  -- ONLY (Round 3 PR #75 P1 #2 fix rules: no ROLLBACK /
+  -- COMMIT / SET TRANSACTION inside). Catches both error
+  -- classes the cast can raise on shape-valid input.
+  BEGIN
+    RETURN p_text::DATE;
+  EXCEPTION
+    WHEN invalid_datetime_format OR datetime_field_overflow THEN
+      RETURN NULL;
+  END;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION safe_parse_date(TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION safe_parse_date(TEXT) TO service_role;
+```
+
+The function is `IMMUTABLE` + `PARALLEL SAFE` so the planner
+can evaluate it once per call site at plan time and inline
+freely inside the `jsonb_array_elements` lateral scan.
+
 ---
 
 ## §4 RPC layer
@@ -1046,26 +1096,27 @@ prior writes — see Atomicity note below):
 
    ```sql
    -- Round 7 PR #75 P2 #3 fix — regex-gate the dob cast.
-   -- covered_members is mutable JSONB; an admin payload
-   -- with a malformed/missing 'dob' would otherwise raise
-   -- `invalid_datetime_format` (SQLSTATE 22007) at cast
-   -- time and bubble a raw Postgres error to the client
-   -- instead of the structured 'patient_not_covered'.
-   -- The `~ '^\d{4}-\d{2}-\d{2}$'` pre-filter limits the
-   -- cast to ISO-8601 date strings; any row with a missing
-   -- key, a non-string value (jsonb null/number/object),
-   -- or a string that doesn't match the shape is silently
-   -- skipped (treated as a non-match). The admin Server
-   -- Action that mutates covered_members per D5 is the
-   -- forward-defence; this filter is the consume-side
-   -- belt-and-suspenders.
+   -- Round 8 PR #75 P2 #1 fix — the regex alone still let
+   -- shape-valid but semantically invalid dates like
+   -- "2026-02-31" or "2026-99-99" through to the cast,
+   -- which then raised `datetime_field_overflow` (SQLSTATE
+   -- 22008) and surfaced as a raw Postgres error instead
+   -- of `patient_not_covered`. We now route both the
+   -- regex AND the cast through the shared
+   -- `safe_parse_date(TEXT) RETURNS DATE` helper (defined
+   -- in §3.11 below) which catches BOTH
+   -- `invalid_datetime_format` (22007) and
+   -- `datetime_field_overflow` (22008) inside a nested
+   -- exception block and returns NULL for either. The
+   -- admin Server Action that mutates covered_members per
+   -- D5 runs the SAME helper on write to reject bad input
+   -- early; the consume-side filter is belt-and-
+   -- suspenders.
    SELECT BTRIM(m->>'name')           -- canonical, casing kept
      INTO v_canonical_patient_name
      FROM jsonb_array_elements(v_subscription.covered_members) AS m
     WHERE lower(BTRIM(m->>'name')) = v_normalised_name
-      AND (m->>'dob') IS NOT NULL
-      AND (m->>'dob') ~ '^\d{4}-\d{2}-\d{2}$'
-      AND (m->>'dob')::DATE          = p_patient_member_dob
+      AND safe_parse_date(m->>'dob') = p_patient_member_dob
     LIMIT 1;
    ```
 
@@ -1391,6 +1442,7 @@ because `consume_aeris_shield_event` (§4.7) and
 | 24 | RPC `consume_aeris_shield_event` (§4.7) | §4.7 |
 | 25 | RPC `subscribe_to_aeris_shield` (§4.8) | §4.8 |
 | 26 | RPC `admin_read_medevac_request_detail` (§4.10) — Round 6 PR #75 P1 #2 fix; atomic admin PII read + audit | §4.10 |
+| 27 | Helper function `safe_parse_date(TEXT) RETURNS DATE` — Round 8 PR #75 P2 #1 fix; used by §4.7 covered_members dob filter + admin covered_members Server Action write-time validator | §3.11 |
 
 **Server Actions** (`app/actions/`):
 - `medevac-public.ts`: `submitMedevacRequestPublic` (wraps §4.1)
@@ -1411,11 +1463,24 @@ because `consume_aeris_shield_event` (§4.7) and
   partial output. The page-level error boundary surfaces a
   generic "admin temporarily unavailable" message — we
   refuse to render PII without a working audit-fingerprint
-  pipeline. (2) Calls `requireAdminSession()` to confirm
-  the cookie is valid + collect its `expiry`. (3) Computes
-  the `cookie_fingerprint` (HMAC-SHA256 of the verified
-  cookie value using the env secret; reproducible per-session
-  but irreversible). (4) Calls SECURITY DEFINER RPC
+  pipeline. (1b) **route-param UUID guard** (Round 8 PR #75
+  P2 #3 fix) — `if (!isUuid(requestId)) return null;` using
+  the shared `lib/utils/uuid.ts` helper (same pattern as
+  `lib/cargo/queries/admin-queue.ts` line 53,
+  `lib/clients/queries/me-bookings.ts` line 51, etc.).
+  Without this, a URL like `/admin/medevac/not-a-uuid`
+  flows straight into `.rpc()` and surfaces a raw
+  PostgREST/PG `22P02 invalid_input_syntax` cast error;
+  the guard short-circuits to the page's standard
+  not-found branch instead. Returning `null` (rather than
+  throwing) keeps the not-found UX identical to a real
+  unknown-UUID query — and crucially avoids writing an
+  audit row for a request that never existed. (2) Calls
+  `requireAdminSession()` to confirm the cookie is valid +
+  collect its `expiry`. (3) Computes the
+  `cookie_fingerprint` (HMAC-SHA256 of the verified cookie
+  value using the env secret; reproducible per-session but
+  irreversible). (4) Calls SECURITY DEFINER RPC
   `admin_read_medevac_request_detail(p_request_id => $1,
   p_session_metadata => jsonb_build_object(
     'cookie_expiry', $cookie_expiry,
@@ -1648,34 +1713,53 @@ in §3.1-§3.9 exists in `pg_constraint`:
     name; the older `reject_past_expiry_trigger` MUST NOT
     exist, since the rule was moved into the trigger body).
 
-**Indexes (7 named in §3.1 + §3.7)** — all `idx_medevac_*`
-indexes from §3.1 and §3.7 exist in `pg_indexes`:
-31. `idx_medevac_requests_client`
-32. `idx_medevac_requests_status`
-33. `idx_medevac_requests_severity`
-34. `idx_medevac_requests_sla_pending`
-35. `idx_medevac_subscriptions_client`
-36. `idx_medevac_subscriptions_status`
-37. (extend if §3.2/§3.5 add more named indexes — count
-    them at probe-write time so this stays accurate.)
+**Indexes (8 named across §3.1 + §3.2 + §3.7)** — Round 8
+PR #75 P2 #2 fix replaced the placeholder + missing rows
+with the exact PR 1 index allowlist; every entry verified
+present in `pg_indexes` with the expected `indexdef`:
+31. `idx_medevac_requests_client`        (§3.1, partial:
+    `WHERE client_id IS NOT NULL`)
+32. `idx_medevac_requests_status`        (§3.1)
+33. `idx_medevac_requests_severity`      (§3.1, partial:
+    `WHERE status IN ('pending', 'offers_received')`)
+34. `idx_medevac_requests_sla_pending`   (§3.1, partial
+    on `dispatched_at` + `sla_escalated_at IS NULL`)
+35. `idx_medevac_offers_request`         (§3.2 — was
+    omitted in Round 7's inventory)
+36. `idx_medevac_offers_operator`        (§3.2 — was
+    omitted in Round 7's inventory)
+37. `idx_medevac_subscriptions_client`   (§3.7)
+38. `idx_medevac_subscriptions_status`   (§3.7, partial:
+    `WHERE status IN ('active', 'pending_payment')`)
 
-**RPCs (6 in PR 1)** — `pg_proc` exists AND
-`has_function_privilege('service_role', $oid, 'EXECUTE')
+`§3.5 aircraft_medical_certifications` has no named CREATE
+INDEX (the table's PRIMARY KEY on `aircraft_id` is the only
+implicit index — sufficient for the per-aircraft lookup
+the PR 3 cron uses).
+
+**RPCs + helper functions (7 in PR 1)** — `pg_proc` exists
+AND `has_function_privilege('service_role', $oid, 'EXECUTE')
 = true` AND `has_function_privilege('PUBLIC', $oid,
 'EXECUTE') = false`:
-38. `create_medevac_request_guest`        (§4.1)
-39. `create_medevac_request_authenticated` (§4.2)
-40. `submit_medevac_offer`                  (§4.3)
-41. `consume_aeris_shield_event`            (§4.7)
-42. `subscribe_to_aeris_shield`             (§4.8) — note:
+39. `create_medevac_request_guest`         (§4.1)
+40. `create_medevac_request_authenticated` (§4.2)
+41. `submit_medevac_offer`                  (§4.3)
+42. `consume_aeris_shield_event`            (§4.7)
+43. `subscribe_to_aeris_shield`             (§4.8) — note:
     inventory item #25 (PR 1) but RPC ships in PR 1
     migration per §5; the page that calls it ships in PR 2.
-43. `admin_read_medevac_request_detail`    (§4.10 — Round 6
+44. `admin_read_medevac_request_detail`    (§4.10 — Round 6
     PR #75 P1 #2 fix; Round 7 PR #75 P1 #1 fix adds the
     fail-closed metadata guard.)
+45. `safe_parse_date(TEXT)`                (§3.11 — Round
+    8 PR #75 P2 #1 fix; used by §4.7 covered_members dob
+    filter + admin covered_members Server Action write-time
+    validator. Verify it's `IMMUTABLE` + `PARALLEL SAFE`
+    via `pg_proc.provolatile = 'i'` +
+    `pg_proc.proparallel = 's'`.)
 
 **Env vars (1 new in PR 1)** — Round 7 PR #75 P2 #2 fix:
-44. `ADMIN_AUDIT_FINGERPRINT_SECRET` env exists, is a
+46. `ADMIN_AUDIT_FINGERPRINT_SECRET` env exists, is a
     non-empty string of ≥ 32 hex chars. Check via a small
     Server Action probe endpoint that returns a sanitised
     boolean (NEVER the value itself). Without this var the
@@ -1684,8 +1768,10 @@ indexes from §3.1 and §3.7 exist in `pg_indexes`:
     flag flips. `CRON_SECRET` and `ENABLE_MEDEVAC` are
     NOT checked here (PR 3 and the §7 runbook own those).
 
-**Total: 44 named checks.** All MUST pass before the
-activation flag flip in §7 step 3.
+**Total: 46 named checks** (Round 8 PR #75 P2 #2 fix —
++2 indexes from §3.2 + 1 helper function from §3.11; the
+RPC + env-var rows shifted accordingly). All MUST pass
+before the activation flag flip in §7 step 3.
 
 ### Probe 34 — Guest stable medevac request appears in admin queue
 
