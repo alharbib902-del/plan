@@ -54,28 +54,18 @@ import {
  *      the flags + the cron would re-send every threshold
  *      on the next tick.
  *
- * Email pipeline:
- *   - cert warning emails (4 thresholds) AND the final
- *     cert-expired email are sent INLINE by this cron route
- *     via `lib/medevac/cert-notifications.ts`
- *     (`sendCertWarningEmail` + `sendCertExpiredEmail`).
- *   - each send fires AFTER the atomic stamp/flip in the
- *     same loop iteration wins; that ordering plus the
- *     stamp-is-the-record-of-firing invariant guarantees
- *     two concurrent workers never both send the same
- *     threshold for the same cert.
- *   - email failures DO NOT roll back the stamp/flip — the
- *     dispatch-safety invariant is the supports_* flip
- *     (gates distribution.ts immediately); the email is
- *     observability. Rolling back on send-failure would
- *     re-fire the threshold on the next tick and spam.
- *   - each send writes its outcome into
- *     `medevac_email_alert_status` via
- *     recordMedevacEmailAlertStatus, so a Resend outage
- *     surfaces on the 7th `<ChannelHealth>` card on
- *     /admin/operators/canary.
- *   - audit_logs `new_value` carries `email_sent: bool`
- *     alongside the existing stamped_at / flipped_at fields.
+ * Email pipeline: this cron sends cert emails inline via
+ * `lib/medevac/cert-notifications.ts`
+ * (`sendCertWarningEmail` + `sendCertExpiredEmail`). Each
+ * send fires after the atomic stamp/flip in the same loop
+ * iteration wins, which guarantees two concurrent workers
+ * never both send the same threshold for the same cert.
+ * Email failures do not roll back the stamp/flip — the
+ * dispatch-safety invariant is the supports_* flip; the
+ * email is observability and propagates to
+ * `medevac_email_alert_status` (canary card #7) via
+ * recordMedevacEmailAlertStatus. `audit_logs.new_value`
+ * carries `email_sent: bool`.
  */
 
 const SCAN_LIMIT = 200;

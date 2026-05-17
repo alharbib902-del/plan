@@ -6,27 +6,25 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { recordMedevacEmailAlertStatus } from './email-alert-status';
 
 /**
- * Phase 12 PR 3 §6 — medical-certification email senders
- * implementing the D11 contract (4 warning thresholds +
- * final cert-expired notification).
+ * This module provides the D11 cert warning and expiry
+ * senders.
  *
- * Two senders:
- *   - sendCertWarningEmail (operator + founder CC) — warning
- *     cascade. Caller passes the threshold + days remaining;
- *     the email body cites both so the operator sees urgency.
- *   - sendCertExpiredEmail (operator + founder CC) — fired
- *     once at the enforcement flip; references that all
- *     supports_* flags were cleared.
+ * `sendCertWarningEmail` (operator + founder CC) fires per
+ * warning threshold (30/14/7/1 day) — caller passes the
+ * threshold and the email cites it so the operator sees
+ * urgency. `sendCertExpiredEmail` (operator + founder CC)
+ * fires once at the enforcement flip and references that
+ * all supports_* flags were cleared.
  *
- * Both use the SAME medevac_email_alert_status singleton as
- * dispatch notifications + SLA escalation, so a degraded
- * Resend account surfaces on the 7th canary card regardless
- * of which sender path the failure landed on.
+ * Both senders write into the same
+ * `medevac_email_alert_status` singleton as dispatch
+ * notifications and the SLA escalation so a degraded
+ * Resend account surfaces on the 7th canary card.
  *
- * PII semantics: cert emails carry NO patient data (the
- * cert lives on the aircraft, not on a request), so D12
- * redaction is automatic — operator + founder are the
- * audiences and aircraft registration is the identifier.
+ * PII: cert emails carry no patient data — the cert lives
+ * on the aircraft, not on a request — so D12 redaction is
+ * automatic. Operator and founder are the audiences; the
+ * aircraft registration is the identifier.
  */
 
 function escapeHtml(input: string): string {
