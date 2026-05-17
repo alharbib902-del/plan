@@ -1013,12 +1013,37 @@ defense.
 
 ### §4.2 — `create_medevac_request_authenticated` (PR 1)
 
-Mirror of Phase 11 §4.2. Allows all severities. If client has
-an active subscription with `covered_events_remaining > 0`
-AND payload includes `use_subscription: true`, branches to the
-J5 covered path: calls `consume_aeris_shield_event` RPC (§4.7)
-which atomically decrements `used_events` AND inserts the
-booking AND sets request status to `'covered'`.
+Mirror of Phase 11 §4.2. Allows all severities. **ALWAYS
+inserts an out-of-pocket `status='pending'` request** — the
+J5 Shield covered branch is NOT handled inside this RPC
+(implementation deviation from the original draft, applied
+in PR #76 Round 1 P1 #1 fix and finalised here in PR #76
+Round 2 P2 #2 fix so the spec stays the single source of
+truth).
+
+The J5 covered branch lives in the PR 2 Server Action
+wrapper `submitMedevacRequestAuthed` which inspects
+`payload.use_subscription` and, when `true`, dispatches
+directly to §4.7 `consume_aeris_shield_event` with the 5
+required params already known at the TS layer
+(`p_subscription_id`, `p_client_id`,
+`p_patient_member_name`, `p_patient_member_dob`,
+`p_payload`). Two reasons for the split:
+- keeps each SECURITY DEFINER RPC single-purpose so the
+  contract surface stays narrow + auditable;
+- §4.7 needs an already-resolved subscription_id +
+  patient (name, dob) pair — putting that lookup inside
+  §4.2 would duplicate the Server Action's subscription /
+  member resolution and double-buy the failure modes.
+
+Defense-in-depth: §4.2 returns the structured error
+`use_subscription_must_route_to_shield_rpc` if a caller
+passes `use_subscription: true` (or any of the
+case-insensitive truthy values `'1' / 't' / 'yes'`) so
+the RPC never silently inserts an out-of-pocket row that
+would skip `used_events` decrement + the covered booking
+insert. PR 2 implementers MUST call §4.7 directly for the
+covered path, NOT this RPC.
 
 ### §4.3 — `submit_medevac_offer` (PR 1)
 

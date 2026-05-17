@@ -7,6 +7,7 @@ import {
   type UpsertMedicalCertificationInput,
 } from '@/app/actions/medevac-admin';
 import { medevacAr } from '@/lib/i18n/medevac-ar';
+import { datetimeLocalToRiyadhIso } from '@/lib/utils/datetime-local';
 import type {
   AircraftMedicalCertificationRow,
   MedicalCertifyingAuthority,
@@ -270,11 +271,20 @@ function toLocalIsoDate(iso: string): string {
 
 function toIsoTimestamp(local: string): string {
   if (!local) return '';
-  // datetime-local has no TZ — treat as Asia/Riyadh wall clock.
-  // The DB column is TIMESTAMPTZ so the JS Date conversion uses
-  // the browser TZ, which is the founder's input intent.
+  // Round 2 PR #76 P2 #3 fix — use the shared
+  // datetimeLocalToRiyadhIso helper (lib/utils/datetime-local.ts).
+  // `<input type="datetime-local">` yields a naive string with no
+  // timezone; `new Date(local).toISOString()` interpreted it in
+  // the admin's BROWSER zone, which would shift certification
+  // expiry by the admin's local offset on every non-Riyadh
+  // browser (cron expiry-flip + warning cascade would then
+  // misfire by that offset). The helper appends `+03:00`
+  // unconditionally so the value is always interpreted as
+  // Riyadh wall time, matching the Phase 7 invariant used by
+  // every other datetime-local form in the project (operator
+  // publish, admin publish, Phase 9 charter, …).
   try {
-    return new Date(local).toISOString();
+    return datetimeLocalToRiyadhIso(local);
   } catch {
     return local;
   }

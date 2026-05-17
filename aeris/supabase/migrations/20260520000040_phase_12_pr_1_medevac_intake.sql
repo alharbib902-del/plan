@@ -745,6 +745,11 @@ DECLARE
   v_request_number TEXT;
   v_severity medevac_severity;
   v_service_level medevac_service_level;
+  -- Round 2 PR #76 P2 #1 fix — pre-parsed values so the casts
+  -- below can be wrapped in nested BEGIN/EXCEPTION blocks
+  -- (same pattern as §4.3 submit_medevac_offer Round 1 P1 #2).
+  v_patient_age INT;
+  v_estimated_value DECIMAL(14, 2);
 BEGIN
   -- ip_required guard (Phase 9 convention #12)
   IF p_ip IS NULL THEN
@@ -813,9 +818,38 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'to_hospital_invalid');
   END IF;
 
-  -- Positive value gate
-  IF (p_payload->>'estimated_value_sar')::DECIMAL <= 0 THEN
+  -- Defensive parse for estimated_value_sar (Round 2 PR #76
+  -- P2 #1 fix). Nested BEGIN/EXCEPTION catches
+  -- `invalid_text_representation` (22P02) for non-numeric
+  -- input and `numeric_value_out_of_range` (22003) for
+  -- overflow. Returns `estimated_value_invalid` instead of
+  -- a raw Postgres error.
+  BEGIN
+    v_estimated_value := BTRIM(p_payload->>'estimated_value_sar')::DECIMAL(14, 2);
+  EXCEPTION
+    WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+      RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
+  END;
+  IF v_estimated_value <= 0 THEN
     RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
+  END IF;
+
+  -- Defensive parse for patient_age (Round 2 PR #76 P2 #1 fix).
+  -- Optional column so NULL/empty is allowed; otherwise cast
+  -- in a nested block + range-check 0..130 (mirrors the Zod
+  -- bound in lib/medevac/validators/medevac-request.ts).
+  IF NULLIF(BTRIM(p_payload->>'patient_age'), '') IS NULL THEN
+    v_patient_age := NULL;
+  ELSE
+    BEGIN
+      v_patient_age := BTRIM(p_payload->>'patient_age')::INT;
+    EXCEPTION
+      WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN json_build_object('ok', false, 'error', 'patient_age_invalid');
+    END;
+    IF v_patient_age < 0 OR v_patient_age > 130 THEN
+      RETURN json_build_object('ok', false, 'error', 'patient_age_invalid');
+    END IF;
   END IF;
 
   -- INSERT
@@ -841,7 +875,7 @@ BEGIN
   ) VALUES (
     NULL,  -- guest path
     BTRIM(p_payload->>'patient_name'),
-    NULLIF(p_payload->>'patient_age', '')::INT,
+    v_patient_age,
     BTRIM(p_payload->>'contact_name'),
     BTRIM(p_payload->>'contact_phone'),
     NULLIF(BTRIM(p_payload->>'contact_email'), ''),
@@ -855,7 +889,7 @@ BEGIN
     NULLIF(BTRIM(p_payload->>'to_iata'), ''),
     NULLIF(BTRIM(p_payload->>'insurance_provider'), ''),
     NULLIF(BTRIM(p_payload->>'insurance_claim_ref'), ''),
-    (p_payload->>'estimated_value_sar')::DECIMAL,
+    v_estimated_value,
     'pending'
   )
   RETURNING id, medevac_request_number INTO v_request_id, v_request_number;
@@ -916,6 +950,11 @@ DECLARE
   v_request_number TEXT;
   v_severity medevac_severity;
   v_service_level medevac_service_level;
+  -- Round 2 PR #76 P2 #1 fix — pre-parsed values so the casts
+  -- below are wrapped in nested BEGIN/EXCEPTION blocks (same
+  -- pattern as §4.1 + §4.3).
+  v_patient_age INT;
+  v_estimated_value DECIMAL(14, 2);
 BEGIN
   IF p_client_id IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'client_id_required');
@@ -998,8 +1037,34 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'to_hospital_invalid');
   END IF;
 
-  IF (p_payload->>'estimated_value_sar')::DECIMAL <= 0 THEN
+  -- Round 2 PR #76 P2 #1 fix — defensive parses for the two
+  -- numeric casts (estimated_value_sar + patient_age). Same
+  -- pattern as §4.1 + §4.3 — nested BEGIN/EXCEPTION catches
+  -- `invalid_text_representation` (22P02) and
+  -- `numeric_value_out_of_range` (22003), returning the
+  -- structured `*_invalid` code instead of raw PG errors.
+  BEGIN
+    v_estimated_value := BTRIM(p_payload->>'estimated_value_sar')::DECIMAL(14, 2);
+  EXCEPTION
+    WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+      RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
+  END;
+  IF v_estimated_value <= 0 THEN
     RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
+  END IF;
+
+  IF NULLIF(BTRIM(p_payload->>'patient_age'), '') IS NULL THEN
+    v_patient_age := NULL;
+  ELSE
+    BEGIN
+      v_patient_age := BTRIM(p_payload->>'patient_age')::INT;
+    EXCEPTION
+      WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN json_build_object('ok', false, 'error', 'patient_age_invalid');
+    END;
+    IF v_patient_age < 0 OR v_patient_age > 130 THEN
+      RETURN json_build_object('ok', false, 'error', 'patient_age_invalid');
+    END IF;
   END IF;
 
   INSERT INTO medevac_requests (
@@ -1024,7 +1089,7 @@ BEGIN
   ) VALUES (
     p_client_id,
     BTRIM(p_payload->>'patient_name'),
-    NULLIF(p_payload->>'patient_age', '')::INT,
+    v_patient_age,
     BTRIM(p_payload->>'contact_name'),
     BTRIM(p_payload->>'contact_phone'),
     NULLIF(BTRIM(p_payload->>'contact_email'), ''),
@@ -1038,7 +1103,7 @@ BEGIN
     NULLIF(BTRIM(p_payload->>'to_iata'), ''),
     NULLIF(BTRIM(p_payload->>'insurance_provider'), ''),
     NULLIF(BTRIM(p_payload->>'insurance_claim_ref'), ''),
-    (p_payload->>'estimated_value_sar')::DECIMAL,
+    v_estimated_value,
     'pending'
   )
   RETURNING id, medevac_request_number INTO v_request_id, v_request_number;
