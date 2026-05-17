@@ -54,18 +54,30 @@ import {
  *      the flags + the cron would re-send every threshold
  *      on the next tick.
  *
- * Email pipeline (Round 2 PR #78 P2 #3 — replaces the
- * "out of scope" placeholder this header carried in the
- * initial PR 3 cut): the cron sends cert emails INLINE via
- * `lib/medevac/cert-notifications.ts` immediately after the
- * winning stamp/flip lands. The atomic flag-stamp is the
- * "this threshold already fired" record, so two concurrent
- * workers never both send; an email failure does NOT roll
- * back the stamp/flip (that would re-send on the next tick +
- * spam — the safety invariant is the flip, which gates
- * distribution.ts; the email is observability). Email status
- * propagates to `medevac_email_alert_status` (canary card #7)
- * via recordMedevacEmailAlertStatus on every send attempt.
+ * Email pipeline (Round 2 PR #78 P2 #3 fix; Round 4 PR #78
+ * P2 #1 fix rewrote this paragraph to remove a stale
+ * placeholder quote that misled an automated scan):
+ *   - cert warning emails (4 thresholds) AND the final
+ *     cert-expired email are sent INLINE by this cron route
+ *     via `lib/medevac/cert-notifications.ts`
+ *     (`sendCertWarningEmail` + `sendCertExpiredEmail`).
+ *   - each send fires AFTER the atomic stamp/flip in the
+ *     same loop iteration wins; that ordering plus the
+ *     stamp-is-the-record-of-firing invariant guarantees
+ *     two concurrent workers never both send the same
+ *     threshold for the same cert.
+ *   - email failures DO NOT roll back the stamp/flip — the
+ *     dispatch-safety invariant is the supports_* flip
+ *     (gates distribution.ts immediately); the email is
+ *     observability. Rolling back on send-failure would
+ *     re-fire the threshold on the next tick and spam.
+ *   - each send writes its outcome into
+ *     `medevac_email_alert_status` via
+ *     recordMedevacEmailAlertStatus, so a Resend outage
+ *     surfaces on the 7th `<ChannelHealth>` card on
+ *     /admin/operators/canary.
+ *   - audit_logs `new_value` carries `email_sent: bool`
+ *     alongside the existing stamped_at / flipped_at fields.
  */
 
 const SCAN_LIMIT = 200;
