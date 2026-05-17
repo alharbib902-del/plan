@@ -82,6 +82,9 @@ export const medevacAr = {
   certMatrixTitle: 'مصفوفة شهادات الإخلاء الطبي للطائرات',
   certMatrixSubtitle:
     'إدارة الشهادات الطبية لكل طائرة. الطائرات بدون شهادة سارية لا تظهر في توزيع العروض.',
+
+  // Canary card label (Phase 12 PR 3 §6.1 — 7th ChannelHealth)
+  canaryMedevacEmailChannel: 'إيميل الإخلاء الطبي',
 } as const;
 
 export type MedevacAr = typeof medevacAr;

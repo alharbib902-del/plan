@@ -44,6 +44,10 @@
     "test:medevac-offer-validators": "tsx lib/medevac/__tests__/medevac-offer-validators.test.ts",
     "test:medevac-subscription-validators": "tsx lib/medevac/__tests__/medevac-subscription-validators.test.ts",
     "test:medevac-shield-consume-routing": "tsx lib/medevac/__tests__/medevac-shield-consume-routing.test.ts",
+    "test:medevac-distribution-scoring": "tsx lib/medevac/__tests__/medevac-distribution-scoring.test.ts",
+    "test:medevac-sla-escalation": "tsx lib/medevac/__tests__/medevac-sla-escalation.test.ts",
+    "test:medical-cert-expiry": "tsx lib/medevac/__tests__/medical-cert-expiry.test.ts",
+    "test:medevac-cron-auth": "tsx app/api/cron/medevac/__tests__/cron-auth.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

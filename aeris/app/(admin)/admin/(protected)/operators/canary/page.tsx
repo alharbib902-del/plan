@@ -15,10 +15,12 @@ import { getClientNotificationAlertStatus } from '@/lib/notifications/client-ema
 import { getClientEmptyLegAlertStatus } from '@/lib/notifications/client-empty-leg-alert-status';
 import { getCargoEmailAlertStatus } from '@/lib/cargo/email-alert-status';
 import { getCargoDispatchRuns24h } from '@/lib/cargo/canary-queries';
+import { getMedevacEmailAlertStatus } from '@/lib/medevac/email-alert-status';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { cargoAr } from '@/lib/i18n/cargo-ar';
+import { medevacAr } from '@/lib/i18n/medevac-ar';
 
 /**
  * Phase 8 PR 2e — admin canary readout for operator-side
@@ -69,6 +71,7 @@ export default async function AdminOperatorsCanaryPage() {
     clientEmptyLegAlertStatus,
     cargoAlertStatus,
     cargoDispatchRuns24h,
+    medevacAlertStatus,
     attemptMix,
     cronHealth,
   ] = await Promise.all([
@@ -88,6 +91,12 @@ export default async function AdminOperatorsCanaryPage() {
     // cargo channel card. Round 2 PR #72 P2 #3 — renamed from
     // per-operator to per-request to match the SQL semantics.
     getCargoDispatchRuns24h(),
+    // Phase 12 PR 3 — 7th ChannelHealth card for the medevac
+    // Resend pipeline (operator dispatch + founder SLA
+    // escalation share one singleton per PR 1 §3.9). Distinct
+    // from cargo so a degraded medevac email doesn't mislabel
+    // cargo health, and vice versa.
+    getMedevacEmailAlertStatus(),
     getSignupAttemptMix(),
     getCronTickHealth(),
   ]);
@@ -119,6 +128,7 @@ export default async function AdminOperatorsCanaryPage() {
         clientEmptyLegAlertStatus={clientEmptyLegAlertStatus}
         cargoAlertStatus={cargoAlertStatus}
         cargoDispatchRuns24h={cargoDispatchRuns24h}
+        medevacAlertStatus={medevacAlertStatus}
       />
 
       <AttemptMixCard mix={attemptMix} />
@@ -179,6 +189,7 @@ function NotificationHealthCard({
   clientEmptyLegAlertStatus,
   cargoAlertStatus,
   cargoDispatchRuns24h,
+  medevacAlertStatus,
 }: {
   alertStatus: Awaited<ReturnType<typeof getOperatorNotificationAlertStatus>>;
   clientAlertStatus: Awaited<
@@ -189,6 +200,7 @@ function NotificationHealthCard({
   >;
   cargoAlertStatus: Awaited<ReturnType<typeof getCargoEmailAlertStatus>>;
   cargoDispatchRuns24h: number;
+  medevacAlertStatus: Awaited<ReturnType<typeof getMedevacEmailAlertStatus>>;
 }) {
   if (!alertStatus) {
     return (
@@ -265,6 +277,20 @@ function NotificationHealthCard({
             آخر 24 ساعة: {cargoDispatchRuns24h} طلب تم توزيعه
           </p>
         </div>
+        {/* Phase 12 PR 3 — 7th ChannelHealth card for the
+            medevac Resend pipeline (operator dispatch +
+            founder SLA escalation share one singleton per PR 1
+            §3.9). Same null-safe shape as cards #4-#6 so the
+            other cards stay observable when this singleton row
+            is briefly unavailable. */}
+        <ChannelHealth
+          label={medevacAr.canaryMedevacEmailChannel}
+          status={medevacAlertStatus?.status ?? 'unknown'}
+          lastFailureAt={medevacAlertStatus?.last_failure_at ?? null}
+          lastFailureReason={
+            medevacAlertStatus?.last_failure_reason ?? null
+          }
+        />
       </div>
     </Card>
   );

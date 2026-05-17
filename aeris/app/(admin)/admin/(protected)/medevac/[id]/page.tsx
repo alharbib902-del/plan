@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import { readAdminMedevacRequestDetail } from '@/lib/medevac/admin-pii';
 import { medevacAr } from '@/lib/i18n/medevac-ar';
+import { ManualDispatchButton } from '@/components/admin/medevac/manual-dispatch-button';
 import type {
   MedevacSeverity,
   MedevacRequestStatus,
@@ -217,6 +218,30 @@ export default async function AdminMedevacDetailPage({
           />
         </Card>
       </div>
+
+      {/* Phase 12 PR 3 §6.2 — manual dispatch button.
+          Inserts a 'manual_redispatch' outbox row that the
+          5-min dispatch-drain cron picks up. Available on
+          both open + closed requests so admin can re-fan-out
+          if the original dispatch generated no offers.
+          Covered J5 rows aren't actionable (the §3.10 trigger
+          + distribution.ts both short-circuit on
+          `is_covered=true`), so the button stays hidden for
+          those. */}
+      {!r.is_covered && (
+        <div className="rounded-xl border border-border bg-navy-card/30 p-5">
+          <h2 className="font-ar mb-3 text-sm text-ink-secondary">
+            إعادة توزيع يدوي
+          </h2>
+          <p className="font-ar mb-3 text-xs text-ink-muted">
+            ينشئ حدث dispatch جديد في الـ outbox. يلتقطه cron
+            dispatch-drain خلال 5 دقائق ويعيد إرسال العروض للمشغلين
+            المعتمدين الجدد (أو نفس المشغلين بعد انقضاء نافذة
+            الـ recently_dispatched).
+          </p>
+          <ManualDispatchButton requestId={r.id} />
+        </div>
+      )}
 
       <footer
         className="font-ar rounded-xl border border-border bg-navy-card/30 p-4 text-xs text-ink-muted"
