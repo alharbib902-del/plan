@@ -30,17 +30,19 @@ import {
  *   1. Warning cascade (NO flag flip)
  *      Scan rows where certification_expires_at − NOW() falls
  *      inside one of the 4 thresholds (30/14/7/1 day) AND the
- *      matching warning_*d_sent_at flag is NULL. Stamp the
- *      flag (atomic conditional UPDATE) and queue the
- *      `expired_medical_cert_alert` email exactly once per
- *      renewal cycle.
+ *      matching warning_*d_sent_at flag is NULL. Atomically
+ *      stamp the flag, send the cert-warning email inline
+ *      (operator + founder per Round 2 P2 #3), then audit
+ *      with `email_sent: bool` so the canary card surfaces
+ *      Resend failures alongside the dispatch + SLA channels.
  *
  *   2. Enforcement flip (cert ACTUALLY expired)
  *      Scan rows where certification_expires_at <= NOW() AND
  *      at least one supports_* is still true. Flip all 4
  *      supports_* to false (the §3.5 enforce trigger allows
- *      this UPDATE because the cert is expired) + queue the
- *      final `medical_cert_expired_now` email.
+ *      this UPDATE because the cert is expired), send the
+ *      final `medical_cert_expired_now` email (operator +
+ *      founder), then audit with `email_sent`.
  *
  *   3. Renewal reset (Round 4 P2 #4 — > 30 days only)
  *      Scan rows where certification_expires_at > NOW() +
@@ -52,14 +54,18 @@ import {
  *      the flags + the cron would re-send every threshold
  *      on the next tick.
  *
- * Email side: this cron stamps + audits, but the
- * `expired_medical_cert_alert` and `medical_cert_expired_now`
- * email senders themselves are out of scope for PR 3 v1 —
- * they're queued as audit_logs entries here and a future
- * notifications pipeline / Phase 13 polish wires them to
- * Resend. The MVP value is the supports_* flip (which gates
- * distribution.ts immediately) and the warning-flag stamping
- * (which prevents duplicate emails once the senders ship).
+ * Email pipeline (Round 2 PR #78 P2 #3 — replaces the
+ * "out of scope" placeholder this header carried in the
+ * initial PR 3 cut): the cron sends cert emails INLINE via
+ * `lib/medevac/cert-notifications.ts` immediately after the
+ * winning stamp/flip lands. The atomic flag-stamp is the
+ * "this threshold already fired" record, so two concurrent
+ * workers never both send; an email failure does NOT roll
+ * back the stamp/flip (that would re-send on the next tick +
+ * spam — the safety invariant is the flip, which gates
+ * distribution.ts; the email is observability). Email status
+ * propagates to `medevac_email_alert_status` (canary card #7)
+ * via recordMedevacEmailAlertStatus on every send attempt.
  */
 
 const SCAN_LIMIT = 200;
