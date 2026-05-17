@@ -72,10 +72,13 @@ function CertRow({ row }: { row: AircraftWithCert }) {
     { kind: 'idle' } | { kind: 'ok' } | { kind: 'err'; message: string }
   >({ kind: 'idle' });
 
+  // Round 3 PR #76 P1 #1 fix — read lowercased column names
+  // from the row (Postgres stores supports_bmt / supports_als
+  // / supports_cct because the DDL identifiers were unquoted).
   const existing = row.cert;
-  const [bmt, setBmt] = useState(existing?.supports_BMT ?? false);
-  const [als, setAls] = useState(existing?.supports_ALS ?? false);
-  const [cct, setCct] = useState(existing?.supports_CCT ?? false);
+  const [bmt, setBmt] = useState(existing?.supports_bmt ?? false);
+  const [als, setAls] = useState(existing?.supports_als ?? false);
+  const [cct, setCct] = useState(existing?.supports_cct ?? false);
   const [repat, setRepat] = useState(existing?.supports_repatriation ?? false);
   const [authority, setAuthority] = useState<MedicalCertifyingAuthority>(
     existing?.certifying_authority ?? 'SCFHS'
@@ -94,9 +97,11 @@ function CertRow({ row }: { row: AircraftWithCert }) {
     setStatus({ kind: 'idle' });
     const payload: UpsertMedicalCertificationInput = {
       aircraft_id: row.aircraft_id,
-      supports_BMT: bmt,
-      supports_ALS: als,
-      supports_CCT: cct,
+      // Round 3 PR #76 P1 #1 fix — lowercase keys match
+      // Postgres column names (folded from supports_BMT etc.).
+      supports_bmt: bmt,
+      supports_als: als,
+      supports_cct: cct,
       supports_repatriation: repat,
       certifying_authority: authority,
       certification_number: certNumber.trim() === '' ? null : certNumber.trim(),

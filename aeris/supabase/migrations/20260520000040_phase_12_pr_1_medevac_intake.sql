@@ -424,12 +424,21 @@ END $$;
 -- §3.5 — aircraft_medical_certifications + enforce trigger + RLS
 -- ============================================================
 
+-- Round 3 PR #76 P1 #1 fix — column names declared in lowercase
+-- explicitly. Postgres folds unquoted identifiers to lowercase
+-- at DDL time anyway (so `supports_BMT` and `supports_bmt` are
+-- the same physical column), but writing them lowercase here
+-- removes any ambiguity for readers + matches the PostgREST
+-- JSON keys the TS layer must use (lib/medevac/types.ts +
+-- app/actions/medevac-admin.ts + cert-matrix-editor.tsx all
+-- send `supports_bmt`, NOT `supports_BMT`, since PostgREST
+-- compares JSON keys byte-for-byte to the actual column names).
 CREATE TABLE IF NOT EXISTS aircraft_medical_certifications (
   aircraft_id UUID PRIMARY KEY
     REFERENCES aircraft(id) ON DELETE CASCADE,
-  supports_BMT BOOLEAN NOT NULL DEFAULT false,
-  supports_ALS BOOLEAN NOT NULL DEFAULT false,
-  supports_CCT BOOLEAN NOT NULL DEFAULT false,
+  supports_bmt BOOLEAN NOT NULL DEFAULT false,
+  supports_als BOOLEAN NOT NULL DEFAULT false,
+  supports_cct BOOLEAN NOT NULL DEFAULT false,
   supports_repatriation BOOLEAN NOT NULL DEFAULT false,
   certifying_authority medical_certifying_authority NOT NULL,
   certification_number TEXT,
@@ -472,9 +481,9 @@ BEGIN
   IF TG_OP = 'UPDATE'
      AND NEW.certification_expires_at <= NOW()
      AND (
-       (NEW.supports_BMT AND NOT OLD.supports_BMT)
-       OR (NEW.supports_ALS AND NOT OLD.supports_ALS)
-       OR (NEW.supports_CCT AND NOT OLD.supports_CCT)
+       (NEW.supports_bmt AND NOT OLD.supports_bmt)
+       OR (NEW.supports_als AND NOT OLD.supports_als)
+       OR (NEW.supports_cct AND NOT OLD.supports_cct)
        OR (NEW.supports_repatriation AND NOT OLD.supports_repatriation)
      )
   THEN
@@ -483,8 +492,8 @@ BEGIN
   END IF;
 
   -- (c) At-least-one supports_* rule.
-  IF NOT (NEW.supports_BMT OR NEW.supports_ALS
-          OR NEW.supports_CCT OR NEW.supports_repatriation)
+  IF NOT (NEW.supports_bmt OR NEW.supports_als
+          OR NEW.supports_cct OR NEW.supports_repatriation)
   THEN
     IF TG_OP = 'INSERT' THEN
       RAISE EXCEPTION 'at least one supports_* flag must be true on insert'
@@ -1234,9 +1243,9 @@ BEGIN
 
   -- Match the requested service_level against the supports_* flag
   v_cert_supports := CASE v_request.service_level
-    WHEN 'BMT'          THEN v_cert.supports_BMT
-    WHEN 'ALS'          THEN v_cert.supports_ALS
-    WHEN 'CCT'          THEN v_cert.supports_CCT
+    WHEN 'BMT'          THEN v_cert.supports_bmt
+    WHEN 'ALS'          THEN v_cert.supports_als
+    WHEN 'CCT'          THEN v_cert.supports_cct
     WHEN 'repatriation' THEN v_cert.supports_repatriation
     ELSE false
   END;
@@ -1418,6 +1427,11 @@ DECLARE
   v_request_id UUID;
   v_request_number TEXT;
   v_booking_id UUID;
+  -- Round 3 PR #76 P2 #2 fix — pre-parse estimated_value_sar
+  -- in a nested BEGIN/EXCEPTION so a malformed payload can't
+  -- escape as raw 22P02 / 22003. Used in both the request
+  -- insert (step 8) and the booking insert (step 9).
+  v_estimated_value DECIMAL(14, 2);
 BEGIN
   IF p_subscription_id IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'subscription_id_required');
@@ -1465,8 +1479,24 @@ BEGIN
   IF NULLIF(BTRIM(p_payload->>'to_hospital_name'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'to_hospital_required');
   END IF;
-  IF NULLIF(p_payload->>'estimated_value_sar', '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'estimated_value_sar'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'estimated_value_required');
+  END IF;
+  -- Round 3 PR #76 P2 #2 fix — defensive parse for
+  -- estimated_value_sar (same pattern as §4.1 / §4.2 / §4.3).
+  -- The two raw casts in the request + booking inserts below
+  -- could otherwise raise `invalid_text_representation` (22P02)
+  -- or `numeric_value_out_of_range` (22003) and bubble a raw
+  -- Postgres error instead of `estimated_value_invalid`.
+  BEGIN
+    v_estimated_value :=
+      BTRIM(p_payload->>'estimated_value_sar')::DECIMAL(14, 2);
+  EXCEPTION
+    WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+      RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
+  END;
+  IF v_estimated_value <= 0 THEN
+    RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
   END IF;
 
   -- Step 1 — Lock the subscription FOR UPDATE.
@@ -1550,9 +1580,9 @@ BEGIN
    WHERE a.operator_id = v_operator.id
      AND amc.certification_expires_at > NOW()
      AND CASE v_service_level
-       WHEN 'BMT'          THEN amc.supports_BMT
-       WHEN 'ALS'          THEN amc.supports_ALS
-       WHEN 'CCT'          THEN amc.supports_CCT
+       WHEN 'BMT'          THEN amc.supports_bmt
+       WHEN 'ALS'          THEN amc.supports_als
+       WHEN 'CCT'          THEN amc.supports_cct
        WHEN 'repatriation' THEN amc.supports_repatriation
        ELSE false
      END
@@ -1618,7 +1648,7 @@ BEGIN
     NULLIF(BTRIM(p_payload->>'to_iata'), ''),
     NULLIF(BTRIM(p_payload->>'insurance_provider'), ''),
     NULLIF(BTRIM(p_payload->>'insurance_claim_ref'), ''),
-    (p_payload->>'estimated_value_sar')::DECIMAL,
+    v_estimated_value,  -- Round 3 PR #76 P2 #2 fix
     p_subscription_id,
     true,
     'covered'
@@ -1660,7 +1690,7 @@ BEGIN
     v_canonical_patient_name,
     NULLIF(BTRIM(p_payload->>'contact_email'), ''),
     BTRIM(p_payload->>'contact_phone'),
-    (p_payload->>'estimated_value_sar')::DECIMAL,
+    v_estimated_value,  -- Round 3 PR #76 P2 #2 fix
     'pending_offline',                -- Round 2 P1 #3
     'confirmed',
     'Shield covered event (' || v_request_number || ')'

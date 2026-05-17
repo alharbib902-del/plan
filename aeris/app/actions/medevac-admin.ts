@@ -52,11 +52,19 @@ const SUPPORTED_AUTHORITIES: readonly MedicalCertifyingAuthority[] = [
 // upsertMedicalCertification
 // ============================================================
 
+/**
+ * Round 3 PR #76 P1 #1 fix — lowercase supports_* fields to
+ * match the actual Postgres column names. Postgres folds
+ * unquoted `supports_BMT` etc. to `supports_bmt` at DDL time,
+ * so the upsert JSON payload MUST use lowercase. The
+ * previous PascalCase keys were silently dropped by
+ * PostgREST and the cert matrix couldn't seed any rows.
+ */
 export interface UpsertMedicalCertificationInput {
   aircraft_id: string;
-  supports_BMT: boolean;
-  supports_ALS: boolean;
-  supports_CCT: boolean;
+  supports_bmt: boolean;
+  supports_als: boolean;
+  supports_cct: boolean;
   supports_repatriation: boolean;
   certifying_authority: MedicalCertifyingAuthority;
   certification_number?: string | null;
@@ -89,9 +97,9 @@ export async function upsertMedicalCertification(
   }
 
   const anyTrue =
-    input.supports_BMT ||
-    input.supports_ALS ||
-    input.supports_CCT ||
+    input.supports_bmt ||
+    input.supports_als ||
+    input.supports_cct ||
     input.supports_repatriation;
   if (!anyTrue) {
     return { ok: false, error: 'at_least_one_supports_required' };
@@ -122,9 +130,9 @@ export async function upsertMedicalCertification(
   const admin = createAdminClient();
   const payload: Partial<AircraftMedicalCertificationRow> = {
     aircraft_id: input.aircraft_id,
-    supports_BMT: input.supports_BMT,
-    supports_ALS: input.supports_ALS,
-    supports_CCT: input.supports_CCT,
+    supports_bmt: input.supports_bmt,
+    supports_als: input.supports_als,
+    supports_cct: input.supports_cct,
     supports_repatriation: input.supports_repatriation,
     certifying_authority: input.certifying_authority,
     certification_number: input.certification_number ?? null,

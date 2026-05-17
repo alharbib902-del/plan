@@ -156,11 +156,25 @@ export interface MedevacOfferRow {
 // aircraft_medical_certifications (§3.5)
 // ============================================================
 
+/**
+ * Round 3 PR #76 P1 #1 fix — column names lowercased here so
+ * PostgREST JSON keys match the actual Postgres column names.
+ * Unquoted SQL identifiers like `supports_BMT` are folded to
+ * `supports_bmt` by Postgres at DDL time, so the upsert
+ * payload + select projection MUST use lowercase. Mismatched
+ * keys were silently dropped by PostgREST so the cert matrix
+ * editor couldn't seed any capabilities.
+ *
+ * Aliased TS shape (PascalCase) at the form layer is
+ * acceptable for the UI vocabulary, but everything that
+ * touches the wire (DB + RPC + Server Action payload) MUST
+ * use the lowercase form below.
+ */
 export interface AircraftMedicalCertificationRow {
   aircraft_id: string;
-  supports_BMT: boolean;
-  supports_ALS: boolean;
-  supports_CCT: boolean;
+  supports_bmt: boolean;
+  supports_als: boolean;
+  supports_cct: boolean;
   supports_repatriation: boolean;
   certifying_authority: MedicalCertifyingAuthority;
   certification_number: string | null;
