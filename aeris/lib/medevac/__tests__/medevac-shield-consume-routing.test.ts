@@ -185,6 +185,60 @@ test('20. patient_member_dob in the future → fails', () => {
   assert.equal(r.success, false);
 });
 
+// Round 3 PR #77 P2 #1 fix — schema preprocesses
+// use_subscription so the same truthy allowlist as
+// isUseSubscriptionTruthy passes the literal check.
+// Without preprocess these would have routed to the
+// Shield branch then failed validation, leaving the
+// caller with `validation_failed` instead of consuming
+// a Shield event.
+test("21. use_subscription: 'true' → ok (preprocess normalises)", () => {
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    use_subscription: 'true',
+  });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.use_subscription, true);
+  }
+});
+
+test("22. use_subscription: '1' → ok (preprocess normalises)", () => {
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    use_subscription: '1',
+  });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.use_subscription, true);
+  }
+});
+
+test('23. use_subscription: 1 → ok (preprocess normalises)', () => {
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    use_subscription: 1,
+  });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.use_subscription, true);
+  }
+});
+
+test("24. use_subscription: 'yes' → fails (not in truthy allowlist)", () => {
+  // 'yes' is NOT in the helper's allowlist (the RPC mirrors it
+  // as defense-in-depth with a wider set; the TS layer stays
+  // narrow). Without the preprocess this would have failed too,
+  // but for a different reason (literal mismatch). With
+  // preprocess: the helper returns false, preprocess passes
+  // 'yes' through unchanged, then z.literal(true) rejects it.
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    use_subscription: 'yes',
+  });
+  assert.equal(r.success, false);
+});
+
 // eslint-disable-next-line no-console
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

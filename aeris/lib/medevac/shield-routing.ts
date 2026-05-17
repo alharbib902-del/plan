@@ -48,7 +48,23 @@ export function isUseSubscriptionTruthy(value: unknown): boolean {
  */
 export const shieldRoutingSchema = z
   .object({
-    use_subscription: z.literal(true),
+    // Round 3 PR #77 P2 #1 fix — preprocess so the schema
+    // accepts the same allowlist as isUseSubscriptionTruthy
+    // (boolean true OR string 'true' OR number 1 OR string
+    // '1'). Without this, submitMedevacRequestAuthed would
+    // route a payload like { use_subscription: 'true', ... }
+    // into the Shield branch (because the helper returns
+    // true), then the schema's z.literal(true) check would
+    // reject the SAME value and the caller gets
+    // `validation_failed` instead of consuming a Shield
+    // event. The preprocess normalises any truthy variant
+    // to the literal boolean true BEFORE the literal check
+    // runs, keeping the routing decision and the validation
+    // step semantically aligned.
+    use_subscription: z.preprocess(
+      (val) => (isUseSubscriptionTruthy(val) ? true : val),
+      z.literal(true)
+    ),
     subscription_id: z.string().uuid('معرّف الاشتراك غير صحيح'),
     patient_member_name: z
       .string()
