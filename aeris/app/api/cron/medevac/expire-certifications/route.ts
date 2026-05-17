@@ -68,6 +68,19 @@ interface CertRow extends CertExpiryRow {
   aircraft_id: string;
 }
 
+// Round 1 PR #78 P1 #2 fix — `.eq()` chains directly to
+// `.is()` (for the warning-cascade column-null check) OR to
+// `.select()` (for the enforcement-flip + renewal-reset
+// identity-only updates). The earlier shape inserted a
+// no-op `.is('aircraft_id', row.aircraft_id)` segment to
+// keep the chain uniform — but PostgREST `.is()` is for
+// NULL / boolean checks, NOT UUID equality, so the
+// resulting filter was invalid and the UPDATE silently
+// did nothing in some PostgREST versions (expired certs
+// would never flip; renewals would never reset). The
+// type split below mirrors the two real call sites:
+//   - flipChain / resetChain → `.eq().select(...)`
+//   - warningChain          → `.eq().is(col, null).select(...)`
 type LooseSelect = {
   from: (table: string) => {
     select: (cols: string) => {
@@ -81,6 +94,10 @@ type LooseSelect = {
         col: string,
         val: unknown
       ) => {
+        select: (cols: string) => Promise<{
+          data: unknown;
+          error: { message?: string } | null;
+        }>;
         is: (
           col: string,
           val: unknown
@@ -89,10 +106,7 @@ type LooseSelect = {
             data: unknown;
             error: { message?: string } | null;
           }>;
-        } & Promise<{
-          data: unknown;
-          error: { message?: string } | null;
-        }>;
+        };
       };
     };
   };
@@ -164,6 +178,16 @@ export async function POST(req: NextRequest): Promise<Response> {
     // 2. Enforcement flip — cert expired AND any flag still true.
     if (expired && hasAnyCapability(row)) {
       try {
+        // Round 1 PR #78 P1 #2 fix — dropped the bogus
+        // `.is('aircraft_id', row.aircraft_id)` identity guard
+        // (PostgREST `.is()` is for NULL/boolean checks, not
+        // UUID equality — it generated an invalid filter and
+        // the UPDATE silently no-op'd in some PostgREST
+        // versions, leaving expired aircraft eligible for
+        // dispatch). The primary-key `.eq('aircraft_id', ...)`
+        // is the only filter needed; `.select('aircraft_id')`
+        // returns the affected row so we can verify the flip
+        // actually landed via updatedCount > 0.
         const flipResult = await admin
           .from('aircraft_medical_certifications')
           .update({
@@ -174,12 +198,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             updated_at: nowIso,
           })
           .eq('aircraft_id', row.aircraft_id)
-          .is('aircraft_id', row.aircraft_id) // identity guard
           .select('aircraft_id');
-        // Note: the `.is('aircraft_id', row.aircraft_id)` segment is
-        // a no-op identity filter to keep the chain shape consistent
-        // with the loose-cast LooseSelect type. PostgREST evaluates
-        // it (col IS value), which always matches for non-NULL UUIDs.
+        const flipCount = Array.isArray(
+          (flipResult as { data?: unknown }).data
+        )
+          ? ((flipResult as { data: unknown[] }).data.length)
+          : 0;
         if (
           flipResult &&
           typeof flipResult === 'object' &&
@@ -189,6 +213,15 @@ export async function POST(req: NextRequest): Promise<Response> {
           console.error(
             '[medevac.cron.expire-certs] flip failed',
             flipResult.error
+          );
+          errors += 1;
+        } else if (flipCount === 0) {
+          // The PK didn't match — row deleted between read +
+          // write (rare; defensive log so a regression here
+          // surfaces).
+          console.error(
+            '[medevac.cron.expire-certs] flip affected 0 rows',
+            { aircraft_id: row.aircraft_id }
           );
           errors += 1;
         } else {
@@ -216,6 +249,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     // mid-warning-window renewal doesn't spam the cascade.
     if (shouldResetWarnings(row, nowMs)) {
       try {
+        // Round 1 PR #78 P1 #2 fix — same `.is()` drop as the
+        // enforcement flip above. PK `.eq()` is the only
+        // filter needed; `.select()` returns the affected row
+        // so we can verify the reset landed.
         const resetResult = await admin
           .from('aircraft_medical_certifications')
           .update({
@@ -226,8 +263,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             updated_at: nowIso,
           })
           .eq('aircraft_id', row.aircraft_id)
-          .is('aircraft_id', row.aircraft_id)
           .select('aircraft_id');
+        const resetCount = Array.isArray(
+          (resetResult as { data?: unknown }).data
+        )
+          ? ((resetResult as { data: unknown[] }).data.length)
+          : 0;
         if (
           resetResult &&
           typeof resetResult === 'object' &&
@@ -237,6 +278,12 @@ export async function POST(req: NextRequest): Promise<Response> {
           console.error(
             '[medevac.cron.expire-certs] reset failed',
             resetResult.error
+          );
+          errors += 1;
+        } else if (resetCount === 0) {
+          console.error(
+            '[medevac.cron.expire-certs] reset affected 0 rows',
+            { aircraft_id: row.aircraft_id }
           );
           errors += 1;
         } else {

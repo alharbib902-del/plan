@@ -180,6 +180,38 @@ export async function POST(req: NextRequest): Promise<Response> {
         summary.whatsapp_links = whatsappLinks;
       }
 
+      // Round 1 PR #78 P1 #1 fix — if the classifier picked
+      // operators but EVERY notify failed (Resend
+      // misconfigured / no operator emails / all sends
+      // errored), treat the row as retryable so the 5-min
+      // lease expires + the next cron tick re-tries. The
+      // previous behavior marked the outbox row processed and
+      // never stamped dispatched_at, which silently dropped
+      // the request out of the sla-escalation cron's scan
+      // window (it filters on dispatched_at IS NOT NULL) →
+      // pending/offers_received with no retry AND no
+      // founder escalation, even for critical severity.
+      //
+      // Guarded by `outcome.dispatched.length > 0` so a
+      // legitimate "no eligible operators" classification
+      // (every candidate was skipped via no_capability /
+      // recently_dispatched / lower_score) still marks
+      // processed — that's a different failure mode the
+      // founder can see via the canary card + manual
+      // redispatch once new operators sign up. The case
+      // we're guarding here is "classifier found candidates
+      // but the notify pipeline collapsed."
+      if (
+        outcome.dispatched.length > 0 &&
+        summary.dispatched_operator_ids.length === 0
+      ) {
+        summary.error = 'retryable_failure';
+        summary.retry_reason = 'all_notifications_failed';
+        summaries.push({ id: row.id, summary });
+        skipped_retry += 1;
+        continue;
+      }
+
       // Stamp medevac_requests.dispatched_at on FIRST successful
       // dispatch (gates the sla-escalation cron's measurement
       // window). Atomic conditional UPDATE on dispatched_at IS
