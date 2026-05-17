@@ -94,6 +94,28 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </Link>
                 </>
               ) : null}
+              {/* Round 1 PR #76 P2 #3 fix — gated MedEvac nav links
+                  matching the cargo pattern. Without these the
+                  founder has to know hidden URLs to reach the
+                  /admin/medevac queue or the cert matrix. Same
+                  fail-closed `=== 'true'` check as the pages
+                  themselves so links never appear with the flag off. */}
+              {process.env.ENABLE_MEDEVAC === 'true' ? (
+                <>
+                  <Link
+                    href="/admin/medevac"
+                    className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                  >
+                    الإخلاء الطبي
+                  </Link>
+                  <Link
+                    href="/admin/medevac/medical-certifications"
+                    className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+                  >
+                    شهادات الإخلاء الطبي
+                  </Link>
+                </>
+              ) : null}
             </nav>
           </div>
 

@@ -875,11 +875,32 @@ GRANT EXECUTE ON FUNCTION create_medevac_request_guest(JSONB, INET) TO service_r
 -- ============================================================
 -- §4.2 — create_medevac_request_authenticated RPC (NEW)
 --
--- Authed client path. Allows all severities. The J5 covered
--- branch (use_subscription=true) is routed through
--- consume_aeris_shield_event from the Server Action layer,
--- NOT from inside this RPC — keeps the two RPC contracts
--- distinct and the audit trail clean.
+-- Authed client path. Allows all severities. ALWAYS inserts an
+-- out-of-pocket `status='pending'` request — the J5 Shield
+-- covered branch is NOT handled inside this RPC.
+--
+-- Round 1 PR #76 P1 #1 fix — the merged spec (PR #75) §4.2
+-- said this RPC "branches to consume_aeris_shield_event when
+-- use_subscription=true". That branching is now relocated to
+-- the PR 2 `submitMedevacRequestAuthed` Server Action wrapper
+-- which inspects `payload.use_subscription` and dispatches to
+-- §4.7 directly. Two reasons:
+--   (a) keeps each RPC single-purpose so the SECURITY DEFINER
+--       contract surface stays narrow + auditable;
+--   (b) §4.7 takes 5 distinct params (p_subscription_id,
+--       p_client_id, p_patient_member_name,
+--       p_patient_member_dob, p_payload) — resolving those
+--       inside this RPC would duplicate the Server Action's
+--       lookup of the active subscription + patient member
+--       record and double-buy the failure modes.
+--
+-- This RPC therefore returns the structured error
+-- `use_subscription_must_route_to_shield_rpc` if a caller
+-- passes `use_subscription: true` in the payload — fail loud
+-- rather than silently consuming a covered event slot via the
+-- wrong path. The Server Action layer enforces the same gate
+-- in TS before this RPC is even reached; the RPC-level guard
+-- is defense-in-depth.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION create_medevac_request_authenticated(
@@ -901,6 +922,22 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM clients WHERE id = p_client_id) THEN
     RETURN json_build_object('ok', false, 'error', 'client_not_found');
+  END IF;
+
+  -- Round 1 PR #76 P1 #1 fix — explicit use_subscription gate
+  -- (see header comment for the rationale). The Server Action
+  -- layer (PR 2) is expected to dispatch covered-event flows
+  -- to §4.7 consume_aeris_shield_event directly, NOT to this
+  -- RPC. Fail loud rather than silently inserting an
+  -- out-of-pocket row that would skip used_events decrement +
+  -- skip the covered booking insert.
+  IF (p_payload->>'use_subscription') IS NOT NULL
+     AND lower(BTRIM(p_payload->>'use_subscription')) IN ('true', '1', 't', 'yes')
+  THEN
+    RETURN json_build_object(
+      'ok', false,
+      'error', 'use_subscription_must_route_to_shield_rpc'
+    );
   END IF;
 
   -- Severity + service_level text allowlist
@@ -1062,11 +1099,28 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'operator_not_approved');
   END IF;
 
-  -- Resolve request
-  IF NULLIF(p_payload->>'medevac_request_id', '') IS NULL THEN
+  -- Resolve request — Round 1 PR #76 P1 #2 fix: regex-guard
+  -- the UUID shape BEFORE casting, then nested
+  -- BEGIN/EXCEPTION catches `invalid_text_representation`
+  -- (SQLSTATE 22P02) for any malformed UUID that slipped past
+  -- the regex (defense-in-depth). Without this guard a
+  -- payload like {"medevac_request_id": "not-a-uuid"} or
+  -- {"medevac_request_id": "   "} raises a raw Postgres error
+  -- to the client instead of `medevac_request_id_invalid`.
+  IF NULLIF(BTRIM(p_payload->>'medevac_request_id'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'medevac_request_id_required');
   END IF;
-  v_request_id := (p_payload->>'medevac_request_id')::UUID;
+  IF BTRIM(p_payload->>'medevac_request_id') !~*
+     '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'medevac_request_id_invalid');
+  END IF;
+  BEGIN
+    v_request_id := BTRIM(p_payload->>'medevac_request_id')::UUID;
+  EXCEPTION
+    WHEN invalid_text_representation THEN
+      RETURN json_build_object('ok', false, 'error', 'medevac_request_id_invalid');
+  END;
   SELECT * INTO v_request FROM medevac_requests WHERE id = v_request_id;
   IF NOT FOUND THEN
     RETURN json_build_object('ok', false, 'error', 'medevac_request_not_found');
@@ -1078,11 +1132,22 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'medevac_request_expired');
   END IF;
 
-  -- Resolve aircraft + ownership check
-  IF NULLIF(p_payload->>'aircraft_id', '') IS NULL THEN
+  -- Resolve aircraft — same UUID-safe parsing pattern as
+  -- medevac_request_id above (Round 1 PR #76 P1 #2 fix).
+  IF NULLIF(BTRIM(p_payload->>'aircraft_id'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'aircraft_id_required');
   END IF;
-  v_aircraft_id := (p_payload->>'aircraft_id')::UUID;
+  IF BTRIM(p_payload->>'aircraft_id') !~*
+     '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'aircraft_id_invalid');
+  END IF;
+  BEGIN
+    v_aircraft_id := BTRIM(p_payload->>'aircraft_id')::UUID;
+  EXCEPTION
+    WHEN invalid_text_representation THEN
+      RETURN json_build_object('ok', false, 'error', 'aircraft_id_invalid');
+  END;
   SELECT * INTO v_aircraft FROM aircraft WHERE id = v_aircraft_id;
   IF NOT FOUND THEN
     RETURN json_build_object('ok', false, 'error', 'aircraft_not_found');
@@ -1114,38 +1179,81 @@ BEGIN
     RETURN json_build_object('ok', false, 'error', 'aircraft_capability_missing');
   END IF;
 
-  -- Pricing guards
-  IF NULLIF(p_payload->>'base_price_sar', '') IS NULL THEN
+  -- Pricing guards — Round 1 PR #76 P1 #2 fix: each cast is
+  -- wrapped in a nested BEGIN/EXCEPTION block catching
+  -- `invalid_text_representation` (22P02) and
+  -- `numeric_value_out_of_range` (22003). Without the wrappers
+  -- a payload like {"base_price_sar": "abc"} or
+  -- {"base_price_sar": "1e500"} raises a raw Postgres error
+  -- to the client instead of a structured `*_invalid` code.
+  IF NULLIF(BTRIM(p_payload->>'base_price_sar'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'base_price_required');
   END IF;
-  v_base_price := (p_payload->>'base_price_sar')::DECIMAL;
+  BEGIN
+    v_base_price := BTRIM(p_payload->>'base_price_sar')::DECIMAL;
+  EXCEPTION
+    WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+      RETURN json_build_object('ok', false, 'error', 'base_price_invalid');
+  END;
   IF v_base_price <= 0 THEN
     RETURN json_build_object('ok', false, 'error', 'base_price_invalid');
   END IF;
-  v_medical_team_price := COALESCE(
-    NULLIF(p_payload->>'medical_team_price_sar', '')::DECIMAL,
-    0
-  );
+
+  IF NULLIF(BTRIM(p_payload->>'medical_team_price_sar'), '') IS NULL THEN
+    v_medical_team_price := 0;
+  ELSE
+    BEGIN
+      v_medical_team_price := BTRIM(p_payload->>'medical_team_price_sar')::DECIMAL;
+    EXCEPTION
+      WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN json_build_object('ok', false, 'error', 'medical_team_price_invalid');
+    END;
+  END IF;
   IF v_medical_team_price < 0 THEN
     RETURN json_build_object('ok', false, 'error', 'medical_team_price_invalid');
   END IF;
-  v_insurance_coord_price := COALESCE(
-    NULLIF(p_payload->>'insurance_coordination_price_sar', '')::DECIMAL,
-    0
-  );
+
+  IF NULLIF(BTRIM(p_payload->>'insurance_coordination_price_sar'), '') IS NULL THEN
+    v_insurance_coord_price := 0;
+  ELSE
+    BEGIN
+      v_insurance_coord_price :=
+        BTRIM(p_payload->>'insurance_coordination_price_sar')::DECIMAL;
+    EXCEPTION
+      WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN json_build_object('ok', false, 'error', 'insurance_coordination_price_invalid');
+    END;
+  END IF;
   IF v_insurance_coord_price < 0 THEN
     RETURN json_build_object('ok', false, 'error', 'insurance_coordination_price_invalid');
   END IF;
 
-  -- Timestamp guards
-  IF NULLIF(p_payload->>'proposed_pickup_at', '') IS NULL THEN
+  -- Timestamp guards — Round 1 PR #76 P1 #2 fix: nested
+  -- BEGIN/EXCEPTION catches `invalid_datetime_format` (22007)
+  -- and `datetime_field_overflow` (22008) so malformed inputs
+  -- (e.g. "2026-13-01T...", "next-week", "") return the
+  -- structured `*_invalid` codes instead of raw Postgres
+  -- errors. Same exception classes that the §3.11
+  -- safe_parse_date helper handles for the covered_members
+  -- DOB filter.
+  IF NULLIF(BTRIM(p_payload->>'proposed_pickup_at'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'proposed_pickup_at_required');
   END IF;
-  IF NULLIF(p_payload->>'proposed_arrival_at', '') IS NULL THEN
+  IF NULLIF(BTRIM(p_payload->>'proposed_arrival_at'), '') IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'proposed_arrival_at_required');
   END IF;
-  v_proposed_pickup := (p_payload->>'proposed_pickup_at')::TIMESTAMPTZ;
-  v_proposed_arrival := (p_payload->>'proposed_arrival_at')::TIMESTAMPTZ;
+  BEGIN
+    v_proposed_pickup := BTRIM(p_payload->>'proposed_pickup_at')::TIMESTAMPTZ;
+  EXCEPTION
+    WHEN invalid_datetime_format OR datetime_field_overflow THEN
+      RETURN json_build_object('ok', false, 'error', 'proposed_pickup_at_invalid');
+  END;
+  BEGIN
+    v_proposed_arrival := BTRIM(p_payload->>'proposed_arrival_at')::TIMESTAMPTZ;
+  EXCEPTION
+    WHEN invalid_datetime_format OR datetime_field_overflow THEN
+      RETURN json_build_object('ok', false, 'error', 'proposed_arrival_at_invalid');
+  END;
   IF v_proposed_pickup <= NOW() THEN
     RETURN json_build_object('ok', false, 'error', 'proposed_pickup_must_be_future');
   END IF;
