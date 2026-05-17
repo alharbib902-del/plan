@@ -6,16 +6,9 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { recordMedevacEmailAlertStatus } from './email-alert-status';
 
 /**
- * Phase 12 PR 3 §6 — medical-certification email senders.
- *
- * Round 2 PR #78 P2 #3 fix — D11 explicitly contracts the
- * warning cascade emails (30/14/7/1 day) + the final
- * `medical_cert_expired_now` email. The first PR 3 cut wrote
- * audit rows only ("emails out of scope") which would have
- * left production with silently-expiring certs visible only
- * via the canary card. This module ships the missing senders
- * so the cron route fires them inline alongside the
- * warning-flag stamp + the supports_* flip.
+ * Phase 12 PR 3 §6 — medical-certification email senders
+ * implementing the D11 contract (4 warning thresholds +
+ * final cert-expired notification).
  *
  * Two senders:
  *   - sendCertWarningEmail (operator + founder CC) — warning

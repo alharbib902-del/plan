@@ -54,9 +54,7 @@ import {
  *      the flags + the cron would re-send every threshold
  *      on the next tick.
  *
- * Email pipeline (Round 2 PR #78 P2 #3 fix; Round 4 PR #78
- * P2 #1 fix rewrote this paragraph to remove a stale
- * placeholder quote that misled an automated scan):
+ * Email pipeline:
  *   - cert warning emails (4 thresholds) AND the final
  *     cert-expired email are sent INLINE by this cron route
  *     via `lib/medevac/cert-notifications.ts`
