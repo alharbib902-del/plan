@@ -645,12 +645,15 @@ export type BookingRow = {
   // Source-offer linkage (no FK; one-of-two target tables).
   source_offer_table: SourceOfferTable | null;
   source_offer_id: string | null;
-  // Phase 10 PR 1 §3.4 + Phase 11 PR 1 §3.4.1: discriminator
-  // for unified /me/bookings. NOT NULL + DEFAULT 'charter';
-  // populated explicitly by Phase 10 §4.3/§4.4 RPCs ('empty_leg')
-  // + Phase 11 §4.4 accept_cargo_offer ('cargo'), falls through
-  // to DEFAULT for accept_offer (Phase 9 charter path).
-  source_discriminator: 'charter' | 'empty_leg' | 'cargo';
+  // Phase 10 PR 1 §3.4 + Phase 11 PR 1 §3.4.1 + Phase 12 PR 1
+  // §3.4: discriminator for unified /me/bookings. NOT NULL +
+  // DEFAULT 'charter'; populated explicitly by Phase 10
+  // §4.3/§4.4 RPCs ('empty_leg'), Phase 11 §4.4 accept_cargo_offer
+  // ('cargo'), Phase 12 §4.4 accept_medevac_offer + §4.7
+  // consume_aeris_shield_event ('medevac'); falls through to
+  // DEFAULT for accept_offer (Phase 9 charter path).
+  // Round 1 PR #77 P2 #2 fix added 'medevac' to the TS union.
+  source_discriminator: 'charter' | 'empty_leg' | 'cargo' | 'medevac';
   // Customer checkout-prep token. Both NULL by default;
   // founder mints + writes both via the admin "Issue
   // checkout link" action. Paired CHECK enforces both-or-

@@ -670,10 +670,404 @@ GRANT EXECUTE ON FUNCTION admin_activate_subscription(UUID)
 
 
 -- =============================================================
+-- §4.7 hotfix — consume_aeris_shield_event booking shape
+--
+-- Round 1 PR #77 P1 #1 fix — PR 1's consume_aeris_shield_event
+-- (migration 20260520000040) wrote into bookings columns that
+-- DO NOT EXIST on the Phase 6/11 bookings table:
+--   - `total_price_sar` (real column: `total_amount`)
+--   - `status` (real column: `flight_status`)
+--   - `notes` (no equivalent — dropped; Shield reference goes
+--             through medevac_requests.subscription_id instead)
+--
+-- The first successful Shield consume would have failed at the
+-- booking insert with `column "total_price_sar" of relation
+-- "bookings" does not exist`, after the request had already
+-- been inserted and used_events incremented. The statement-
+-- level transaction would roll the increment back, but the
+-- caller would see a generic server_error with no diagnostic.
+--
+-- This CREATE OR REPLACE block re-defines the function using
+-- the same booking shape as §4.4 accept_medevac_offer above
+-- (Phase 6/11 shape: base_amount + addons_amount + vat_amount
+-- + total_amount + payment_status + flight_status +
+-- departure_scheduled). All other steps (1-8 + 10) are
+-- identical to PR 1; only step 9 booking-insert column list
+-- + VALUES changes.
+-- =============================================================
+
+CREATE OR REPLACE FUNCTION consume_aeris_shield_event(
+  p_subscription_id     UUID,
+  p_client_id           UUID,
+  p_patient_member_name TEXT,
+  p_patient_member_dob  DATE,
+  p_payload             JSONB
+) RETURNS JSON
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_subscription medevac_subscriptions%ROWTYPE;
+  v_config aeris_shield_config%ROWTYPE;
+  v_operator operators%ROWTYPE;
+  v_aircraft aircraft%ROWTYPE;
+  v_cert_aircraft_id UUID;
+  v_normalised_name TEXT;
+  v_canonical_patient_name TEXT;
+  v_patient_age INT;
+  v_severity medevac_severity;
+  v_service_level medevac_service_level;
+  v_non_repat_allowed TEXT[];
+  v_entitled BOOLEAN;
+  v_request_id UUID;
+  v_request_number TEXT;
+  v_booking_id UUID;
+  v_estimated_value DECIMAL(14, 2);
+BEGIN
+  IF p_subscription_id IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'subscription_id_required');
+  END IF;
+  IF p_client_id IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'client_id_required');
+  END IF;
+  IF NULLIF(BTRIM(p_patient_member_name), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'patient_member_name_required');
+  END IF;
+
+  IF p_patient_member_dob IS NULL
+     OR p_patient_member_dob > CURRENT_DATE THEN
+    RETURN json_build_object('ok', false, 'error', 'patient_dob_invalid');
+  END IF;
+
+  IF p_payload->>'condition_severity' IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'condition_severity_required');
+  END IF;
+  IF (p_payload->>'condition_severity') NOT IN ('stable', 'moderate', 'critical') THEN
+    RETURN json_build_object('ok', false, 'error', 'condition_severity_invalid');
+  END IF;
+  v_severity := (p_payload->>'condition_severity')::medevac_severity;
+
+  IF p_payload->>'service_level' IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'service_level_required');
+  END IF;
+  IF (p_payload->>'service_level') NOT IN ('BMT', 'ALS', 'CCT', 'repatriation') THEN
+    RETURN json_build_object('ok', false, 'error', 'service_level_invalid');
+  END IF;
+  v_service_level := (p_payload->>'service_level')::medevac_service_level;
+
+  IF NULLIF(BTRIM(p_payload->>'contact_name'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'contact_name_required');
+  END IF;
+  IF NULLIF(BTRIM(p_payload->>'contact_phone'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'contact_phone_required');
+  END IF;
+  IF NULLIF(BTRIM(p_payload->>'from_location_freeform'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'from_location_required');
+  END IF;
+  IF NULLIF(BTRIM(p_payload->>'to_hospital_name'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'to_hospital_required');
+  END IF;
+  IF NULLIF(BTRIM(p_payload->>'estimated_value_sar'), '') IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'estimated_value_required');
+  END IF;
+  BEGIN
+    v_estimated_value :=
+      BTRIM(p_payload->>'estimated_value_sar')::DECIMAL(14, 2);
+  EXCEPTION
+    WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+      RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
+  END;
+  IF v_estimated_value <= 0 THEN
+    RETURN json_build_object('ok', false, 'error', 'estimated_value_invalid');
+  END IF;
+
+  -- Step 1 — Lock the subscription FOR UPDATE.
+  SELECT * INTO v_subscription
+    FROM medevac_subscriptions
+   WHERE id = p_subscription_id
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN json_build_object('ok', false, 'error', 'subscription_not_found');
+  END IF;
+
+  -- Step 2 — Verify subscription ownership.
+  IF v_subscription.client_id <> p_client_id THEN
+    RETURN json_build_object('ok', false, 'error', 'subscription_not_owned');
+  END IF;
+
+  -- Step 3 — Verify subscription state.
+  IF v_subscription.status <> 'active'
+     OR v_subscription.end_date IS NULL
+     OR v_subscription.end_date <= CURRENT_DATE
+     OR NOT (
+       v_subscription.covered_events_at_signup = -1
+       OR v_subscription.used_events < v_subscription.covered_events_at_signup
+     )
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'subscription_not_consumable');
+  END IF;
+
+  -- Step 4 — Patient covered-member eligibility.
+  v_normalised_name := BTRIM(lower(p_patient_member_name));
+  SELECT BTRIM(m->>'name')
+    INTO v_canonical_patient_name
+    FROM jsonb_array_elements(v_subscription.covered_members) AS m
+   WHERE lower(BTRIM(m->>'name')) = v_normalised_name
+     AND safe_parse_date(m->>'dob') = p_patient_member_dob
+   LIMIT 1;
+  IF v_canonical_patient_name IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'patient_not_covered');
+  END IF;
+
+  -- Step 5 — Service-level eligibility (decomposed matrix).
+  v_non_repat_allowed := CASE v_subscription.service_level_at_signup
+    WHEN 'BMT'          THEN ARRAY['BMT']
+    WHEN 'ALS'          THEN ARRAY['BMT', 'ALS']
+    WHEN 'CCT'          THEN ARRAY['BMT', 'ALS', 'CCT']
+    WHEN 'repatriation' THEN ARRAY['BMT', 'ALS', 'CCT']
+    ELSE ARRAY[]::TEXT[]
+  END;
+  v_entitled := (
+    (v_service_level::TEXT <> 'repatriation'
+     AND v_service_level::TEXT = ANY(v_non_repat_allowed))
+    OR
+    (v_service_level::TEXT = 'repatriation'
+     AND v_subscription.includes_repatriation_at_signup = true)
+  );
+  IF NOT v_entitled THEN
+    RETURN json_build_object('ok', false, 'error', 'service_level_not_entitled');
+  END IF;
+
+  -- Step 6 — Load + verify aeris_shield_config.default_operator_id.
+  SELECT * INTO v_config FROM aeris_shield_config WHERE id = 1;
+  IF NOT FOUND OR v_config.default_operator_id IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'shield_default_operator_missing');
+  END IF;
+  SELECT * INTO v_operator FROM operators WHERE id = v_config.default_operator_id;
+  IF NOT FOUND OR v_operator.signup_status <> 'approved' THEN
+    RETURN json_build_object('ok', false, 'error', 'shield_default_operator_not_approved');
+  END IF;
+  SELECT amc.aircraft_id INTO v_cert_aircraft_id
+    FROM aircraft_medical_certifications amc
+    JOIN aircraft a ON a.id = amc.aircraft_id
+   WHERE a.operator_id = v_operator.id
+     AND amc.certification_expires_at > NOW()
+     AND CASE v_service_level
+       WHEN 'BMT'          THEN amc.supports_bmt
+       WHEN 'ALS'          THEN amc.supports_als
+       WHEN 'CCT'          THEN amc.supports_cct
+       WHEN 'repatriation' THEN amc.supports_repatriation
+       ELSE false
+     END
+   ORDER BY amc.updated_at DESC
+   LIMIT 1;
+  IF v_cert_aircraft_id IS NULL THEN
+    RETURN json_build_object('ok', false, 'error', 'shield_default_operator_not_certified');
+  END IF;
+  IF NULLIF(BTRIM(v_operator.contact_email), '') IS NULL
+     OR NULLIF(BTRIM(v_operator.contact_phone), '') IS NULL
+  THEN
+    RETURN json_build_object('ok', false, 'error', 'shield_default_operator_missing_contact');
+  END IF;
+  SELECT * INTO v_aircraft FROM aircraft WHERE id = v_cert_aircraft_id;
+
+  v_patient_age := EXTRACT(YEAR FROM AGE(CURRENT_DATE, p_patient_member_dob))::INT;
+
+  -- Step 7 — Increment used_events.
+  UPDATE medevac_subscriptions
+     SET used_events = used_events + 1,
+         updated_at = NOW()
+   WHERE id = p_subscription_id;
+
+  -- Step 8 — Insert medevac_requests row (covered shape).
+  INSERT INTO medevac_requests (
+    client_id,
+    patient_name_snapshot,
+    patient_age_snapshot,
+    contact_name_snapshot,
+    contact_phone_snapshot,
+    contact_email_snapshot,
+    condition_severity,
+    service_level,
+    from_location_freeform,
+    from_iata,
+    to_hospital_name,
+    to_hospital_contact_phone,
+    to_hospital_freeform_address,
+    to_iata,
+    insurance_provider_snapshot,
+    insurance_claim_ref,
+    estimated_value_sar,
+    subscription_id,
+    is_covered,
+    status
+  ) VALUES (
+    p_client_id,
+    v_canonical_patient_name,
+    v_patient_age,
+    BTRIM(p_payload->>'contact_name'),
+    BTRIM(p_payload->>'contact_phone'),
+    NULLIF(BTRIM(p_payload->>'contact_email'), ''),
+    v_severity,
+    v_service_level,
+    BTRIM(p_payload->>'from_location_freeform'),
+    NULLIF(BTRIM(p_payload->>'from_iata'), ''),
+    BTRIM(p_payload->>'to_hospital_name'),
+    NULLIF(BTRIM(p_payload->>'to_hospital_contact_phone'), ''),
+    NULLIF(BTRIM(p_payload->>'to_hospital_freeform_address'), ''),
+    NULLIF(BTRIM(p_payload->>'to_iata'), ''),
+    NULLIF(BTRIM(p_payload->>'insurance_provider'), ''),
+    NULLIF(BTRIM(p_payload->>'insurance_claim_ref'), ''),
+    v_estimated_value,
+    p_subscription_id,
+    true,
+    'covered'
+  )
+  RETURNING id, medevac_request_number INTO v_request_id, v_request_number;
+
+  -- Step 9 — Insert bookings row (covered variant).
+  --
+  -- Round 1 PR #77 P1 #1 fix — booking column list rewritten
+  -- to the actual Phase 6/11 shape. D6 covered variant:
+  -- source_offer_table=NULL + source_offer_id=NULL +
+  -- source_discriminator='medevac' (enforced by
+  -- bookings_source_offer_pair_check); the Shield contract
+  -- stays linked through medevac_requests.subscription_id
+  -- established in step 8.
+  INSERT INTO bookings (
+    offer_id,
+    trip_request_id,
+    route_origin_iata,
+    route_destination_iata,
+    route_origin_freeform_snapshot,
+    route_destination_freeform_snapshot,
+    passengers_count_snapshot,
+    return_scheduled,
+    source_offer_table,
+    source_offer_id,
+    source_discriminator,
+    client_id,
+    customer_name_snapshot,
+    customer_phone_snapshot,
+    operator_id,
+    operator_name_snapshot,
+    operator_phone_snapshot,
+    operator_email_snapshot,
+    aircraft_id,
+    aircraft_snapshot,
+    base_amount,
+    addons_amount,
+    vat_amount,
+    total_amount,
+    commission_amount,
+    operator_payout,
+    payment_status,
+    flight_status,
+    departure_scheduled,
+    checkout_token_hash,
+    checkout_token_expires_at
+  ) VALUES (
+    NULL,                              -- offer_id (D6)
+    NULL,                              -- trip_request_id (D6)
+    NULLIF(BTRIM(p_payload->>'from_iata'), ''),
+    NULLIF(BTRIM(p_payload->>'to_iata'), ''),
+    BTRIM(p_payload->>'from_location_freeform'),
+    BTRIM(p_payload->>'to_hospital_name'),
+    NULL,                              -- passengers_count_snapshot
+    NULL,                              -- return_scheduled
+    NULL,                              -- source_offer_table (D6 covered)
+    NULL,                              -- source_offer_id (D6 covered)
+    'medevac',                         -- source_discriminator
+    p_client_id,
+    v_canonical_patient_name,
+    BTRIM(p_payload->>'contact_phone'),
+    v_operator.id,
+    LEFT(COALESCE(v_operator.company_name, ''), 200),
+    LEFT(COALESCE(v_operator.contact_phone, ''), 20),
+    LEFT(COALESCE(v_operator.contact_email, ''), 255),
+    v_cert_aircraft_id,
+    (
+      LEFT(
+        COALESCE(v_aircraft.manufacturer, '') || ' ' ||
+        COALESCE(v_aircraft.model, ''),
+        500
+      )
+    ),
+    v_estimated_value,                 -- base_amount
+    0,                                 -- addons_amount
+    NULL,                              -- vat_amount (Phase 14 wires ZATCA)
+    v_estimated_value,                 -- total_amount
+    NULL,                              -- commission_amount (Phase 14)
+    NULL,                              -- operator_payout (Phase 14)
+    'pending_offline'::booking_payment_status,
+    'confirmed'::booking_flight_status,
+    NULL,                              -- departure_scheduled (covered events
+                                       --  have no operator-quoted pickup;
+                                       --  Phase 14 wires this from medical
+                                       --  dispatcher confirmation)
+    NULL,
+    NULL
+  )
+  RETURNING id INTO v_booking_id;
+
+  -- Step 10 — Audit log entry (PII redacted per D12).
+  INSERT INTO audit_logs (
+    entity_type, entity_id, action, new_value, user_id
+  ) VALUES (
+    'medevac_request',
+    v_request_id,
+    'shield_event_consumed',
+    jsonb_build_object(
+      'mev_number', v_request_number,
+      'subscription_id', p_subscription_id,
+      'service_level', v_service_level,
+      'condition_severity', v_severity,
+      'operator_id', v_operator.id,
+      'aircraft_id', v_cert_aircraft_id,
+      'booking_id', v_booking_id,
+      'covered_events_remaining',
+        CASE
+          WHEN v_subscription.covered_events_at_signup = -1 THEN -1
+          ELSE v_subscription.covered_events_at_signup - (v_subscription.used_events + 1)
+        END
+    ),
+    NULL
+  );
+
+  RETURN json_build_object(
+    'ok', true,
+    'medevac_request_id', v_request_id,
+    'medevac_request_number', v_request_number,
+    'booking_id', v_booking_id,
+    'covered_events_remaining',
+      CASE
+        WHEN v_subscription.covered_events_at_signup = -1 THEN -1
+        ELSE v_subscription.covered_events_at_signup - (v_subscription.used_events + 1)
+      END,
+    'dispatched_operator_id', v_operator.id
+  );
+END;
+$$;
+
+-- GRANTs re-asserted (CREATE OR REPLACE preserves them but
+-- being explicit removes any doubt on replay).
+REVOKE ALL ON FUNCTION consume_aeris_shield_event(UUID, UUID, TEXT, DATE, JSONB)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION consume_aeris_shield_event(UUID, UUID, TEXT, DATE, JSONB)
+  TO service_role;
+
+
+-- =============================================================
 -- Migration summary
 -- =============================================================
 -- Phase 12 PR 2 adds:
 --   - 5 NEW SECURITY DEFINER RPCs (§4.4, §4.5 ×2, §4.6, §4.9)
+--   - 1 CREATE OR REPLACE of §4.7 consume_aeris_shield_event
+--     (Round 1 PR #77 P1 #1 hotfix — PR 1's booking-insert
+--     column list used non-existent columns total_price_sar /
+--     status / notes; rewritten here to the Phase 6/11 shape
+--     used by §4.4 accept_medevac_offer)
 --   - Each RPC: REVOKE PUBLIC, anon, authenticated; GRANT service_role
 --   - No table/ENUM/index changes (PR 1 already shipped all of them)
 --   - audit_logs writes: PII-redacted per D12 (no patient_name)
@@ -682,5 +1076,6 @@ GRANT EXECUTE ON FUNCTION admin_activate_subscription(UUID)
 --
 -- Spec Probe 35-36 (PR 2) verifies the offer → accept → booking
 -- chip flow; Probe 38 verifies the J5 covered path (which routes
--- via §4.7 consume_aeris_shield_event, NOT this PR's RPCs).
+-- via §4.7 consume_aeris_shield_event, NOW correctly inserting
+-- the booking row).
 -- =============================================================

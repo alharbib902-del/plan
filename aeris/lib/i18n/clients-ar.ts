@@ -367,10 +367,13 @@ export const clientsAr = {
 
   // Bookings page chips (Decision #10 unified /me/bookings).
   // Phase 11 PR 1 adds cargo (sky → emerald palette to keep
-  // the 3 sources visually distinct).
+  // the 3 sources visually distinct). Phase 12 PR 2 round 1
+  // PR #77 P2 #2 fix adds medevac (rose palette per spec
+  // Probe 36, the medical-urgent visual differentiation).
   bookingsSourceCharter: 'طيران خاص',
   bookingsSourceEmptyLeg: 'رحلة فارغة',
   bookingsSourceCargo: 'شحن',
+  bookingsSourceMedevac: 'إخلاء طبي',
   // Phase 10 PR 2 — new "المصدر" column header in
   // BookingsTable for the source_discriminator chip.
   meBookingsTableSource: 'المصدر',

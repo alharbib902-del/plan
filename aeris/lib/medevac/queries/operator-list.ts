@@ -143,7 +143,22 @@ export async function getOpenMedevacRequestForOperator(
     console.error('[medevac.operator.detail] read failed', error);
     return null;
   }
-  return (data as MedevacRequestRedactedRow | null) ?? null;
+  const row = (data as MedevacRequestRedactedRow | null) ?? null;
+  // Round 1 PR #77 P2 #3 fix — defense-in-depth status filter.
+  // The list page only surfaces pending/offers_received rows,
+  // but a direct URL like `/operator/medevac/<uuid>/offer` to
+  // an accepted/cancelled/expired request would otherwise
+  // render the offer form + reveal redacted route/severity
+  // metadata for closed work. Treat closed rows as not-found
+  // here so the page falls through to its standard 404 branch
+  // BEFORE the offer form renders. The §4.3 submit_medevac_offer
+  // RPC enforces the same `request_not_open` guard server-side
+  // as belt-and-suspenders.
+  if (!row) return null;
+  if (row.status !== 'pending' && row.status !== 'offers_received') {
+    return null;
+  }
+  return row;
 }
 
 export async function listMyOperatorMedevacOffers(
