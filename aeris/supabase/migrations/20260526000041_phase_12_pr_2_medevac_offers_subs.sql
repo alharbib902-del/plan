@@ -724,6 +724,16 @@ DECLARE
   v_request_number TEXT;
   v_booking_id UUID;
   v_estimated_value DECIMAL(14, 2);
+  -- Round 2 PR #77 P1 #1 fix — placeholder departure timestamp
+  -- so the booking insert satisfies bookings.departure_scheduled
+  -- NOT NULL. Computed as NOW() + the severity SLA interval
+  -- (critical=1h, moderate=4h, stable=24h per §3.6 lookup) —
+  -- gives the medical dispatcher an actionable expected
+  -- departure window that follows the same SLA budget the
+  -- operator-quote path would have committed to. PR 3
+  -- dispatch confirmation can update this when the actual
+  -- aircraft is scheduled.
+  v_sla_interval INTERVAL;
 BEGIN
   IF p_subscription_id IS NULL THEN
     RETURN json_build_object('ok', false, 'error', 'subscription_id_required');
@@ -874,6 +884,18 @@ BEGIN
 
   v_patient_age := EXTRACT(YEAR FROM AGE(CURRENT_DATE, p_patient_member_dob))::INT;
 
+  -- Round 2 PR #77 P1 #1 fix — resolve the SLA interval for
+  -- the placeholder departure timestamp written in step 9.
+  -- Falls back to 24 hours if the lookup row is missing (the
+  -- §3.6 seed always populates all 3 severity rows, so this
+  -- is belt-and-suspenders).
+  SELECT sla_interval INTO v_sla_interval
+    FROM medevac_severity_sla
+   WHERE severity = v_severity;
+  IF v_sla_interval IS NULL THEN
+    v_sla_interval := INTERVAL '24 hours';
+  END IF;
+
   -- Step 7 — Increment used_events.
   UPDATE medevac_subscriptions
      SET used_events = used_events + 1,
@@ -1002,10 +1024,13 @@ BEGIN
     NULL,                              -- operator_payout (Phase 14)
     'pending_offline'::booking_payment_status,
     'confirmed'::booking_flight_status,
-    NULL,                              -- departure_scheduled (covered events
-                                       --  have no operator-quoted pickup;
-                                       --  Phase 14 wires this from medical
-                                       --  dispatcher confirmation)
+    -- Round 2 PR #77 P1 #1 fix — departure_scheduled is
+    -- NOT NULL on bookings; covered events have no operator-
+    -- quoted pickup yet, so we stamp NOW() + the severity SLA
+    -- interval as the placeholder expected-departure window.
+    -- The medical dispatcher updates this when the actual
+    -- aircraft is scheduled (PR 3 dispatch confirmation).
+    NOW() + v_sla_interval,
     NULL,
     NULL
   )

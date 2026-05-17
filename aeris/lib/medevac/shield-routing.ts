@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { isoBirthDateSchema } from '@/lib/medevac/validators/medevac-subscription';
+
 /**
  * Phase 12 PR 2 — extracted helpers for the J5 Shield
  * routing decision inside `submitMedevacRequestAuthed`.
@@ -9,6 +11,15 @@ import { z } from 'zod';
  * module holds the truthy-discriminator + schema so the
  * branching logic is testable in isolation (no Next.js
  * runtime dependencies).
+ *
+ * Round 2 PR #77 P2 #3 fix — patient_member_dob reuses the
+ * `isoBirthDateSchema` from medevac-subscription so a
+ * shape-valid-but-overflowing date (e.g. "2026-02-31") is
+ * rejected at the Zod boundary. Previously a regex-only
+ * check let those pass through to the RPC, where Postgres
+ * cast the DATE argument BEFORE the function body could
+ * return `patient_dob_invalid` — surfacing a raw 22008
+ * `datetime_field_overflow` instead of the structured code.
  */
 
 /**
@@ -44,9 +55,13 @@ export const shieldRoutingSchema = z
       .trim()
       .min(1, 'اسم العضو المُغطَّى مطلوب')
       .max(200, 'اسم العضو لا يتعدى 200 حرف'),
-    patient_member_dob: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صحيح (YYYY-MM-DD)'),
+    // Round 2 PR #77 P2 #3 fix — reuses the strict DOB
+    // contract from medevac-subscription so semantically
+    // invalid dates (2026-02-31 / 2026-13-01 / future) are
+    // rejected at the Zod boundary, BEFORE Postgres argument
+    // binding for §4.7 consume_aeris_shield_event would
+    // raise a raw 22008.
+    patient_member_dob: isoBirthDateSchema,
   })
   .passthrough();
 

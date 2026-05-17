@@ -17,7 +17,17 @@ import { z } from 'zod';
  * enforces this via safe_parse_date (§3.11) at write time.
  */
 
-const isoDateSchema = z
+// Round 2 PR #77 P2 #3 fix — re-exported so the Shield
+// routing schema in lib/medevac/shield-routing.ts can reuse
+// the same strict DOB contract. The §4.7
+// `consume_aeris_shield_event(..., p_patient_member_dob DATE, ...)`
+// argument is cast by Postgres BEFORE the function body runs;
+// a shape-valid-but-overflowing date like "2026-02-31" would
+// fail at argument binding with `datetime_field_overflow`
+// (SQLSTATE 22008), bubbling a raw PG error instead of the
+// intended `patient_dob_invalid` structured response. The
+// Server Action must reject these BEFORE the .rpc() call.
+export const isoBirthDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صحيح (YYYY-MM-DD)')
   .refine(
@@ -39,6 +49,12 @@ const isoDateSchema = z
   .refine((s) => Date.parse(s) <= Date.now(), {
     message: 'تاريخ الميلاد لا يكون في المستقبل',
   });
+
+// Backwards-compatible alias for the existing local users
+// of `isoDateSchema` in this file (covered_member +
+// owner_dob). Kept private; new callers should import
+// `isoBirthDateSchema` directly.
+const isoDateSchema = isoBirthDateSchema;
 
 const coveredMemberSchema = z
   .object({

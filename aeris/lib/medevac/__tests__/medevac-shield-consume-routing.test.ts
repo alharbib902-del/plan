@@ -146,6 +146,45 @@ test('16. patient_member_dob malformed shape → fails', () => {
   assert.equal(r.success, false);
 });
 
+// Round 2 PR #77 P2 #3 fix — DOB tightened from regex-only
+// to the strict isoBirthDateSchema (matches medevac-subscription).
+// These cases would have passed the old regex check then
+// raised raw 22008 at the Postgres argument-binding step.
+test('17. patient_member_dob 2026-02-31 → fails (semantically invalid)', () => {
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    patient_member_dob: '2026-02-31',
+  });
+  assert.equal(r.success, false);
+});
+
+test('18. patient_member_dob 2026-13-01 → fails (invalid month)', () => {
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    patient_member_dob: '2026-13-01',
+  });
+  assert.equal(r.success, false);
+});
+
+test('19. patient_member_dob 2026-99-99 → fails', () => {
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    patient_member_dob: '2026-99-99',
+  });
+  assert.equal(r.success, false);
+});
+
+test('20. patient_member_dob in the future → fails', () => {
+  const future = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+    .toISOString()
+    .slice(0, 10);
+  const r = shieldRoutingSchema.safeParse({
+    ...happy,
+    patient_member_dob: future,
+  });
+  assert.equal(r.success, false);
+});
+
 // eslint-disable-next-line no-console
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

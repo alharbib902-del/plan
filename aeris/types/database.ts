@@ -574,11 +574,17 @@ export type AddonStatusValue =
 // CHECK to allow 'cargo_offers'; the local TS union must match
 // or PR 2/3 cargo booking code (writing accept_cargo_offer +
 // reading /me/bookings) will fight the type system.
+// Round 2 PR #77 P2 #2 fix — added 'medevac_offers' for Phase 12
+// PR 1 §3.4.2 which extends the same CHECK to allow
+// 'medevac_offers'. Phase 12 §4.4 accept_medevac_offer writes
+// source_offer_table='medevac_offers' on non-covered medevac
+// bookings (the J5 Shield covered variant uses NULL per D6).
 export type SourceOfferTable =
   | 'phase4'
   | 'phase5'
   | 'phase7_empty_leg'
-  | 'cargo_offers';
+  | 'cargo_offers'
+  | 'medevac_offers';
 
 export type BookingRow = {
   id: string;
