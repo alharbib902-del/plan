@@ -41,6 +41,9 @@
     "test:cargo-outbox-drain": "tsx lib/cargo/__tests__/outbox-drain.test.ts",
     "test:cargo-cron-auth": "tsx app/api/cron/cargo/__tests__/cron-auth.test.ts",
     "test:medevac-request-validators": "tsx lib/medevac/__tests__/medevac-request-validators.test.ts",
+    "test:medevac-offer-validators": "tsx lib/medevac/__tests__/medevac-offer-validators.test.ts",
+    "test:medevac-subscription-validators": "tsx lib/medevac/__tests__/medevac-subscription-validators.test.ts",
+    "test:medevac-shield-consume-routing": "tsx lib/medevac/__tests__/medevac-shield-consume-routing.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"
