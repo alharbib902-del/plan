@@ -7,7 +7,10 @@ import {
   type UpsertMedicalCertificationInput,
 } from '@/app/actions/medevac-admin';
 import { medevacAr } from '@/lib/i18n/medevac-ar';
-import { datetimeLocalToRiyadhIso } from '@/lib/utils/datetime-local';
+import {
+  datetimeLocalToRiyadhIso,
+  riyadhIsoToDatetimeLocal,
+} from '@/lib/utils/datetime-local';
 import type {
   AircraftMedicalCertificationRow,
   MedicalCertifyingAuthority,
@@ -262,13 +265,18 @@ function Toggle({
 }
 
 function toLocalIsoDate(iso: string): string {
+  // Round 4 PR #76 P2 #1 fix — use the shared Riyadh helper
+  // (lib/utils/datetime-local.ts::riyadhIsoToDatetimeLocal).
+  // The previous implementation read `d.getHours()` etc. in
+  // the BROWSER's local timezone, so an admin outside Riyadh
+  // who opened an existing cert and saved it without changing
+  // the expiry would shift the timestamp by their local
+  // offset on every save cycle. Reading the stored ISO and
+  // writing it back through datetimeLocalToRiyadhIso now form
+  // a closed round-trip per the
+  // lib/utils/__tests__/datetime-local.test.ts cases 7-8.
   try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-      d.getHours()
-    )}:${pad(d.getMinutes())}`;
+    return riyadhIsoToDatetimeLocal(iso);
   } catch {
     return '';
   }

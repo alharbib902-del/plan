@@ -25,7 +25,10 @@
 
 import { strict as assert } from 'node:assert';
 
-import { datetimeLocalToRiyadhIso } from '../datetime-local';
+import {
+  datetimeLocalToRiyadhIso,
+  riyadhIsoToDatetimeLocal,
+} from '../datetime-local';
 
 let passed = 0;
 let failed = 0;
@@ -89,6 +92,61 @@ test('6. empty string returns well-formed output (no crash)', () => {
   const result = datetimeLocalToRiyadhIso('');
   assert.equal(typeof result, 'string');
   assert.equal(result.endsWith('+03:00'), true);
+});
+
+// ============================================================
+// riyadhIsoToDatetimeLocal — reverse helper (Round 4 PR #76 P2 #1)
+// ============================================================
+
+test('7. round-trip: Riyadh 14:00 → ISO → Riyadh 14:00', () => {
+  const original = '2026-08-15T14:00';
+  const iso = datetimeLocalToRiyadhIso(original);
+  const roundTripped = riyadhIsoToDatetimeLocal(iso);
+  assert.equal(roundTripped, original);
+});
+
+test('8. round-trip: Riyadh midnight → ISO → Riyadh midnight', () => {
+  const original = '2026-08-15T00:00';
+  const iso = datetimeLocalToRiyadhIso(original);
+  const roundTripped = riyadhIsoToDatetimeLocal(iso);
+  assert.equal(roundTripped, original);
+});
+
+test('9. ISO with Z (UTC) renders as Riyadh wall time', () => {
+  // 11:00 UTC = 14:00 Riyadh
+  assert.equal(
+    riyadhIsoToDatetimeLocal('2026-08-15T11:00:00Z'),
+    '2026-08-15T14:00'
+  );
+});
+
+test('10. ISO with +05:00 offset → Riyadh wall time', () => {
+  // 14:00 +05:00 = 09:00 UTC = 12:00 Riyadh
+  assert.equal(
+    riyadhIsoToDatetimeLocal('2026-08-15T14:00:00+05:00'),
+    '2026-08-15T12:00'
+  );
+});
+
+test('11. ISO crossing day boundary backwards', () => {
+  // 22:00 UTC on 2026-08-15 = 01:00 Riyadh on 2026-08-16
+  assert.equal(
+    riyadhIsoToDatetimeLocal('2026-08-15T22:00:00Z'),
+    '2026-08-16T01:00'
+  );
+});
+
+test('12. invalid input returns empty string', () => {
+  assert.equal(riyadhIsoToDatetimeLocal(''), '');
+  assert.equal(riyadhIsoToDatetimeLocal('not-a-date'), '');
+  assert.equal(
+    riyadhIsoToDatetimeLocal(null as unknown as string),
+    ''
+  );
+  assert.equal(
+    riyadhIsoToDatetimeLocal(undefined as unknown as string),
+    ''
+  );
 });
 
 // eslint-disable-next-line no-console

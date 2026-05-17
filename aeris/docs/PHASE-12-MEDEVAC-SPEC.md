@@ -1494,7 +1494,7 @@ because `consume_aeris_shield_event` (§4.7) and
 
 ### PR 1 — Backend + public form + admin intake (~2200 lines)
 
-**Migration** `20260525000040_phase_12_pr_1_medevac_intake.sql`:
+**Migration** `20260520000040_phase_12_pr_1_medevac_intake.sql`:
 
 | # | Object | Defined in §|
 |---|---|---|
