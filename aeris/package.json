@@ -40,6 +40,7 @@
     "test:cargo-distribution-scoring": "tsx lib/cargo/__tests__/distribution-scoring.test.ts",
     "test:cargo-outbox-drain": "tsx lib/cargo/__tests__/outbox-drain.test.ts",
     "test:cargo-cron-auth": "tsx app/api/cron/cargo/__tests__/cron-auth.test.ts",
+    "test:medevac-request-validators": "tsx lib/medevac/__tests__/medevac-request-validators.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

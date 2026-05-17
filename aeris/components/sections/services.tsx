@@ -46,7 +46,17 @@ const SERVICES: Service[] = [
       'مستويات خدمة BMT • ALS • CCT',
       'تنسيق مع المستشفيات والتأمين',
     ],
-    cta: { href: '/request', label: 'احجز إخلاء طبي' },
+    // Round 1 PR #76 P2 #4 fix — when ENABLE_MEDEVAC=true, route
+    // to the real /medevac intake (Phase 12 PR 1 §4.1
+    // create_medevac_request_guest); otherwise fall back to
+    // /request so the CTA is never broken if the medevac flag is
+    // off. Mirrors the cargo CTA pattern above + matches the
+    // gating discipline used by the /medevac page itself and the
+    // /admin/medevac pages.
+    cta:
+      process.env.ENABLE_MEDEVAC === 'true'
+        ? { href: '/medevac', label: 'احجز إخلاء طبي' }
+        : { href: '/request', label: 'احجز إخلاء طبي' },
   },
   {
     icon: Package,
