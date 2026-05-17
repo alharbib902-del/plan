@@ -5,6 +5,12 @@ import { revalidatePath } from 'next/cache';
 import { requireAdminSession } from '@/lib/admin/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isUuid } from '@/lib/utils/uuid';
+import {
+  acceptOfferSchema,
+  declineOfferSchema,
+  cancelRequestSchema,
+} from '@/lib/medevac/validators/medevac-actions';
+import { activateSubscriptionSchema } from '@/lib/medevac/validators/medevac-subscription';
 import type {
   AircraftMedicalCertificationRow,
   MedicalCertifyingAuthority,
@@ -175,4 +181,369 @@ export async function upsertMedicalCertification(
 
   revalidatePath('/admin/medevac/medical-certifications');
   return { ok: true, aircraft_id: input.aircraft_id };
+}
+
+// ============================================================
+// Phase 12 PR 2 additions — admin lifecycle + Shield activation
+// + shield-config upsert.
+//
+// adminAcceptMedevacOfferOnBehalf / Decline / Cancel: mirror the
+// Phase 11 cargo on-behalf pattern (admin path only legal on
+// guest requests — the RPC enforces `admin_cannot_*_authed`).
+//
+// adminActivateSubscription: flips pending_payment → active and
+// stamps start/end dates atomically via §4.9 RPC.
+//
+// adminUpsertShieldConfig: sets the singleton
+// aeris_shield_config.default_operator_id used by §4.7
+// consume_aeris_shield_event.
+// ============================================================
+
+// Helper — loose-typed RPC client shared by the on-behalf actions.
+type LooseRpcClient = {
+  rpc: (
+    name: string,
+    args?: Record<string, unknown>
+  ) => Promise<{
+    data: unknown;
+    error: { code?: string; message?: string } | null;
+  }>;
+};
+
+function fieldErrorsFromZod(
+  issues: { path: (string | number)[]; message: string }[]
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const issue of issues) {
+    const path = issue.path.join('.');
+    if (path) out[path] = issue.message;
+  }
+  return out;
+}
+
+// ------------------------------------------------------------
+// adminAcceptMedevacOfferOnBehalf → §4.4 (admin path)
+// ------------------------------------------------------------
+
+export type AdminAcceptMedevacOfferResult =
+  | {
+      ok: true;
+      booking_id: string;
+      offer_id: string;
+      medevac_request_id: string;
+      accepted_at: string;
+    }
+  | MedevacAdminActionFailure
+  | (MedevacAdminActionFailure & { field_errors: Record<string, string> });
+
+export async function adminAcceptMedevacOfferOnBehalf(input: {
+  offer_id: string;
+}): Promise<AdminAcceptMedevacOfferResult> {
+  requireAdminSession();
+  if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = acceptOfferSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    } as AdminAcceptMedevacOfferResult;
+  }
+
+  const rpc = createAdminClient() as unknown as LooseRpcClient;
+  const { data, error } = await rpc.rpc('accept_medevac_offer', {
+    p_offer_id: parsed.data.offer_id,
+    p_actor_client_id: null,
+    p_actor_admin_user_id: null,
+  });
+  if (error) {
+    console.error('[medevac-admin.acceptOnBehalf] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | {
+        ok: true;
+        booking_id: string;
+        offer_id: string;
+        medevac_request_id: string;
+        accepted_at: string;
+      }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath('/admin/medevac');
+  revalidatePath(`/admin/medevac/${result.medevac_request_id}`);
+
+  return {
+    ok: true,
+    booking_id: result.booking_id,
+    offer_id: result.offer_id,
+    medevac_request_id: result.medevac_request_id,
+    accepted_at: result.accepted_at,
+  };
+}
+
+// ------------------------------------------------------------
+// adminDeclineMedevacOfferOnBehalf → §4.5 decline (admin path)
+// ------------------------------------------------------------
+
+export type AdminDeclineMedevacOfferResult =
+  | { ok: true; offer_id: string; already_declined?: boolean }
+  | MedevacAdminActionFailure
+  | (MedevacAdminActionFailure & { field_errors: Record<string, string> });
+
+export async function adminDeclineMedevacOfferOnBehalf(input: {
+  offer_id: string;
+  reason?: string;
+}): Promise<AdminDeclineMedevacOfferResult> {
+  requireAdminSession();
+  if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = declineOfferSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    } as AdminDeclineMedevacOfferResult;
+  }
+
+  const rpc = createAdminClient() as unknown as LooseRpcClient;
+  const { data, error } = await rpc.rpc('decline_medevac_offer', {
+    p_offer_id: parsed.data.offer_id,
+    p_actor_client_id: null,
+    p_actor_admin_user_id: null,
+    p_reason: parsed.data.reason ?? null,
+  });
+  if (error) {
+    console.error('[medevac-admin.declineOnBehalf] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | { ok: true; offer_id: string; already_declined?: boolean }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath('/admin/medevac');
+
+  return {
+    ok: true,
+    offer_id: result.offer_id,
+    already_declined: result.already_declined,
+  };
+}
+
+// ------------------------------------------------------------
+// adminCancelMedevacRequestOnBehalf → §4.6 cancel (admin path)
+// ------------------------------------------------------------
+
+export type AdminCancelMedevacRequestResult =
+  | {
+      ok: true;
+      request_id: string;
+      cascade_declined_offers: number;
+      already_cancelled?: boolean;
+    }
+  | MedevacAdminActionFailure
+  | (MedevacAdminActionFailure & { field_errors: Record<string, string> });
+
+export async function adminCancelMedevacRequestOnBehalf(input: {
+  request_id: string;
+  reason?: string;
+}): Promise<AdminCancelMedevacRequestResult> {
+  requireAdminSession();
+  if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = cancelRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    } as AdminCancelMedevacRequestResult;
+  }
+
+  const rpc = createAdminClient() as unknown as LooseRpcClient;
+  const { data, error } = await rpc.rpc('cancel_medevac_request', {
+    p_request_id: parsed.data.request_id,
+    p_actor_client_id: null,
+    p_actor_admin_user_id: null,
+    p_reason: parsed.data.reason ?? null,
+  });
+  if (error) {
+    console.error('[medevac-admin.cancelOnBehalf] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | {
+        ok: true;
+        request_id: string;
+        cascade_declined_offers: number;
+        already_cancelled?: boolean;
+      }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath('/admin/medevac');
+  revalidatePath(`/admin/medevac/${parsed.data.request_id}`);
+
+  return {
+    ok: true,
+    request_id: result.request_id,
+    cascade_declined_offers: result.cascade_declined_offers ?? 0,
+    already_cancelled: result.already_cancelled,
+  };
+}
+
+// ------------------------------------------------------------
+// adminActivateSubscription → §4.9 admin_activate_subscription
+// ------------------------------------------------------------
+
+export type AdminActivateSubscriptionResult =
+  | {
+      ok: true;
+      subscription_id: string;
+      subscription_number?: string;
+      start_date?: string;
+      end_date?: string;
+      next_renewal_due?: string;
+      already_active?: boolean;
+    }
+  | MedevacAdminActionFailure
+  | (MedevacAdminActionFailure & { field_errors: Record<string, string> });
+
+export async function adminActivateSubscription(input: {
+  subscription_id: string;
+}): Promise<AdminActivateSubscriptionResult> {
+  requireAdminSession();
+  if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  const parsed = activateSubscriptionSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    } as AdminActivateSubscriptionResult;
+  }
+
+  const rpc = createAdminClient() as unknown as LooseRpcClient;
+  const { data, error } = await rpc.rpc('admin_activate_subscription', {
+    p_subscription_id: parsed.data.subscription_id,
+  });
+  if (error) {
+    console.error('[medevac-admin.activateSub] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | {
+        ok: true;
+        subscription_id: string;
+        subscription_number?: string;
+        start_date?: string;
+        end_date?: string;
+        next_renewal_due?: string;
+        already_active?: boolean;
+      }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath('/admin/medevac/subscriptions');
+  revalidatePath(
+    `/admin/medevac/subscriptions/${parsed.data.subscription_id}`
+  );
+
+  return {
+    ok: true,
+    subscription_id: result.subscription_id,
+    subscription_number: result.subscription_number,
+    start_date: result.start_date,
+    end_date: result.end_date,
+    next_renewal_due: result.next_renewal_due,
+    already_active: result.already_active,
+  };
+}
+
+// ------------------------------------------------------------
+// adminUpsertShieldConfig — singleton update of
+// aeris_shield_config.default_operator_id + notification email.
+//
+// Direct table update (no RPC); the singleton has RLS enabled
+// so service-role bypass + admin auth gate is the only path.
+// ------------------------------------------------------------
+
+export interface UpsertShieldConfigInput {
+  default_operator_id: string | null;
+  founder_notification_email?: string | null;
+}
+
+export type AdminUpsertShieldConfigResult =
+  | { ok: true }
+  | MedevacAdminActionFailure;
+
+export async function adminUpsertShieldConfig(
+  input: UpsertShieldConfigInput
+): Promise<AdminUpsertShieldConfigResult> {
+  requireAdminSession();
+  if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  if (
+    input.default_operator_id !== null &&
+    !isUuid(input.default_operator_id)
+  ) {
+    return { ok: false, error: 'default_operator_id_invalid' };
+  }
+  if (
+    input.founder_notification_email &&
+    input.founder_notification_email.length > 120
+  ) {
+    return { ok: false, error: 'founder_email_invalid' };
+  }
+
+  type LooseUpdateClient = {
+    from: (table: string) => {
+      update: (payload: Record<string, unknown>) => {
+        eq: (
+          col: string,
+          val: number
+        ) => Promise<{
+          data: unknown;
+          error: { code?: string; message?: string } | null;
+        }>;
+      };
+    };
+  };
+  const loose = createAdminClient() as unknown as LooseUpdateClient;
+  const payload: Record<string, unknown> = {
+    default_operator_id: input.default_operator_id,
+    updated_at: new Date().toISOString(),
+  };
+  if (input.founder_notification_email !== undefined) {
+    payload['founder_notification_email'] =
+      input.founder_notification_email;
+  }
+  const { error } = await loose
+    .from('aeris_shield_config')
+    .update(payload)
+    .eq('id', 1);
+  if (error) {
+    console.error('[medevac-admin.shieldConfig] update error', error);
+    if (error.code === '23503') {
+      // Foreign key violation — operator_id doesn't exist.
+      return { ok: false, error: 'default_operator_not_found' };
+    }
+    return { ok: false, error: 'server_error' };
+  }
+
+  revalidatePath('/admin/medevac/shield-config');
+  return { ok: true };
 }

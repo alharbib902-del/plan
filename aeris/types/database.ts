@@ -574,11 +574,17 @@ export type AddonStatusValue =
 // CHECK to allow 'cargo_offers'; the local TS union must match
 // or PR 2/3 cargo booking code (writing accept_cargo_offer +
 // reading /me/bookings) will fight the type system.
+// Round 2 PR #77 P2 #2 fix — added 'medevac_offers' for Phase 12
+// PR 1 §3.4.2 which extends the same CHECK to allow
+// 'medevac_offers'. Phase 12 §4.4 accept_medevac_offer writes
+// source_offer_table='medevac_offers' on non-covered medevac
+// bookings (the J5 Shield covered variant uses NULL per D6).
 export type SourceOfferTable =
   | 'phase4'
   | 'phase5'
   | 'phase7_empty_leg'
-  | 'cargo_offers';
+  | 'cargo_offers'
+  | 'medevac_offers';
 
 export type BookingRow = {
   id: string;
@@ -645,12 +651,15 @@ export type BookingRow = {
   // Source-offer linkage (no FK; one-of-two target tables).
   source_offer_table: SourceOfferTable | null;
   source_offer_id: string | null;
-  // Phase 10 PR 1 §3.4 + Phase 11 PR 1 §3.4.1: discriminator
-  // for unified /me/bookings. NOT NULL + DEFAULT 'charter';
-  // populated explicitly by Phase 10 §4.3/§4.4 RPCs ('empty_leg')
-  // + Phase 11 §4.4 accept_cargo_offer ('cargo'), falls through
-  // to DEFAULT for accept_offer (Phase 9 charter path).
-  source_discriminator: 'charter' | 'empty_leg' | 'cargo';
+  // Phase 10 PR 1 §3.4 + Phase 11 PR 1 §3.4.1 + Phase 12 PR 1
+  // §3.4: discriminator for unified /me/bookings. NOT NULL +
+  // DEFAULT 'charter'; populated explicitly by Phase 10
+  // §4.3/§4.4 RPCs ('empty_leg'), Phase 11 §4.4 accept_cargo_offer
+  // ('cargo'), Phase 12 §4.4 accept_medevac_offer + §4.7
+  // consume_aeris_shield_event ('medevac'); falls through to
+  // DEFAULT for accept_offer (Phase 9 charter path).
+  // Round 1 PR #77 P2 #2 fix added 'medevac' to the TS union.
+  source_discriminator: 'charter' | 'empty_leg' | 'cargo' | 'medevac';
   // Customer checkout-prep token. Both NULL by default;
   // founder mints + writes both via the admin "Issue
   // checkout link" action. Paired CHECK enforces both-or-
