@@ -474,6 +474,58 @@ export async function adminActivateSubscription(input: {
 }
 
 // ------------------------------------------------------------
+// adminManualDispatchMedevacRequest → §3.10 publish_medevac_
+// dispatch_event('manual_redispatch') (Phase 12 PR 3 §6.2)
+//
+// Inserts an outbox row via the PR 3 §2 RPC with
+// event_type='manual_redispatch'. The next 5-min cron drain
+// picks it up + re-runs distribution + notifications.
+// Available on both guest and authed medevac requests.
+// ------------------------------------------------------------
+
+export interface AdminManualDispatchInput {
+  request_id: string;
+}
+
+export type AdminManualDispatchResult =
+  | { ok: true; request_id: string }
+  | MedevacAdminActionFailure;
+
+export async function adminManualDispatchMedevacRequest(
+  input: AdminManualDispatchInput
+): Promise<AdminManualDispatchResult> {
+  requireAdminSession();
+  if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
+
+  if (!input.request_id || !isUuid(input.request_id)) {
+    return { ok: false, error: 'request_id_invalid' };
+  }
+
+  const rpc = createAdminClient() as unknown as LooseRpcClient;
+  const { data, error } = await rpc.rpc(
+    'publish_medevac_dispatch_event',
+    {
+      p_medevac_request_id: input.request_id,
+      p_event_type: 'manual_redispatch',
+    }
+  );
+  if (error) {
+    console.error('[medevac-admin.manualDispatch] rpc error', error);
+    return { ok: false, error: 'server_error' };
+  }
+
+  const result = data as
+    | { ok: true; medevac_request_id: string }
+    | { ok: false; error: string };
+
+  if (!result.ok) return { ok: false, error: result.error };
+
+  revalidatePath(`/admin/medevac/${input.request_id}`);
+
+  return { ok: true, request_id: input.request_id };
+}
+
+// ------------------------------------------------------------
 // adminUpsertShieldConfig — singleton update of
 // aeris_shield_config.default_operator_id + notification email.
 //
