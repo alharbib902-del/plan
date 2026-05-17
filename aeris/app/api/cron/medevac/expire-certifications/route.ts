@@ -13,6 +13,10 @@ import {
   thresholdColumn,
   type CertExpiryRow,
 } from '@/lib/medevac/cert-expiry-helpers';
+import {
+  sendCertWarningEmail,
+  sendCertExpiredEmail,
+} from '@/lib/medevac/cert-notifications';
 
 /**
  * Phase 12 PR 3 — medical certification expiry cron.
@@ -226,6 +230,17 @@ export async function POST(req: NextRequest): Promise<Response> {
           errors += 1;
         } else {
           enforcement_flipped += 1;
+          // Round 2 PR #78 P2 #3 fix — fire the final
+          // `medical_cert_expired_now` operator + founder
+          // email AFTER the flip lands. Email failures don't
+          // roll back the flip (the flip is the
+          // dispatch-safety invariant; the email is
+          // observability) but they do flag the singleton
+          // via recordMedevacEmailAlertStatus.
+          const email = await sendCertExpiredEmail({
+            aircraft_id: row.aircraft_id,
+            certification_expires_at: row.certification_expires_at,
+          });
           auditRows.push({
             entity_type: 'aircraft_medical_certifications',
             entity_id: row.aircraft_id,
@@ -233,6 +248,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             new_value: {
               expired_at: row.certification_expires_at,
               flipped_at: nowIso,
+              email_sent: email.sent,
             },
             user_id: null,
           });
@@ -346,6 +362,17 @@ export async function POST(req: NextRequest): Promise<Response> {
         continue;
       }
       warnings_queued += 1;
+      // Round 2 PR #78 P2 #3 fix — fire the cascade warning
+      // email AFTER the atomic flag stamp wins (so two
+      // concurrent workers never both send). Email failure
+      // doesn't roll back the stamp (the stamp is the "this
+      // threshold already fired" record; rolling it back
+      // would re-fire the email on the next tick + spam).
+      const email = await sendCertWarningEmail({
+        aircraft_id: row.aircraft_id,
+        threshold_days: due,
+        certification_expires_at: row.certification_expires_at,
+      });
       auditRows.push({
         entity_type: 'aircraft_medical_certifications',
         entity_id: row.aircraft_id,
@@ -354,6 +381,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           threshold_days: due,
           expires_at: row.certification_expires_at,
           stamped_at: nowIso,
+          email_sent: email.sent,
         },
         user_id: null,
       });

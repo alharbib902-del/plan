@@ -217,7 +217,20 @@ export async function POST(req: NextRequest): Promise<Response> {
       // window). Atomic conditional UPDATE on dispatched_at IS
       // NULL so subsequent drains (manual_redispatch) don't
       // clobber the original timestamp.
+      //
+      // Round 2 PR #78 P1 #2 fix — if the stamp fails (transient
+      // DB / PostgREST error) we now treat the WHOLE outbox row
+      // as retryable: leave it unprocessed so the next 5-min
+      // tick retries the stamp before the row escapes the
+      // sla-escalation cron's filter (dispatched_at IS NOT NULL).
+      // Previous behavior logged + continued + marked processed,
+      // creating a notified-but-invisible-to-SLA request on any
+      // transient failure. We treat "0 rows affected" as success
+      // too — that's the legitimate already-stamped case
+      // (manual_redispatch on an earlier-dispatched request).
       if (summary.dispatched_operator_ids.length > 0) {
+        let stampFailed = false;
+        let stampErrorMsg = '';
         try {
           const stampResult = await admin
             .from('medevac_requests')
@@ -233,6 +246,10 @@ export async function POST(req: NextRequest): Promise<Response> {
             'error' in stampResult &&
             stampResult.error
           ) {
+            stampFailed = true;
+            stampErrorMsg = String(
+              stampResult.error?.message ?? 'unknown'
+            );
             console.error(
               '[medevac.cron.dispatch-drain] dispatched_at stamp failed',
               stampResult.error
@@ -241,10 +258,21 @@ export async function POST(req: NextRequest): Promise<Response> {
             summary.dispatched_at_stamped = true;
           }
         } catch (err) {
+          stampFailed = true;
+          stampErrorMsg =
+            err instanceof Error ? err.message : String(err);
           console.error(
             '[medevac.cron.dispatch-drain] dispatched_at stamp threw',
             err
           );
+        }
+
+        if (stampFailed) {
+          summary.error = 'retryable_failure';
+          summary.retry_reason = `dispatched_at_stamp_failed: ${stampErrorMsg.slice(0, 200)}`;
+          summaries.push({ id: row.id, summary });
+          skipped_retry += 1;
+          continue;
         }
       }
     }

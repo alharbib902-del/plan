@@ -79,6 +79,20 @@ type LooseClient = {
             error: { message?: string } | null;
           }>;
         };
+        // Round 2 PR #78 P1 #1 fix — unstamp path uses
+        // `.not('sla_escalated_at', 'is', null)` so the
+        // type chain needs a `.not(col, op, val).select(...)`
+        // branch alongside the existing `.is(...)` branch.
+        not: (
+          col: string,
+          op: string,
+          val: unknown
+        ) => {
+          select: (cols: string) => Promise<{
+            data: unknown;
+            error: { message?: string } | null;
+          }>;
+        };
       };
     };
   };
@@ -222,10 +236,52 @@ export async function POST(req: NextRequest): Promise<Response> {
       sla_minutes: slaMin,
     });
     if (!email.sent) {
+      // Round 2 PR #78 P1 #1 fix — clear the sla_escalated_at
+      // claim so the next cron tick can retry. The previous
+      // behavior left the row stamped + counted as `escalated`
+      // even when Resend was missing / failing / the founder
+      // email was unset → the ONLY founder escalation channel
+      // for critical medevac SLA was silently suppressed
+      // forever. Roll back the claim so the row re-surfaces
+      // on the next 5-min scan.
+      const unstampResult = await admin
+        .from('medevac_requests')
+        .update({
+          sla_escalated_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+        // Guard against a parallel worker that may have already
+        // claimed AND sent successfully — clear ONLY if our
+        // own claim is still the stamped value (or close to it
+        // within this single-request loop, which is the only
+        // window where two workers race). We don't have the
+        // pre-stamp value handy, so we use a coarse "still
+        // not null" filter: if the value is null already, we
+        // skip (another worker rolled back too). This is a
+        // best-effort recovery; the worst case is one extra
+        // founder email on a rare race, which beats
+        // permanently-suppressed escalation.
+        .not('sla_escalated_at', 'is', null)
+        .select('id');
+      const unstampedCount = Array.isArray(unstampResult.data)
+        ? unstampResult.data.length
+        : 0;
+      if (unstampResult.error) {
+        console.error(
+          '[medevac.cron.sla] unstamp after send-fail errored',
+          unstampResult.error
+        );
+      }
       console.error(
-        '[medevac.cron.sla] founder email failed for',
-        row.medevac_request_number
+        '[medevac.cron.sla] founder email failed; sla_escalated_at rolled back',
+        {
+          mev_number: row.medevac_request_number,
+          unstamped: unstampedCount,
+        }
       );
+      errors += 1;
+      continue;
     }
 
     escalated += 1;
