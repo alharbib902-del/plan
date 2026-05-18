@@ -294,6 +294,7 @@ schema/RPC/probe sections for traceability.
 | **D18** | Cashback expiry: 24 months from earn date (configurable via `privilege_tier_thresholds.cashback_expiry_months`) | Standard loyalty industry practice; ledger event `expire` written by daily cron. |
 | **D19** | `clients.cashback_balance_sar` is a **denormalized snapshot** maintained by ledger triggers, NOT a computed view; reconciliation cron verifies match against `SUM(ledger)` daily | Performance for booking checkout (no aggregate query per page load); integrity verified hourly. |
 | **D20** | Activation is gated by `ENABLE_PRIVILEGE=true` env var (mirror `ENABLE_MEDEVAC` pattern from Phase 12) | Safe rollout; allows schema deploy before flag flip. |
+| **D21** | **Idempotent cashback award**: `award_cashback_for_booking` RPC checks `EXISTS (earn for booking_id)` BEFORE INSERT, returns `{ok:true, already_awarded:true, skipped_reason:'duplicate_earn_for_booking'}` if found. DB-side `UNIQUE INDEX (booking_id) WHERE event_type='earn'` enforces the invariant defense-in-depth. | Prevents double-award across all code paths: trigger replay on same `paid` UPDATE, `refunded→paid` re-confirmation, manual admin re-award attempts. Cannot silently corrupt ledger balance. |
 
 ---
 
@@ -467,6 +468,15 @@ CREATE INDEX IF NOT EXISTS idx_client_loyalty_ledger_booking
 CREATE INDEX IF NOT EXISTS idx_client_loyalty_ledger_expiry_sweep
   ON client_loyalty_ledger (cashback_expiry_at)
   WHERE event_type = 'earn' AND cashback_expiry_at IS NOT NULL;
+
+-- D21: defense-in-depth idempotency. The RPC checks before INSERT;
+-- this UNIQUE index ensures the DB rejects any concurrent double-insert
+-- attempt (e.g. trigger fires twice in racing transactions). Partial on
+-- WHERE event_type='earn' so other event types (redeem, adjust, refund_back)
+-- remain freely multi-per-booking.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_client_loyalty_ledger_earn_per_booking
+  ON client_loyalty_ledger (booking_id)
+  WHERE event_type = 'earn' AND booking_id IS NOT NULL;
 
 ALTER TABLE client_loyalty_ledger ENABLE ROW LEVEL SECURITY;
 ```
@@ -828,6 +838,102 @@ amount = booking.amount_paid_sar * cashback_pct(client.tier) / 100
 INSERTs `earn` ledger event + UPDATEs `clients.cashback_balance_sar`
 + stores `bookings.cashback_earned_sar` for transparency.
 
+**D21 idempotency guard** (P1 — covers trigger replay, refunded→paid
+re-confirmation, and manual admin re-award attempts):
+
+```sql
+CREATE OR REPLACE FUNCTION award_cashback_for_booking(
+  p_client_id UUID,
+  p_booking_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_tier             client_privilege_tier;
+  v_pct              DECIMAL(5,2);
+  v_amount_paid      DECIMAL(14,2);
+  v_cashback_amount  DECIMAL(12,2);
+  v_expiry_months    INT;
+  v_new_balance      DECIMAL(14,2);
+  v_ledger_id        UUID;
+BEGIN
+  -- D21 guard: refuse to double-award. RPC-level check + DB UNIQUE
+  -- index on (booking_id) WHERE event_type='earn' (§3.2) is the
+  -- defense-in-depth backstop for races.
+  IF EXISTS (
+    SELECT 1 FROM client_loyalty_ledger
+    WHERE booking_id = p_booking_id
+      AND event_type = 'earn'
+  ) THEN
+    RETURN jsonb_build_object(
+      'ok', true,
+      'already_awarded', true,
+      'skipped_reason', 'duplicate_earn_for_booking',
+      'booking_id', p_booking_id
+    );
+  END IF;
+
+  -- Load tier + cashback %
+  SELECT c.privilege_tier, t.cashback_pct, t.cashback_expiry_months
+    INTO v_tier, v_pct, v_expiry_months
+  FROM clients c
+  JOIN privilege_tier_thresholds t ON t.tier = c.privilege_tier
+  WHERE c.id = p_client_id
+  FOR UPDATE;
+
+  -- Load amount_paid (NOT total_amount; D6 — no compound)
+  SELECT COALESCE(total_amount - cashback_redemption_sar, 0)
+    INTO v_amount_paid
+  FROM bookings WHERE id = p_booking_id;
+
+  v_cashback_amount := ROUND(v_amount_paid * v_pct / 100, 2);
+
+  -- Append-only INSERT. If a concurrent transaction inserted
+  -- between our EXISTS check and here, the UNIQUE index rejects
+  -- with sqlstate 23505 → we catch and return the same idempotent
+  -- envelope (covers race window without polluting ledger).
+  BEGIN
+    INSERT INTO client_loyalty_ledger (
+      client_id, event_type, amount_sar, balance_after_sar,
+      booking_id, cashback_expiry_at
+    ) VALUES (
+      p_client_id, 'earn', v_cashback_amount,
+      (SELECT cashback_balance_sar FROM clients WHERE id = p_client_id) + v_cashback_amount,
+      p_booking_id,
+      NOW() + (v_expiry_months || ' months')::INTERVAL
+    ) RETURNING id, balance_after_sar INTO v_ledger_id, v_new_balance;
+  EXCEPTION WHEN unique_violation THEN
+    -- Race: a parallel transaction won the UNIQUE
+    RETURN jsonb_build_object(
+      'ok', true,
+      'already_awarded', true,
+      'skipped_reason', 'duplicate_earn_for_booking_race',
+      'booking_id', p_booking_id
+    );
+  END;
+
+  -- Update denormalized balance + booking
+  UPDATE clients SET cashback_balance_sar = v_new_balance
+    WHERE id = p_client_id;
+  UPDATE bookings SET cashback_earned_sar = v_cashback_amount
+    WHERE id = p_booking_id;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'already_awarded', false,
+    'ledger_id', v_ledger_id,
+    'tier_at_award', v_tier,
+    'cashback_pct', v_pct,
+    'amount_paid_sar', v_amount_paid,
+    'cashback_amount_sar', v_cashback_amount,
+    'new_balance_sar', v_new_balance
+  );
+END;
+$$;
+```
+
 ### §4.4 `redeem_cashback_for_booking(p_client_id UUID, p_booking_id UUID, p_redemption_amount DECIMAL) RETURNS JSONB`
 
 Caller-bound: called from `accept_offer` Server Actions when client
@@ -997,15 +1103,16 @@ Single SQL script. ~50 checks covering:
 **Triggers (1)**:
 - `trg_bookings_payment_paid_award_cashback`
 
-**Indexes (5)**:
+**Indexes (9)**:
 - `idx_client_loyalty_ledger_client`
 - `idx_client_loyalty_ledger_booking`
 - `idx_client_loyalty_ledger_expiry_sweep`
+- **`uq_client_loyalty_ledger_earn_per_booking`** (D21 UNIQUE)
 - `idx_privilege_tier_change_log_client`
+- `idx_privilege_tier_change_log_pending_grace`
 - `idx_clients_privilege_tier`
 - `idx_clients_below_threshold_grace`
 - `idx_bookings_payment_confirmed_for_loyalty`
-- `idx_privilege_tier_change_log_pending_grace`
 
 **Helper + RPCs (10)** — full ACL check per Phase 12 Round 9:
 - `tier_rank`, `step_down_one` (IMMUTABLE + PARALLEL SAFE)
@@ -1030,7 +1137,7 @@ Single SQL script. ~50 checks covering:
 
 **Total: 50 named checks**.
 
-### Probe 42 — Earn cashback on payment confirmation
+### Probe 42 — Earn cashback on payment confirmation (+ D21 idempotency)
 
 1. Create test client `c1` (silver, balance=0).
 2. Create test charter booking for `c1`, total_amount=50,000,
@@ -1046,6 +1153,31 @@ Single SQL script. ~50 checks covering:
    - `bookings.cashback_earned_sar`=2500.
    - `privilege_tier_change_log` empty (spend 50k < 100k, stays
      silver).
+
+5. **D21 idempotency assertion** — call
+   `award_cashback_for_booking(c1, booking_id)` directly (bypassing
+   the trigger WHEN guard) → expect return envelope:
+   ```json
+   {
+     "ok": true,
+     "already_awarded": true,
+     "skipped_reason": "duplicate_earn_for_booking",
+     "booking_id": "<id>"
+   }
+   ```
+   Verify:
+   - Ledger still has exactly 1 `earn` event for this booking.
+   - `clients.cashback_balance_sar` unchanged at 2500.
+6. **D21 race assertion** — try direct INSERT into
+   `client_loyalty_ledger` with `(booking_id=<id>, event_type='earn')`
+   → expect `23505 unique_violation` from `uq_client_loyalty_ledger_earn_per_booking`.
+7. **Edge: refunded→paid transition** — UPDATE booking →
+   payment_status='refunded' → UPDATE → payment_status='paid'.
+   Trigger WHEN fires (OLD='refunded' != NEW='paid'). The RPC
+   idempotency guard catches → no second earn event. Ledger
+   remains 1 `earn`. (Future `refund_back` event mechanics are
+   in scope of D-spec refund TBD; this probe only verifies the
+   earn-side invariant.)
 
 ### Probe 43 — Redeem cashback within D7 cap
 
