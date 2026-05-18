@@ -60,8 +60,10 @@ from competitors (NetJets Card, VistaJet Membership) by combining:
   into a tier (vs default `silver`).
 - 0 silently-suppressed tier changes (every change logged to
   `privilege_tier_change_log` with reason).
-- 0 cashback ledger imbalances (`SUM(amount) WHERE event_type IN
-  ('earn','adjust','refund_back') = balance + SUM(redeem+expire)`).
+- 0 cashback ledger imbalances. Round 1 PR #80 F17 fix —
+  the invariant is signed-sum: `SUM(amount_sar) over ALL events
+  for client = clients.cashback_balance_sar`. Diamond-shield-*
+  events have `amount_sar=0` so they don't affect balance.
 - 0 Diamond clients without an active Shield subscription
   (cross-product invariant).
 
@@ -167,7 +169,9 @@ from competitors (NetJets Card, VistaJet Membership) by combining:
    - **Cross-product hook**: check if `c3` has an active
      `medevac_subscription` with `plan='diamond'`:
      - If yes (already paying Diamond subscriber) → skip (no
-       duplicate), log ledger event `diamond_shield_skipped`.
+       duplicate), log ledger event `diamond_shield_skipped_already_diamond`
+       (Round 1 PR #80 F12 fix — renamed from `diamond_shield_skipped`
+       for clarity vs the paid-plan skip variant).
      - If yes with `plan!='diamond'` but `paid` (e.g. paying
        individual/family/vip_family) → log
        `diamond_shield_skipped_paying_paid_plan`, do nothing.
@@ -295,6 +299,12 @@ schema/RPC/probe sections for traceability.
 | **D19** | `clients.cashback_balance_sar` is a **denormalized snapshot** maintained by ledger triggers, NOT a computed view; reconciliation cron verifies match against `SUM(ledger)` daily | Performance for booking checkout (no aggregate query per page load); integrity verified hourly. |
 | **D20** | Activation is gated by `ENABLE_PRIVILEGE=true` env var (mirror `ENABLE_MEDEVAC` pattern from Phase 12) | Safe rollout; allows schema deploy before flag flip. |
 | **D21** | **Idempotent cashback award**: `award_cashback_for_booking` RPC checks `EXISTS (earn for booking_id)` BEFORE INSERT, returns `{ok:true, already_awarded:true, skipped_reason:'duplicate_earn_for_booking'}` if found. DB-side `UNIQUE INDEX (booking_id) WHERE event_type='earn'` enforces the invariant defense-in-depth. | Prevents double-award across all code paths: trigger replay on same `paid` UPDATE, `refunded→paid` re-confirmation, manual admin re-award attempts. Cannot silently corrupt ledger balance. |
+| **D22** | **`bookings.paid_at` is the canonical payment-confirmation timestamp** added by Phase 13 PR 1 (not Phase 6/14 — Round 1 PR #80 F1 fix verified column does NOT exist anywhere in current schema). Trigger §3.4 stamps `paid_at = NOW()` on the same UPDATE that flips `payment_status='paid'`. The qualified-spend window (D1) filters on `paid_at > NOW() - INTERVAL '12 months'`. | Eliminates spec-vs-schema drift; Phase 13 owns the column it depends on. |
+| **D23** | **`amount_paid_sar` is computed inline** as `(total_amount - cashback_redemption_sar)` at award-time, NOT a stored column. `award_cashback_for_booking` reads `total_amount` + `cashback_redemption_sar` from `bookings` inside the FOR UPDATE lock and derives `v_amount_paid` locally (Round 1 PR #80 F2 fix). | Avoids stored-derived column inconsistency; the single source of truth is `(total_amount, cashback_redemption_sar)`. |
+| **D24** | **`total_amount` immutability after `payment_status='paid'`**: enforced by AFTER UPDATE trigger that rejects any UPDATE of `total_amount` once the booking is paid. Out-of-band amount adjustments (refunds, disputes) MUST flow through dedicated refund RPC (D25), which atomically updates `cashback_redemption_sar` + posts refund_back ledger event. | Prevents `amount_paid_sar` drift from constraint re-eval after payment; aligns with revenue-recognition contract (Round 1 PR #80 F4 fix). |
+| **D25** | **Refund flow deferred to Phase 13.1 mini-spec**: v1 supports full bookings cancellation BEFORE `payment_status='paid'` (no cashback impact since none earned). Once paid, total_amount is locked (D24); any post-paid refund requires a dedicated `process_refund_for_booking` RPC + new ledger logic. The `refund_back` ENUM value + `on_bookings_payment_refunded_reverse_cashback` trigger are **reserved placeholders** in v1 — no producer path exists. Trigger DDL is omitted from PR 1 migration to avoid dead code (Round 1 PR #80 F5 fix). | Avoids opening a tax/accounting decision tree (proportional cashback reversal, partial vs full, VAT handling) inside Phase 13 v1. The decision belongs with Phase 14 payment gateway integration (refund webhooks). |
+| **D26** | **Diamond × Shield grant failure is non-fatal to payment confirmation**: `evaluate_client_privilege_tier` wraps `auto_grant_diamond_shield_subscription` call in BEGIN/EXCEPTION. On failure, logs `diamond_shield_grant_failed` ledger event (new ENUM value) + writes to `audit_logs` + continues. Payment UPDATE succeeds regardless. Admin reviews failed grants via canary card (PR 3). | Decouples Privilege side-effects from payment confirmation — a Phase 12 schema change cannot block payment receipt (Round 1 PR #80 F6 fix). |
+| **D27** | **EL match outbox enforces `UNIQUE (empty_leg_id, client_id)` to prevent duplicate notifications** across tier-boost windows. Gold matched at T0 (boost active) cannot be re-matched at T+2h (FCFS round); the second insert fails via UNIQUE → matching cron logs `tier_boost_already_consumed` skip reason. | Per founder review of EL early access: privilege gives priority window, not multiple matches (Round 1 PR #80 F7 fix). |
 
 ---
 
@@ -333,10 +343,12 @@ DO $$ BEGIN
       'redeem',                               -- applied to a future booking
       'adjust',                               -- admin manual correction
       'expire',                               -- 24-month expiry sweep
-      'refund_back',                          -- booking cancelled after earn → reverse
+      'refund_back',                          -- RESERVED for Phase 13.1 (D25); no v1 producer
       'diamond_shield_granted',               -- cross-product Diamond auto-grant
+      'diamond_shield_skipped_already_diamond',   -- Round 1 F12 fix: was 'diamond_shield_skipped' in J5; renamed for clarity
       'diamond_shield_skipped_paying_paid_plan',  -- D12 invariant
-      'diamond_shield_revoked_on_downgrade'   -- diamond → lower, subscription end
+      'diamond_shield_revoked_on_downgrade',  -- diamond → lower, subscription end
+      'diamond_shield_grant_failed'            -- D26: grant RPC raised an exception
     );
   END IF;
 END $$;
@@ -439,8 +451,11 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
     (event_type IN ('earn', 'refund_back') AND amount_sar > 0)
     OR (event_type IN ('redeem', 'expire') AND amount_sar < 0)
     OR (event_type = 'adjust')   -- can be either sign
-    OR (event_type IN ('diamond_shield_granted', 'diamond_shield_skipped_paying_paid_plan',
-                        'diamond_shield_revoked_on_downgrade')
+    OR (event_type IN ('diamond_shield_granted',
+                        'diamond_shield_skipped_already_diamond',
+                        'diamond_shield_skipped_paying_paid_plan',
+                        'diamond_shield_revoked_on_downgrade',
+                        'diamond_shield_grant_failed')
         AND amount_sar = 0)
   ),
   CONSTRAINT client_loyalty_ledger_admin_reason_required_for_adjust CHECK (
@@ -521,6 +536,13 @@ CREATE TABLE IF NOT EXISTS privilege_tier_change_log (
   ),
   CONSTRAINT privilege_tier_change_log_lock_only_on_admin_force CHECK (
     lock_until IS NULL OR reason = 'admin_force'
+  ),
+  -- Round 1 PR #80 F3 fix: prevent no-op log entries (e.g. silver→silver
+  -- when client is already at lowest tier and below_since clock expired).
+  -- The §4.2 RPC short-circuits before reaching INSERT, this CHECK is
+  -- defense-in-depth.
+  CONSTRAINT privilege_tier_change_log_from_to_distinct_check CHECK (
+    from_tier != to_tier
   )
 );
 
@@ -557,14 +579,26 @@ CREATE INDEX IF NOT EXISTS idx_clients_below_threshold_grace
   WHERE privilege_below_threshold_since IS NOT NULL;
 ```
 
-#### `bookings` — 2 new columns (cashback redemption tracking)
+#### `bookings` — 3 new columns (cashback + payment timestamp)
+
+Round 1 PR #80 F1+F2+F8 fix — neither `payment_status_confirmed_at`
+nor `amount_paid_sar` exist anywhere in current schema. Phase 13
+owns the `paid_at` column it depends on (per D22), and computes
+`amount_paid_sar` inline (per D23) rather than introducing a
+stored-derived column that can drift.
 
 ```sql
 ALTER TABLE bookings
   ADD COLUMN IF NOT EXISTS cashback_redemption_sar DECIMAL(12, 2) NOT NULL DEFAULT 0
     CHECK (cashback_redemption_sar >= 0),
   ADD COLUMN IF NOT EXISTS cashback_earned_sar DECIMAL(12, 2) DEFAULT NULL
-    CHECK (cashback_earned_sar IS NULL OR cashback_earned_sar >= 0);
+    CHECK (cashback_earned_sar IS NULL OR cashback_earned_sar >= 0),
+  -- D22: canonical payment-confirmation timestamp. Stamped by the
+  -- §3.4 trigger on the same UPDATE that flips payment_status='paid'.
+  -- NULL until first payment; backfill cron at activation step 3
+  -- (§7) populates this for historical paid bookings using updated_at
+  -- as the best-available proxy.
+  ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 
 -- D7 cap: redemption <= 50% of total_amount AND total_amount - redemption >= 1
 ALTER TABLE bookings
@@ -573,23 +607,47 @@ ALTER TABLE bookings
     AND (total_amount - cashback_redemption_sar) >= 1
   );
 
-CREATE INDEX IF NOT EXISTS idx_bookings_payment_confirmed_for_loyalty
-  ON bookings (payment_status_confirmed_at DESC, client_id)
+-- D24: total_amount immutable after payment_status='paid'.
+-- Rejecting any UPDATE that touches total_amount once paid_at IS NOT NULL.
+-- Refund flow (D25 deferred) is the only sanctioned post-paid mutation path.
+CREATE OR REPLACE FUNCTION reject_total_amount_mutation_after_paid()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.paid_at IS NOT NULL
+     AND NEW.total_amount IS DISTINCT FROM OLD.total_amount
+  THEN
+    RAISE EXCEPTION 'bookings_total_amount_immutable_after_paid: cannot mutate total_amount once paid_at is set (booking_id=%)', OLD.id
+      USING ERRCODE = '22023';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_bookings_total_amount_immutable_after_paid ON bookings;
+CREATE TRIGGER trg_bookings_total_amount_immutable_after_paid
+  BEFORE UPDATE ON bookings
+  FOR EACH ROW
+  EXECUTE FUNCTION reject_total_amount_mutation_after_paid();
+
+-- D22: replaced payment_status_confirmed_at (ghost) with paid_at.
+CREATE INDEX IF NOT EXISTS idx_bookings_paid_at_for_loyalty
+  ON bookings (paid_at DESC, client_id)
   WHERE payment_status = 'paid' AND client_id IS NOT NULL;
 ```
 
-The `payment_status_confirmed_at` column is assumed to exist
-from Phase 6/14. If it doesn't yet, this spec also defines it
-(Round 1 may extract this into its own schema delta).
-
-### §3.4 Triggers (2 new)
+### §3.4 Triggers (2 new — both shipping in PR 1)
 
 #### `on_bookings_payment_paid_award_cashback`
 
 AFTER UPDATE on `bookings` when `payment_status` transitions to
-'paid' (only on UPDATE WHEN NEW.payment_status = 'paid' AND
-OLD.payment_status != 'paid'). Calls `award_cashback_for_booking`
+'paid' (WHEN NEW.payment_status = 'paid' AND OLD.payment_status !=
+'paid'). Stamps `paid_at = NOW()`, calls `award_cashback_for_booking`
 and `evaluate_client_privilege_tier`.
+
+Round 1 PR #80 F15 fix — extended trigger to also fire on
+**INSERT** with `payment_status='paid'` (covers admin manual
+booking shortcuts that set 'paid' directly without going through
+'pending_offline' → 'paid' UPDATE path).
 
 ```sql
 CREATE OR REPLACE FUNCTION on_bookings_payment_paid_award_cashback()
@@ -597,7 +655,14 @@ RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
   v_tier_eval_result JSONB;
 BEGIN
-  -- Award cashback (if eligible per D16)
+  -- D22: stamp paid_at on the first paid transition. NEW.paid_at
+  -- may already be set if caller pre-stamped (legacy import). Only
+  -- update if NULL.
+  IF NEW.paid_at IS NULL THEN
+    NEW.paid_at := NOW();
+  END IF;
+
+  -- D16: cashback eligibility filter
   IF NEW.client_id IS NOT NULL
      AND NEW.source_discriminator IN ('charter', 'cargo', 'medevac')
      AND NOT (NEW.source_discriminator = 'medevac' AND COALESCE(NEW.is_covered, false))
@@ -605,33 +670,43 @@ BEGIN
     PERFORM award_cashback_for_booking(NEW.client_id, NEW.id);
   END IF;
 
-  -- Re-evaluate tier
+  -- Re-evaluate tier. D26: Diamond grant failure inside this call
+  -- is caught + logged but does NOT block payment confirmation.
   IF NEW.client_id IS NOT NULL THEN
-    v_tier_eval_result := evaluate_client_privilege_tier(NEW.client_id);
-    -- Cross-product Diamond grant happens inside evaluate_client_privilege_tier
-    -- when it logs an upgrade to diamond.
+    v_tier_eval_result := evaluate_client_privilege_tier(NEW.client_id, NEW.id);
   END IF;
 
   RETURN NEW;
 END;
 $$;
 
+-- BEFORE so we can set NEW.paid_at on the row that's being written.
 DROP TRIGGER IF EXISTS trg_bookings_payment_paid_award_cashback ON bookings;
 CREATE TRIGGER trg_bookings_payment_paid_award_cashback
-  AFTER UPDATE OF payment_status ON bookings
+  BEFORE INSERT OR UPDATE OF payment_status ON bookings
   FOR EACH ROW
-  WHEN (NEW.payment_status = 'paid' AND OLD.payment_status != 'paid')
+  WHEN (NEW.payment_status = 'paid'
+        AND (TG_OP = 'INSERT' OR OLD.payment_status != 'paid'))
   EXECUTE FUNCTION on_bookings_payment_paid_award_cashback();
 ```
 
-#### `on_bookings_payment_refunded_reverse_cashback`
+#### `reject_total_amount_mutation_after_paid` (D24)
 
-AFTER UPDATE when `payment_status` transitions from 'paid' to
-'refunded'. Posts `refund_back` ledger event reversing the earn.
+Defined inline in §3.3 above. Enforces D24 immutability.
 
-```sql
--- Defined in §4 as part of refund flow.
-```
+#### Refund-reversal trigger — **deferred to Phase 13.1**
+
+Round 1 PR #80 F5 fix — the `on_bookings_payment_refunded_reverse_cashback`
+trigger and the `process_refund_for_booking` RPC are explicitly
+**OUT OF SCOPE for Phase 13 v1** (per D25). The `refund_back` ENUM
+value and `idx_client_loyalty_ledger_booking_refund_back` indexes
+are reserved placeholders. No producer path ships in v1.
+
+Phase 13.1 will:
+1. Decide partial vs full refund proportional cashback reversal.
+2. Decide VAT/commission handling on reversal.
+3. Add `process_refund_for_booking(p_booking_id, p_refund_amount, p_reason)` RPC.
+4. Lift the D24 immutability constraint to permit refund-authored mutations.
 
 ### §3.5 RLS policies
 
@@ -654,13 +729,21 @@ AFTER UPDATE when `payment_status` transitions from 'paid' to
 
 ### §4.1 `calculate_client_qualified_spend_12m(p_client_id UUID) RETURNS DECIMAL(14,2)`
 
-Pure read-only. Sums `bookings.amount_paid_sar` where:
+Pure read-only. Sums **`(total_amount - cashback_redemption_sar)`**
+inline (per D23 — no stored `amount_paid_sar` column) where:
 
 - `client_id = p_client_id`
 - `payment_status = 'paid'`
-- `payment_status_confirmed_at > NOW() - INTERVAL '12 months'`
+- `paid_at > NOW() - INTERVAL '12 months'` (D22 — replaces ghost
+  `payment_status_confirmed_at`)
 - `source_discriminator IN ('charter', 'cargo', 'medevac')` per D16
 - NOT (source_discriminator = 'medevac' AND is_covered = true)
+
+Round 1 PR #80 F1+F2 fix — both `payment_status_confirmed_at` and
+`amount_paid_sar` were spec-references to columns that don't exist
+in the actual schema. This RPC now uses the schema as Phase 13 PR 1
+defines it (paid_at column from D22, amount_paid computed inline
+from D23).
 
 ```sql
 CREATE OR REPLACE FUNCTION calculate_client_qualified_spend_12m(
@@ -670,11 +753,11 @@ RETURNS DECIMAL(14,2)
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT COALESCE(SUM(amount_paid_sar), 0)::DECIMAL(14,2)
+  SELECT COALESCE(SUM(total_amount - cashback_redemption_sar), 0)::DECIMAL(14,2)
   FROM bookings
   WHERE client_id = p_client_id
     AND payment_status = 'paid'
-    AND payment_status_confirmed_at > NOW() - INTERVAL '12 months'
+    AND paid_at > NOW() - INTERVAL '12 months'
     AND source_discriminator IN ('charter', 'cargo', 'medevac')
     AND NOT (source_discriminator = 'medevac' AND COALESCE(is_covered, false));
 $$;
@@ -764,6 +847,11 @@ BEGIN
         WHERE id = p_client_id;
     END IF;
   ELSIF v_locked_until IS NOT NULL AND v_locked_until > CURRENT_DATE THEN
+    -- Round 1 PR #80 F18 fix — `tier_locked_until` is EXCLUSIVE end
+    -- date. Lock applies WHILE CURRENT_DATE < v_locked_until. On the
+    -- day v_locked_until = CURRENT_DATE, the lock has expired and
+    -- normal auto-downgrade resumes. Documented in §4.5 admin RPC
+    -- as well so admin UX matches expectation.
     v_action := 'locked_no_action';
     -- Reset grace clock under lock
     IF v_below_since IS NOT NULL THEN
@@ -778,6 +866,14 @@ BEGIN
     v_action := 'downgrade_one_step';
     -- Compute next lower tier (one step only, never skip)
     v_target_tier := step_down_one(v_current_tier);
+    -- Round 1 PR #80 F3 fix: silver→silver is a no-op (already
+    -- lowest). Skip log + clear grace clock so we don't loop
+    -- forever appending dummy rows every 90 days.
+    IF v_target_tier = v_current_tier THEN
+      v_action := 'already_lowest_no_action';
+      UPDATE clients SET privilege_below_threshold_since = NULL
+        WHERE id = p_client_id;
+    END IF;
   ELSE
     v_action := 'grace_in_progress';
   END IF;
@@ -804,16 +900,45 @@ BEGIN
       privilege_tier_qualified_spend_12m_sar = v_spend
     WHERE id = p_client_id;
 
-    -- D11: Diamond cross-product grant
+    -- D11 + D26: Diamond cross-product grant — wrapped in BEGIN/EXCEPTION
+    -- so a Phase 12 schema change (e.g. new required medevac_subscriptions
+    -- field) cannot block payment confirmation. Failure is logged to ledger
+    -- + audit_logs; admin reviews via canary card (PR 3).
     IF v_target_tier = 'diamond' THEN
-      v_subscription_id := auto_grant_diamond_shield_subscription(
-        p_client_id, v_change_log_id
-      );
+      BEGIN
+        v_subscription_id := auto_grant_diamond_shield_subscription(
+          p_client_id, v_change_log_id
+        );
+      EXCEPTION WHEN OTHERS THEN
+        -- Log failure to ledger (D26 reserved event_type
+        -- 'diamond_shield_grant_failed') + audit_logs; continue.
+        INSERT INTO client_loyalty_ledger (
+          client_id, event_type, amount_sar, balance_after_sar,
+          source_change_log_id, admin_reason
+        ) VALUES (
+          p_client_id, 'diamond_shield_grant_failed', 0,
+          (SELECT cashback_balance_sar FROM clients WHERE id = p_client_id),
+          v_change_log_id,
+          'auto_grant failed: ' || SQLERRM
+        );
+        INSERT INTO audit_logs (entity_type, entity_id, action, new_value)
+        VALUES ('privilege_tier_change_log', v_change_log_id,
+                'diamond_shield_grant_failed',
+                jsonb_build_object('error', SQLERRM, 'sqlstate', SQLSTATE));
+        v_subscription_id := NULL;
+      END;
     END IF;
     -- D11: Diamond downgrade — schedule revoke (end_date or grace,
-    -- whichever later); detail in §4.7.
+    -- whichever later); detail in §4.8. Also wrapped per D26.
     IF v_current_tier = 'diamond' AND v_target_tier != 'diamond' THEN
-      PERFORM schedule_diamond_shield_revoke(p_client_id, v_change_log_id);
+      BEGIN
+        PERFORM schedule_diamond_shield_revoke(p_client_id, v_change_log_id);
+      EXCEPTION WHEN OTHERS THEN
+        INSERT INTO audit_logs (entity_type, entity_id, action, new_value)
+        VALUES ('privilege_tier_change_log', v_change_log_id,
+                'diamond_shield_revoke_schedule_failed',
+                jsonb_build_object('error', SQLERRM));
+      END;
     END IF;
   END IF;
 
@@ -954,6 +1079,22 @@ Admin manual override. Same audit pattern as Phase 12 §4.10
 INSERT before tier change, cookie fingerprint required, fail-closed
 on missing metadata.
 
+**Round 1 PR #80 F9+F18 fix — explicit validation rules**:
+
+1. `p_reason` must be ≥10 chars (matched by `privilege_tier_change_log_admin_required` CHECK + RPC raises `admin_reason_too_short` early).
+2. `p_lock_until`, if provided, MUST be `> CURRENT_DATE` (future-only).
+   Past dates rejected with `lock_until_must_be_future`. Per D18,
+   the value is treated as EXCLUSIVE end (lock active WHILE
+   `CURRENT_DATE < lock_until`).
+3. `p_new_tier = current_tier` is rejected with `no_op_tier_change`
+   (matches the new `privilege_tier_change_log_from_to_distinct_check`
+   constraint per F3 fix).
+4. `p_session_metadata.cookie_fingerprint` required NOT NULL +
+   non-empty (per Phase 12 §4.10 fail-closed pattern).
+5. If `p_new_tier='diamond'`, triggers `auto_grant_diamond_shield_subscription`
+   (D11 cross-product applies to admin_force too) — wrapped in
+   BEGIN/EXCEPTION per D26.
+
 ### §4.6 `expire_old_loyalty_credits() RETURNS JSONB`
 
 Daily cron. Scans `client_loyalty_ledger` for `earn` events with
@@ -964,8 +1105,22 @@ event for same earn — tracked via FIFO matching). INSERTs
 ### §4.7 `auto_grant_diamond_shield_subscription(p_client_id UUID, p_change_log_id UUID) RETURNS UUID`
 
 D11/D12 cross-product hook. Helper called by §4.2 + admin force
-when target tier = diamond. Returns subscription_id or NULL if
-skipped due to existing paid plan.
+when target tier = diamond.
+
+Round 1 PR #80 F11 fix — explicit return contract for all 3 branches:
+
+| Branch | Condition | Returns | Side effect |
+|---|---|---|---|
+| **Grant new** | No active medevac_subscription for client | UUID of new subscription | INSERT subscription + ledger event `diamond_shield_granted` (links subscription_id + change_log_id) |
+| **Skip — already Diamond** | Active subscription with `plan='diamond'` | `NULL` | Ledger event `diamond_shield_skipped_already_diamond` (links change_log_id only) |
+| **Skip — paid higher plan** | Active subscription with `plan != 'diamond'` AND `annual_fee_at_signup_sar > 0` | `NULL` | Ledger event `diamond_shield_skipped_paying_paid_plan` (links change_log_id; commercial conflict avoidance per D12) |
+
+The covered_members JSONB shape for the grant branch (per Phase 12
+schema §3.7): `[{"name": <client.full_name>, "relationship":
+"self", "dob": <client.dob OR NULL>}]`. Per Round 1 PR #80 F16,
+if `clients.dob IS NULL`, the entry is still inserted with
+`dob: null` — Phase 12 spec allows nullable dob for self-relationship
+covered_members (admin can edit later via /admin/medevac/subscriptions).
 
 ### §4.8 `schedule_diamond_shield_revoke(p_client_id UUID, p_change_log_id UUID) RETURNS VOID`
 
@@ -985,7 +1140,49 @@ diamond=4. Used in evaluate logic for upgrade/downgrade direction.
 
 IMMUTABLE. Returns diamond→platinum, platinum→gold, gold→silver,
 silver→silver (already lowest). Used in evaluate for soft
-downgrade.
+downgrade. Per Round 1 PR #80 F3 fix, callers MUST short-circuit
+when `step_down_one(t) = t` (the silver case) to avoid no-op
+log entries.
+
+### §4.11 `reconcile_client_cashback_balance(p_client_id UUID) RETURNS JSONB`
+
+Round 1 PR #80 F14 fix — D19 mentions a daily reconciliation cron
+but no RPC was defined. This is the worker called by
+`/api/cron/privilege/reconcile-balances/route.ts` (added to PR 3
+file list).
+
+Pure read-then-correct: computes `SUM(amount_sar)` over all ledger
+events for `p_client_id`, compares to `clients.cashback_balance_sar`,
+and:
+
+- If equal → return `{ok:true, drift:false, balance:<value>}`.
+- If different → log `audit_logs` entry with the drift, post a
+  corrective `adjust` ledger event with `admin_reason='auto_reconcile_drift_detected'`,
+  and update the denormalized balance. Return `{ok:true, drift:true,
+  prior_balance:<old>, ledger_sum:<sum>, corrected_to:<sum>}`.
+
+Cron `/api/cron/privilege/reconcile-balances` iterates all clients
+with `cashback_balance_sar > 0 OR any ledger event in last 24h`,
+calls this RPC per client, and aggregates results into a daily
+report (canary card #8 in PR 3 + founder summary email).
+
+### §4.12 `award_cashback_for_booking` race-locking note
+
+Round 1 PR #80 F13 fix — clarifying the existing FOR UPDATE:
+
+The `SELECT ... FOR UPDATE` on the `clients` row at the start of
+the RPC (`SELECT c.privilege_tier, ... FROM clients c JOIN ...
+WHERE c.id = p_client_id FOR UPDATE`) serializes all writes to
+`cashback_balance_sar` for that client across concurrent
+transactions. Two parallel booking payments fall into a wait
+queue, not a race.
+
+The subsequent `SELECT cashback_balance_sar` inside the INSERT
+VALUES clause reads the same locked row → safe.
+
+The DB UNIQUE INDEX `uq_client_loyalty_ledger_earn_per_booking`
+provides the second defense layer for trigger-replay races (where
+the same booking_id is awarded twice from racing trigger fires).
 
 ### ACL contract for all RPCs above
 
@@ -1059,15 +1256,25 @@ end-to-end).
   — §4.6 (expire), §4.7 (Diamond grant), §4.8 (revoke schedule)
 - `app/api/cron/privilege/evaluate-all/route.ts` — daily recalc
 - `app/api/cron/privilege/expire-cashback/route.ts` — daily expiry
+- `app/api/cron/privilege/reconcile-balances/route.ts` — daily
+  ledger-vs-denorm reconciliation per D19 (Round 1 PR #80 F14 fix)
 - `lib/empty-legs/matching.ts` — modify scoring with
-  `privilege_tier_boost_hours` (D13)
+  `privilege_tier_boost_hours` (D13) + enforce match-outbox
+  UNIQUE (empty_leg_id, client_id) per D27 (Round 1 PR #80 F7 fix
+  — prevents duplicate notifications across tier-boost windows)
 - `lib/empty-legs/matching-tier-boost.ts` — extracted pure logic
   for testing
+- Migration delta: `ALTER TABLE empty_legs_match_outbox ADD
+  CONSTRAINT uq_empty_legs_match_outbox_leg_client UNIQUE
+  (empty_leg_id, client_id)` (D27)
 - `app/(admin)/admin/(protected)/operators/canary/page.tsx` — add
   8th `<ChannelHealth>` card for privilege cron health
-- `vercel.json` — 2 new cron entries
+  (evaluate-all + expire-cashback + reconcile-balances rolled
+  into one card)
+- `vercel.json` — 3 new cron entries (evaluate-all, expire-cashback,
+  reconcile-balances)
 - Tests covering matching tier boost, expire logic, evaluate-all
-  drain pattern.
+  drain pattern, reconcile drift detection.
 
 **Probes**: Probes 45 (Diamond × Shield), 46 (downgrade Diamond
 revoke), 47 (EL early access), 48 (admin force + lock).
@@ -1084,7 +1291,9 @@ Single SQL script. ~50 checks covering:
 
 **ENUMs (4)**:
 - `client_privilege_tier` (4 labels)
-- `loyalty_ledger_event_type` (8 labels)
+- `loyalty_ledger_event_type` (10 labels — Round 1 PR #80 F12 fix
+  added `diamond_shield_skipped_already_diamond` + D26 added
+  `diamond_shield_grant_failed`)
 - `privilege_tier_change_reason` (6 labels)
 - `privilege_admin_action_type` (4 labels)
 
@@ -1093,8 +1302,12 @@ Single SQL script. ~50 checks covering:
 - `client_loyalty_ledger` (RLS on)
 - `privilege_tier_change_log` (RLS on)
 
-**Constraints (named, 10)**:
-- `client_loyalty_ledger_amount_sign_check`
+**Constraints (named, 11)** — Round 1 PR #80 F3 added
+`privilege_tier_change_log_from_to_distinct_check`:
+- `client_loyalty_ledger_amount_sign_check` (NOTE: must include
+  the new `diamond_shield_grant_failed` event_type in the
+  `amount_sar = 0` branch — verifier asserts the actual
+  pg_constraint definition matches the 10-value ENUM)
 - `client_loyalty_ledger_admin_reason_required_for_adjust`
 - `client_loyalty_ledger_subscription_required_for_grant`
 - `client_loyalty_ledger_change_log_required_for_diamond`
@@ -1103,12 +1316,15 @@ Single SQL script. ~50 checks covering:
 - `privilege_tier_change_log_admin_required`
 - `privilege_tier_change_log_grace_only_on_downgrade`
 - `privilege_tier_change_log_lock_only_on_admin_force`
+- `privilege_tier_change_log_from_to_distinct_check` (Round 1 F3 fix)
 - `bookings_cashback_redemption_cap_check`
 
-**Triggers (1)**:
-- `trg_bookings_payment_paid_award_cashback`
+**Triggers (2)** — Round 1 PR #80 F4 added `reject_total_amount_mutation_after_paid`:
+- `trg_bookings_payment_paid_award_cashback` (BEFORE INSERT OR
+  UPDATE — F15 fix extended to INSERT)
+- `trg_bookings_total_amount_immutable_after_paid` (D24)
 
-**Indexes (9)**:
+**Indexes (9)** — Round 1 PR #80 F1+F8 renamed `idx_bookings_payment_confirmed_for_loyalty` → `idx_bookings_paid_at_for_loyalty`:
 - `idx_client_loyalty_ledger_client`
 - `idx_client_loyalty_ledger_booking`
 - `idx_client_loyalty_ledger_expiry_sweep`
@@ -1117,9 +1333,11 @@ Single SQL script. ~50 checks covering:
 - `idx_privilege_tier_change_log_pending_grace`
 - `idx_clients_privilege_tier`
 - `idx_clients_below_threshold_grace`
-- `idx_bookings_payment_confirmed_for_loyalty`
+- `idx_bookings_paid_at_for_loyalty` (D22 — renamed from
+  payment_confirmed)
 
-**Helper + RPCs (10)** — full ACL check per Phase 12 Round 9:
+**Helper + RPCs (11)** — full ACL check per Phase 12 Round 9.
+Round 1 PR #80 F14 added `reconcile_client_cashback_balance`:
 - `tier_rank`, `step_down_one` (IMMUTABLE + PARALLEL SAFE)
 - `calculate_client_qualified_spend_12m`
 - `evaluate_client_privilege_tier`
@@ -1129,18 +1347,29 @@ Single SQL script. ~50 checks covering:
 - `expire_old_loyalty_credits`
 - `auto_grant_diamond_shield_subscription`
 - `schedule_diamond_shield_revoke`
+- `reconcile_client_cashback_balance` (D19 implementation per Round 1 F14)
 
 **Columns on clients (7)**:
 - privilege_tier, assigned_at, qualified_spend_12m, below_since,
   tier_locked_until, cashback_balance_sar, two_factor_enabled
 
-**Columns on bookings (2)**:
-- cashback_redemption_sar, cashback_earned_sar
+**Columns on bookings (3)** — Round 1 PR #80 F1 added `paid_at`:
+- cashback_redemption_sar, cashback_earned_sar, paid_at
 
-**Env vars (1)**:
-- `ENABLE_PRIVILEGE` exists (string, value either 'true' or 'false')
+**Env vars (1)** — Round 1 PR #80 F10 fix tightened wording:
+- `ENABLE_PRIVILEGE` exists as a non-empty string matching the
+  regex `^(true|false)$` (case-sensitive). Verified via a small
+  Server Action probe endpoint that returns a sanitised boolean
+  (mirror Phase 12 Probe 33 check #46 pattern).
 
-**Total: 51 named checks**.
+**Total: ~55 named checks** (exact count depends on whether each
+RPC's 4-tuple ACL assertion is counted as 1 check or 4. Probe 41
+SQL script will produce a deterministic number; the spec
+inventory above is the authoritative element list and the script
+is the authoritative count). Round 1 PR #80 net deltas vs round 0.6:
++1 trigger (D24 immutability), +1 constraint (D21
+booking_required), +1 RPC (reconcile per F14), +1 column
+(paid_at per F1), +2 ENUM labels.
 
 ### Probe 42 — Earn cashback on payment confirmation (+ D21 idempotency)
 
