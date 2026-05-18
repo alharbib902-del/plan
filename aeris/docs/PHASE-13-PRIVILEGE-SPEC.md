@@ -454,6 +454,10 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
                         'diamond_shield_revoked_on_downgrade')
     OR source_change_log_id IS NOT NULL
   ),
+  CONSTRAINT client_loyalty_ledger_booking_required_for_booking_events_check CHECK (
+    event_type NOT IN ('earn', 'redeem', 'refund_back')
+    OR booking_id IS NOT NULL
+  ),
   CONSTRAINT client_loyalty_ledger_expiry_only_on_earn CHECK (
     cashback_expiry_at IS NULL OR event_type = 'earn'
   )
@@ -1089,11 +1093,12 @@ Single SQL script. ~50 checks covering:
 - `client_loyalty_ledger` (RLS on)
 - `privilege_tier_change_log` (RLS on)
 
-**Constraints (named, 8)**:
+**Constraints (named, 10)**:
 - `client_loyalty_ledger_amount_sign_check`
 - `client_loyalty_ledger_admin_reason_required_for_adjust`
 - `client_loyalty_ledger_subscription_required_for_grant`
 - `client_loyalty_ledger_change_log_required_for_diamond`
+- `client_loyalty_ledger_booking_required_for_booking_events_check` (D21 defense-in-depth)
 - `client_loyalty_ledger_expiry_only_on_earn`
 - `privilege_tier_change_log_admin_required`
 - `privilege_tier_change_log_grace_only_on_downgrade`
@@ -1135,7 +1140,7 @@ Single SQL script. ~50 checks covering:
 **Env vars (1)**:
 - `ENABLE_PRIVILEGE` exists (string, value either 'true' or 'false')
 
-**Total: 50 named checks**.
+**Total: 51 named checks**.
 
 ### Probe 42 — Earn cashback on payment confirmation (+ D21 idempotency)
 
