@@ -1324,14 +1324,13 @@ batch.
 
 ## §8 Codex review history
 
-Spec under active Codex review; see the table below for the
-current resolved-round ledger. Each round's fix commits are
-squash-mergeable on top of the round-0 draft; inline
-`Round N PR #<spec-pr> [P1/P2] #M fix` citations throughout this
-document point back to the row below.
+Spec under active Codex review. Round-by-round tracking is via
+git log + commit messages (`Phase 13 spec round N fixes (X P1 + Y P2)`)
+rather than an in-document ledger. Inline `Round N PR #<spec-pr>
+[P1/P2] #M fix` citations are added at the points the fix landed.
 
-| Round | Findings | Severity mix | Resolved at |
-|---|---|---|---|
-| 0 | (initial draft) | — | (this commit) |
-
-**Aggregate to date:** 0 findings closed; 0 outstanding P1.
+A summary ledger table will be added here only if rounds begin to
+repeat on the same issue (Phase 12 added one at round 14 after the
+per-round status wording started to lag-by-one repeatedly). For
+clean rounds that close distinct findings, git log is the canonical
+record.
