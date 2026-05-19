@@ -4,11 +4,21 @@
 -- Source of truth: docs/PHASE-13-PRIVILEGE-SPEC.md (29 D-specs,
 -- 8 user journeys, 11 RPCs). This migration ships:
 --
---   §3.1  — 4 new ENUMs
+--   §3.1  — 4 new ENUMs (loyalty_ledger_event_type has 9 labels —
+--           NO refund_back per D25; Phase 13.1 will ADD VALUE
+--           alongside its producer RPC — Round 9 PR #81 F22 fix)
 --   §3.2  — 3 new tables + 4-row seed
 --   §3.3  — 7 columns on clients + 3 on bookings + 11 named CHECKs
---   §3.4  — 3 triggers (paid_state_immutable + paid_award × 2)
---   §3.5  — RLS policies (3 explicit CREATE POLICY blocks)
+--   §3.4  — 1 trigger (paid_state_immutable D24+F14); the 4
+--           payment_paid_award_cashback triggers (BEFORE/AFTER ×
+--           INSERT/UPDATE) are INTENTIONALLY deferred to PR 3 per
+--           spec §7 activation runbook — Round 9 PR #81 F25 fix
+--   §3.5  — NO CREATE POLICY blocks (Round 9 PR #81 F23 fix);
+--           matches Phase 12 pattern: ALTER TABLE ENABLE RLS
+--           locks down direct access for all non-service-role
+--           callers, and all client/admin reads flow through
+--           SECURITY DEFINER RPCs. PR 2 will add the client
+--           read RPCs alongside the client UI.
 --   §4.1-§4.5 — core RPCs (calc spend, evaluate tier, award/redeem
 --               cashback, admin force)
 --   §4.9-§4.10 — helpers (tier_rank, step_down_one)
@@ -39,12 +49,18 @@ END $$;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
                   WHERE t.typname = 'loyalty_ledger_event_type' AND n.nspname = 'public') THEN
+    -- Round 9 PR #81 F22 fix — `refund_back` REMOVED from v1 ENUM
+    -- per spec D25. Phase 13.1 will introduce via:
+    --   ALTER TYPE loyalty_ledger_event_type ADD VALUE 'refund_back'
+    -- alongside its producer RPC (process_refund_for_booking) +
+    -- trigger (on_bookings_payment_refunded_reverse_cashback). v1
+    -- has no producer, so shipping the value here = dead ENUM
+    -- branches in CHECK constraints + Probe drift.
     CREATE TYPE loyalty_ledger_event_type AS ENUM (
       'earn',                                       -- cashback from confirmed booking
       'redeem',                                     -- applied to a future booking
       'adjust',                                     -- admin manual correction
       'expire',                                     -- 24-month expiry sweep
-      'refund_back',                                -- D25 reserved; no producer in v1
       'diamond_shield_granted',                     -- D11 cross-product auto-grant
       'diamond_shield_skipped_already_diamond',     -- J5 skip: active paying diamond exists
       'diamond_shield_skipped_paying_paid_plan',    -- D12 skip: paying lower paid plan
@@ -177,11 +193,13 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
   cashback_expiry_at    TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-  -- Round 5 PR #80 F7 fix — all diamond_shield_* events have
-  -- amount_sar=0 (they record state transitions, not balance deltas).
-  -- Prefix check covers all 5 current variants + any future addition.
+  -- Round 5 PR #80 F7 fix — diamond_shield_* events have amount_sar=0
+  -- (state transitions, not balance deltas). Prefix check covers all
+  -- 5 current variants + future additions.
+  -- Round 9 PR #81 F22 fix — removed `refund_back` from positive
+  -- branch (v1 ENUM doesn't contain it).
   CONSTRAINT client_loyalty_ledger_amount_sign_check CHECK (
-    (event_type IN ('earn', 'refund_back') AND amount_sar > 0)
+    (event_type = 'earn' AND amount_sar > 0)
     OR (event_type IN ('redeem', 'expire') AND amount_sar < 0)
     OR (event_type = 'adjust')
     OR (event_type::text LIKE 'diamond_shield_%' AND amount_sar = 0)
@@ -199,8 +217,9 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
     NOT (event_type::text LIKE 'diamond_shield_%')
     OR source_change_log_id IS NOT NULL
   ),
+  -- Round 9 PR #81 F22 fix — removed `refund_back` (not in v1 ENUM).
   CONSTRAINT client_loyalty_ledger_booking_required_for_booking_events_check CHECK (
-    event_type NOT IN ('earn', 'redeem', 'refund_back')
+    event_type NOT IN ('earn', 'redeem')
     OR booking_id IS NOT NULL
   ),
   CONSTRAINT client_loyalty_ledger_expiry_only_on_earn CHECK (
@@ -534,6 +553,7 @@ DECLARE
   v_amount_paid      DECIMAL(14,2);
   v_cashback_amount  DECIMAL(12,2);
   v_expiry_months    INT;
+  v_current_balance  DECIMAL(14,2);
   v_new_balance      DECIMAL(14,2);
   v_ledger_id        UUID;
   v_booking_client   UUID;
@@ -588,13 +608,21 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'booking_covered_medevac_excluded');
   END IF;
 
-  -- Load tier + cashback % (lock clients row)
-  SELECT c.privilege_tier, t.cashback_pct, t.cashback_expiry_months
-    INTO v_tier, v_pct, v_expiry_months
+  -- Round 9 PR #81 F24 fix — `FOR UPDATE OF c` locks ONLY the
+  -- clients row, not the privilege_tier_thresholds lookup row.
+  -- Earlier rounds used `FOR UPDATE` on the JOIN which locks
+  -- BOTH tables — every cashback award contended on the same
+  -- 4-row lookup table.
+  -- Round 9 PR #81 F26 fix — load v_current_balance here (single
+  -- locked read) instead of subquerying inside the INSERT VALUES.
+  SELECT c.privilege_tier, c.cashback_balance_sar,
+         t.cashback_pct, t.cashback_expiry_months
+    INTO v_tier, v_current_balance,
+         v_pct, v_expiry_months
   FROM clients c
   JOIN privilege_tier_thresholds t ON t.tier = c.privilege_tier
   WHERE c.id = p_client_id
-  FOR UPDATE;
+  FOR UPDATE OF c;
 
   IF v_tier IS NULL THEN
     RETURN jsonb_build_object('ok', false, 'error', 'client_not_found');
@@ -607,6 +635,7 @@ BEGIN
   END IF;
 
   v_cashback_amount := ROUND(v_amount_paid * v_pct / 100, 2);
+  v_new_balance := v_current_balance + v_cashback_amount;
 
   -- D21 layer 3+4: BEGIN/EXCEPTION on UNIQUE INDEX (race backstop)
   BEGIN
@@ -615,10 +644,10 @@ BEGIN
       booking_id, cashback_expiry_at
     ) VALUES (
       p_client_id, 'earn', v_cashback_amount,
-      (SELECT cashback_balance_sar FROM clients WHERE id = p_client_id) + v_cashback_amount,
+      v_new_balance,
       p_booking_id,
       NOW() + (v_expiry_months || ' months')::INTERVAL
-    ) RETURNING id, balance_after_sar INTO v_ledger_id, v_new_balance;
+    ) RETURNING id INTO v_ledger_id;
   EXCEPTION WHEN unique_violation THEN
     RETURN jsonb_build_object(
       'ok', true,
@@ -865,41 +894,31 @@ GRANT EXECUTE ON FUNCTION admin_force_privilege_tier(UUID, client_privilege_tier
 
 
 -- =============================================================
--- §3.5 RLS policies (F35 — explicit CREATE POLICY blocks)
--- =============================================================
-
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies
-                  WHERE schemaname = 'public' AND tablename = 'client_loyalty_ledger'
-                    AND policyname = 'client_loyalty_ledger_select_own') THEN
-    CREATE POLICY client_loyalty_ledger_select_own
-      ON client_loyalty_ledger FOR SELECT
-      TO authenticated
-      USING (client_id = (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid);
-  END IF;
-END $$;
-
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies
-                  WHERE schemaname = 'public' AND tablename = 'privilege_tier_change_log'
-                    AND policyname = 'privilege_tier_change_log_select_own') THEN
-    CREATE POLICY privilege_tier_change_log_select_own
-      ON privilege_tier_change_log FOR SELECT
-      TO authenticated
-      USING (client_id = (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid);
-  END IF;
-END $$;
-
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies
-                  WHERE schemaname = 'public' AND tablename = 'privilege_tier_thresholds'
-                    AND policyname = 'privilege_tier_thresholds_select_public') THEN
-    CREATE POLICY privilege_tier_thresholds_select_public
-      ON privilege_tier_thresholds FOR SELECT
-      TO anon, authenticated
-      USING (true);
-  END IF;
-END $$;
+-- §3.5 RLS — Round 9 PR #81 F23 fix
+--
+-- The earlier rounds shipped 3 CREATE POLICY blocks that used
+-- `current_setting('request.jwt.claims', true)::jsonb->>'sub'`
+-- to derive the authenticated client_id. Phase 9 client auth
+-- (clients table + client_sessions) is a CUSTOM cookie-based
+-- bcrypt session — NOT Supabase Auth JWT. The JWT claim is
+-- empty for Phase 9 clients, so the USING clause never matched,
+-- effectively granting no SELECT to any role except service_role.
+--
+-- This migration now matches the Phase 12 pattern: ALTER TABLE
+-- ENABLE ROW LEVEL SECURITY (already done above) without CREATE
+-- POLICY blocks. The net effect on PostgREST is full lockdown
+-- for anon + authenticated roles; only service_role can read or
+-- write directly. All client reads + admin reads flow through
+-- SECURITY DEFINER RPCs (admin reads ship in this PR via
+-- lib/privilege/admin-pii.ts; client reads ship in PR 2 as part
+-- of /me/privilege).
+--
+-- The privilege_tier_thresholds lookup is the one row we'd
+-- ideally make publicly readable (it powers the marketing page),
+-- but in v1 the marketing page reads it via service_role from a
+-- Next.js Server Component, so a public SELECT policy isn't
+-- needed yet either. If anon read becomes required later (e.g.
+-- a client-side React fetch), revisit then with a clear policy.
 
 
 -- =============================================================
