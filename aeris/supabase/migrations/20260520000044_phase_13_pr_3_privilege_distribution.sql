@@ -360,13 +360,27 @@ GRANT EXECUTE ON FUNCTION schedule_diamond_shield_revoke(UUID, UUID)
 -- =============================================================
 -- §4.6 expire_old_loyalty_credits (daily cron)
 --
--- D18: 24-month cashback expiry. Scans `earn` events with
--- cashback_expiry_at < NOW() and not yet expired. FIFO matching:
--- for each client, oldest unexpired earn first.
+-- D18: 24-month cashback expiry. Per-client FIFO walk over
+-- the earn ledger, only expiring portions of `earn` rows that
+-- have NOT already been consumed by an earlier `redeem` or
+-- `expire` event.
 --
--- v1 simplification: emit one `expire` event per client with the
--- total expired amount. Future v1.1 may switch to per-earn
--- matching for finer audit.
+-- Round 1 PR #83 P1 fix — earlier version summed all expired
+-- `earn.amount_sar` for the client then capped at the
+-- denormalized balance. That over-expired in this scenario:
+--   - earn 200 (expired)
+--   - earn 400 (not yet expired)
+--   - redeem -350 (FIFO: consumes the old 200 fully + 150 of
+--     the new 400 → remaining = 250 from the un-expired earn)
+--   - Old approach: expired_amount = 200, capped at balance
+--     250 → posts -200, balance drops to 50. Incorrect because
+--     the 200 was already redeemed.
+--   - FIFO-correct: 0 to expire (the old earn is consumed;
+--     the remaining 250 belongs to the un-expired earn).
+--
+-- v1 still emits ONE `expire` event per client per run with
+-- the FIFO-correct unconsumed-expired total. Per-earn ledger
+-- references stay a v1.1 enhancement.
 -- =============================================================
 
 CREATE OR REPLACE FUNCTION expire_old_loyalty_credits()
@@ -383,8 +397,11 @@ DECLARE
   v_total_expired_sar DECIMAL(14,2) := 0;
   v_errors           INT := 0;
 BEGIN
-  -- For each client with an unredeemed expired earn event, sum the
-  -- expired amount and post a single `expire` event.
+  -- Outer candidate filter: clients with at least one expired
+  -- earn not yet superseded by a later expire event. Kept as a
+  -- batch-size optimization; the FIFO recompute inside the loop
+  -- is the authoritative source of v_expired_amount (a stale
+  -- match here can land on a 0 result and CONTINUE).
   FOR v_client_id IN
     SELECT DISTINCT client_id
     FROM client_loyalty_ledger
@@ -398,7 +415,9 @@ BEGIN
       )
   LOOP
     BEGIN
-      -- Lock client row
+      -- Lock client row (also serializes against a concurrent
+      -- redeem on the same client, so total_consumed below
+      -- includes a redeem that lands in this same cron tick).
       SELECT cashback_balance_sar INTO v_current_balance
       FROM clients WHERE id = v_client_id FOR UPDATE;
 
@@ -406,15 +425,50 @@ BEGIN
         CONTINUE;
       END IF;
 
-      -- Compute expired total — sum of `earn` amounts past expiry
-      -- not yet superseded by a subsequent `expire` event.
-      SELECT COALESCE(SUM(amount_sar), 0) INTO v_expired_amount
-      FROM client_loyalty_ledger
-      WHERE client_id = v_client_id
-        AND event_type = 'earn'
-        AND cashback_expiry_at < NOW();
+      -- FIFO walk:
+      --   1. total_consumed = absolute SUM of (redeem + expire)
+      --      events ever posted for this client. Walks ALL of
+      --      history; cheap given low row counts per client.
+      --   2. Window-aggregate earns ordered by (created_at, id)
+      --      ASC and project a cumulative_amount column.
+      --   3. For each earn, project "remaining" =
+      --        0                                       if cumulative_amount <= total_consumed
+      --        amount_sar                              if cumulative_amount - amount_sar >= total_consumed
+      --        cumulative_amount - total_consumed     otherwise (partial consumption)
+      --   4. Sum `remaining` over EXPIRED earns only → that's
+      --      the FIFO-correct amount to expire NOW.
+      WITH consumption AS (
+        SELECT COALESCE(SUM(-amount_sar), 0) AS total_consumed
+        FROM client_loyalty_ledger
+        WHERE client_id = v_client_id
+          AND event_type IN ('redeem', 'expire')
+      ),
+      earns AS (
+        SELECT
+          amount_sar,
+          cashback_expiry_at,
+          SUM(amount_sar) OVER (
+            ORDER BY created_at ASC, id ASC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS cumulative_amount
+        FROM client_loyalty_ledger
+        WHERE client_id = v_client_id
+          AND event_type = 'earn'
+      )
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN cumulative_amount <= (SELECT total_consumed FROM consumption) THEN 0
+          WHEN cumulative_amount - amount_sar >= (SELECT total_consumed FROM consumption) THEN amount_sar
+          ELSE cumulative_amount - (SELECT total_consumed FROM consumption)
+        END
+      ), 0)
+      INTO v_expired_amount
+      FROM earns
+      WHERE cashback_expiry_at < NOW();
 
-      -- Cap at current balance (can't expire more than client has)
+      -- Defensive cap: never expire more than the current
+      -- denormalized balance (catches admin-driven drift that
+      -- the FIFO walk can't see).
       v_expired_amount := LEAST(v_expired_amount, v_current_balance);
 
       IF v_expired_amount <= 0 THEN

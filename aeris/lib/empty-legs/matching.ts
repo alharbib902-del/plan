@@ -560,16 +560,23 @@ export async function matchLeg(
       clientsSkippedPreferences = clientResult.skipped_preferences;
       if (tierBoostActive) {
         clientsSkippedTierBoost = skippedTierBoost;
-        // Record audit rows for ONLY the clients we actually
-        // included in the enqueue batch. enqueueClientLegNotifications
-        // filters out preference-opted-out clients downstream, but
-        // those still count as "matched under tier-boost rules"
-        // for D27 audit purposes (the boost window decision was
-        // applied), so we keep all tierBoostMatches entries that
-        // landed in topClients.
-        const topClientIds = new Set(topClients.map((c) => c.client_id));
+        // Round 1 PR #83 P2 fix — record audit rows for ONLY
+        // the clients that actually got a notification row
+        // written. enqueueClientLegNotifications can skip a
+        // top-N candidate when their notification_preferences
+        // opts them out of BOTH email AND wa.me channels
+        // (counted in clientResult.skipped_preferences). Those
+        // clients did NOT receive a notification; stamping
+        // their `notification_sent_at` would be misleading and
+        // they\'d be permanently excluded from a future retry
+        // via the (leg, client) UNIQUE. Filter by the actual
+        // written rows so the audit table reflects what was
+        // SENT, not what was MATCHED.
+        const writtenClientIds = new Set(
+          clientResult.written.map((r) => r.lead_inquiry_id)
+        );
         const auditRows = tierBoostMatches.filter((m) =>
-          topClientIds.has(m.client_id)
+          writtenClientIds.has(m.client_id)
         );
         await recordClientEmptyLegMatches(createAdminClient(), leg.id, auditRows);
       }

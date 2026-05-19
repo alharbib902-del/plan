@@ -28,9 +28,13 @@ import { createAdminClient } from '@/lib/supabase/admin';
  *
  * Idempotency: the RPC itself is idempotent on the
  * `(booking_id, event_type='redeem')` UNIQUE INDEX — a retry
- * of this helper for the same booking returns the
- * `already_redeemed_for_booking` error envelope, which the
- * caller treats as success (the redemption already happened).
+ * of this helper for the same booking returns
+ * `{ ok: false, error: 'already_redeemed_for_booking' }`. The
+ * accept-action callers pass this through to the UI as a soft
+ * `cashback_redemption.error` field; the booking itself
+ * already succeeded so the user sees the booking confirmation
+ * plus a "redemption already applied" notice rather than a
+ * hard accept failure.
  */
 
 export type RedeemCashbackResult =
