@@ -285,6 +285,14 @@ CREATE INDEX IF NOT EXISTS idx_bookings_paid_at_for_loyalty
 -- §3.4 Triggers — paid_state immutability (D24 + F26)
 -- =============================================================
 
+-- Round 7 PR #80 F14 fix — also block payment_status mutation
+-- once paid_at is set. Without this guard an admin could
+-- UPDATE bookings SET payment_status='refunded' WHERE id=<paid>
+-- and silently strip the row from the spend_12m window (which
+-- filters on payment_status='paid') while leaving the cashback
+-- 'earn' event in the ledger — orphaned credit. v1 has no refund
+-- RPC (D25 deferred to Phase 13.1), so the only safe v1 policy
+-- is absolute immutability of all 3 paid-state fields.
 CREATE OR REPLACE FUNCTION reject_paid_state_mutation_after_paid()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
@@ -295,6 +303,10 @@ BEGIN
     END IF;
     IF NEW.paid_at IS DISTINCT FROM OLD.paid_at THEN
       RAISE EXCEPTION 'bookings_paid_at_immutable_after_set: cannot mutate paid_at once set (booking_id=%, old=%, new=%)', OLD.id, OLD.paid_at, NEW.paid_at
+        USING ERRCODE = '22023';
+    END IF;
+    IF NEW.payment_status IS DISTINCT FROM OLD.payment_status THEN
+      RAISE EXCEPTION 'bookings_payment_status_immutable_after_paid: cannot mutate payment_status once paid_at is set (booking_id=%, old=%, new=%)', OLD.id, OLD.payment_status, NEW.payment_status
         USING ERRCODE = '22023';
     END IF;
   END IF;
@@ -665,7 +677,8 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'redemption_amount_invalid');
   END IF;
 
-  -- F28 idempotency: one redemption per booking
+  -- F28 idempotency: one redemption per booking (no lock, just
+  -- an early-exit check).
   IF EXISTS (
     SELECT 1 FROM client_loyalty_ledger
     WHERE booking_id = p_booking_id AND event_type = 'redeem'
@@ -673,7 +686,33 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'already_redeemed_for_booking');
   END IF;
 
-  -- F27 race fix: FOR UPDATE serializes balance writes
+  -- Round 7 PR #80 F15 fix (P1) + Round 5 F3 fix:
+  -- Lock order: BOOKING FIRST, THEN CLIENT.
+  -- Matches the payment-confirmation path (bookings UPDATE holds
+  -- the booking lock, then AFTER trigger calls award_cashback
+  -- which locks the client). Earlier rounds locked client first,
+  -- creating a classic ABBA deadlock under contention. Same
+  -- security boundary on the booking SELECT (AND client_id filter
+  -- prevents cross-client redemption).
+  SELECT total_amount, paid_at INTO v_total_amount, v_paid_at
+  FROM bookings
+  WHERE id = p_booking_id AND client_id = p_client_id
+  FOR UPDATE;
+  IF v_total_amount IS NULL THEN
+    -- Same envelope for "not found" and "not owned" (don't leak
+    -- booking existence across clients).
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_not_owned');
+  END IF;
+
+  -- D29: redemption must happen BEFORE payment confirmation.
+  -- Short-circuit BEFORE we take the clients lock — saves the
+  -- client-row contention if the booking is already paid.
+  IF v_paid_at IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_already_paid');
+  END IF;
+
+  -- F27 race fix: NOW lock the clients row (second in the order).
+  -- All balance writes serialize on this lock.
   SELECT cashback_balance_sar INTO v_current_balance
   FROM clients WHERE id = p_client_id FOR UPDATE;
 
@@ -688,20 +727,6 @@ BEGIN
     );
   END IF;
 
-  -- Round 5 PR #80 F3 fix (P1): lock booking row WITH client_id
-  -- predicate. Same boundary as F2 — SECURITY DEFINER cannot trust
-  -- the caller; without the AND client_id filter, any caller with
-  -- a valid booking_id could redeem against any client's balance.
-  SELECT total_amount, paid_at INTO v_total_amount, v_paid_at
-  FROM bookings
-  WHERE id = p_booking_id AND client_id = p_client_id
-  FOR UPDATE;
-  IF v_total_amount IS NULL THEN
-    -- Same envelope for both branches (don't leak booking existence
-    -- across clients).
-    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_not_owned');
-  END IF;
-
   -- D7 cap 1: redemption <= 50% of total_amount
   IF p_redemption_amount > v_total_amount * 0.5 THEN
     RETURN jsonb_build_object(
@@ -714,12 +739,6 @@ BEGIN
     RETURN jsonb_build_object(
       'ok', false, 'error', 'redemption_leaves_no_cash_payment'
     );
-  END IF;
-
-  -- D29: redemption must happen BEFORE payment confirmation.
-  -- Now read from the locked booking row (no second SELECT).
-  IF v_paid_at IS NOT NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'booking_already_paid');
   END IF;
 
   v_new_balance := v_current_balance - p_redemption_amount;
