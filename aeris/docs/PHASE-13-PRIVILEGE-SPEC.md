@@ -122,12 +122,16 @@ from competitors (NetJets Card, VistaJet Membership) by combining:
      (always at least 1 SAR paid in cash, to keep payment_status
      trigger valid).
    - INSERT ledger event `{ event_type:'redeem',
-     amount_sar:4000, booking_id, balance_after:0 }`.
-   - UPDATE `bookings SET cashback_redemption_sar=4000,
-     amount_paid_sar=56000` (booking.total_amount - redemption).
-5. Future cashback earned on this booking is calculated on
-   `amount_paid_sar`, NOT `total_amount` → **no compound** (D-spec
-   D4). E.g. gold 8% on 56k = 4,480 SAR earned.
+     amount_sar:-4000, booking_id, balance_after:0 }`.
+   - UPDATE `bookings SET cashback_redemption_sar=4000`.
+     **Note (Round 4 PR #80 F37 fix)**: `total_amount` is NOT
+     mutated — D24 immutability already prevents that. The
+     effective payable amount = `total_amount - cashback_redemption_sar`
+     is computed inline (D23) at award/payment time, never stored.
+5. Future cashback earned on this booking is calculated on the
+   inline-derived `amount_paid = total_amount - cashback_redemption_sar`
+   (D23), NOT `total_amount` → **no compound** (D-spec
+   D6). E.g. gold 8% on 56k = 4,480 SAR earned.
 
 ### J4 — Client falls below threshold → 90-day grace → soft downgrade
 
@@ -279,7 +283,7 @@ schema/RPC/probe sections for traceability.
 | ID | Decision | Rationale |
 |---|---|---|
 | **D1** | Spend window = rolling 12 months (365 days) | Reflects real activity; smooths year-end cliff effects. |
-| **D2** | Spend basis = `bookings.payment_status_confirmed_at` (or paid_at), NOT `created_at` | Prevents cashback on incomplete/cancelled bookings; aligns with revenue recognition. |
+| **D2** | Spend basis = `bookings.paid_at`, NOT `created_at` (Round 4 PR #80 F32 fix — cleaned up earlier alias) | Prevents cashback on incomplete/cancelled bookings; aligns with revenue recognition. |
 | **D3** | Tier thresholds (annual qualified spend, SAR): silver < 100k, gold 100k-500k, platinum 500k-2M, diamond ≥ 2M | From advisor-doc §5.3. |
 | **D4** | Cashback %: silver 5, gold 8, platinum 12, diamond 15 | From advisor-doc §5.3. |
 | **D5** | Cashback model: internal ledger, credit-only, no cash-out in v1 | Simpler; retention-driving; lower regulatory risk (no money transmission). |
@@ -305,6 +309,8 @@ schema/RPC/probe sections for traceability.
 | **D25** | **Refund flow deferred to Phase 13.1 mini-spec**: v1 supports full bookings cancellation BEFORE `payment_status='paid'` (no cashback impact since none earned). Once paid, total_amount is locked (D24); any post-paid refund requires a dedicated `process_refund_for_booking` RPC + new ledger logic. The `refund_back` ENUM value + `on_bookings_payment_refunded_reverse_cashback` trigger are **reserved placeholders** in v1 — no producer path exists. Trigger DDL is omitted from PR 1 migration to avoid dead code (Round 1 PR #80 F5 fix). | Avoids opening a tax/accounting decision tree (proportional cashback reversal, partial vs full, VAT handling) inside Phase 13 v1. The decision belongs with Phase 14 payment gateway integration (refund webhooks). |
 | **D26** | **Diamond × Shield grant failure is non-fatal to payment confirmation**: `evaluate_client_privilege_tier` wraps `auto_grant_diamond_shield_subscription` call in BEGIN/EXCEPTION. On failure, logs `diamond_shield_grant_failed` ledger event (new ENUM value) + writes to `audit_logs` + continues. Payment UPDATE succeeds regardless. Admin reviews failed grants via canary card (PR 3). | Decouples Privilege side-effects from payment confirmation — a Phase 12 schema change cannot block payment receipt (Round 1 PR #80 F6 fix). |
 | **D27** | **EL match outbox enforces `UNIQUE (empty_leg_id, client_id)` to prevent duplicate notifications** across tier-boost windows. Gold matched at T0 (boost active) cannot be re-matched at T+2h (FCFS round); the second insert fails via UNIQUE → matching cron logs `tier_boost_already_consumed` skip reason. | Per founder review of EL early access: privilege gives priority window, not multiple matches (Round 1 PR #80 F7 fix). |
+| **D28** | **VAT treatment**: `bookings.total_amount` is the **VAT-inclusive (gross)** value (Saudi 15% VAT included). Cashback is computed on the gross figure: `gross_amount_paid * cashback_pct / 100`. Phase 14 will introduce explicit `vat_amount_sar` + `pre_vat_amount_sar` columns when ZATCA integration ships; until then, the gross-basis simplifies the v1 ledger arithmetic + matches how the client sees the offer total in `/accept-offer`. | Avoids opening tax-accounting decision tree in v1; defers VAT-aware cashback to Phase 14 alongside the ZATCA invoice work. Round 4 PR #80 F38 fix. |
+| **D29** | **Booking cancellation interaction**: (1) Cancel BEFORE `payment_status='paid'` → no cashback earned (trigger never fires) AND no redemption possible (RPC `redeem_cashback_for_booking` rejects bookings with `paid_at IS NULL`... wait, actually we should allow pre-paid redemption; clarification below). (2) Cancel AFTER `payment_status='paid'` → blocked by D24 immutability (post-paid mutation = refund flow, deferred D25). Pre-paid redemption interaction: `redeem_cashback_for_booking` checks the booking is NOT yet paid (so client can lock-in cashback redemption before actually paying); if the booking is then cancelled before payment, the `redeem` ledger event remains posted, the cashback was debited from balance, but no actual benefit was delivered. **Decision**: v1 leaves the redeem event in place (no auto-reversal); admin can manually `admin_adjust_cashback` to restore balance if the cancellation was operator-driven (not client-driven). Phase 13.1 may add `cancel_unused_redemption` RPC for client-driven cancellations. | Avoids an auto-reversal layer that would be hard to test in v1; admin-driven correction is acceptable for low-volume v1 launch. Round 4 PR #80 F39 fix. |
 
 ---
 
@@ -768,18 +774,53 @@ Phase 13.1 will:
 
 ### §3.5 RLS policies
 
-- `client_loyalty_ledger`: clients read OWN rows only (filter on
-  `client_id = auth.uid()::UUID` mapped via session cookie helper).
-  Admin role reads all (via SECURITY DEFINER RPC; no direct
-  table access). No INSERT/UPDATE/DELETE from any non-service
-  role.
-- `privilege_tier_change_log`: clients read OWN rows. Admin via
-  SECURITY DEFINER RPC. Append-only via RPC.
-- `privilege_tier_thresholds`: PUBLIC SELECT (everyone can see
-  threshold table; UPDATE service_role only).
-- `clients` new columns: existing RLS continues (client owns row).
-  Cashback balance is sensitive — return `0` to other clients (per
-  Phase 9 RLS).
+Round 4 PR #80 F35 fix — earlier rounds described RLS in prose
+only. Phase 12 Round 9 P2 #2 pattern requires explicit `CREATE
+POLICY` blocks per table for Codex acceptance. Full DDL below.
+
+```sql
+-- client_loyalty_ledger: clients read OWN rows; no client write.
+-- Service-role bypasses RLS (writes happen via SECURITY DEFINER RPCs).
+CREATE POLICY client_loyalty_ledger_select_own
+  ON client_loyalty_ledger FOR SELECT
+  TO authenticated
+  USING (client_id = (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid);
+-- No INSERT/UPDATE/DELETE policies → all writes happen via service-role.
+
+-- privilege_tier_change_log: clients read OWN rows. Admin force
+-- + admin_reason ARE visible to the affected client (transparency).
+-- If we want to hide admin_reason from client, that's Phase 13.x.
+CREATE POLICY privilege_tier_change_log_select_own
+  ON privilege_tier_change_log FOR SELECT
+  TO authenticated
+  USING (client_id = (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid);
+
+-- privilege_tier_thresholds: PUBLIC SELECT (anyone can see the
+-- 4-tier breakdown — it's the basis of the loyalty marketing page).
+-- Service-role only updates (rare; thresholds are stable).
+CREATE POLICY privilege_tier_thresholds_select_public
+  ON privilege_tier_thresholds FOR SELECT
+  TO anon, authenticated
+  USING (true);
+
+-- clients new columns: existing RLS policies continue from Phase 9
+-- (client owns row, sees own data only). cashback_balance_sar and
+-- privilege_tier are part of the existing OWN-row visibility →
+-- no additional CREATE POLICY needed (they're columns on a row
+-- that already has SELECT-own policy from Phase 9 PR 1).
+--
+-- Defensive note: anon role cannot see clients table at all per
+-- existing Phase 9 RLS → no risk of leaking cashback_balance_sar
+-- to logged-out visitors.
+```
+
+**Service-role bypass**: all 11 RPCs (§4) are `SECURITY DEFINER`
++ `SET search_path = public`, so they execute as the function
+owner (service-role) and bypass RLS. Application code calling
+RPCs via `createAdminClient()` (Phase 7+ convention) sees full
+visibility; clients calling via PostgREST hit RLS-filtered rows
+of `client_loyalty_ledger` + `privilege_tier_change_log` (own
+only).
 
 ---
 
@@ -1404,13 +1445,83 @@ the same booking_id is awarded twice from racing trigger fires).
 
 ### ACL contract for all RPCs above
 
+Round 4 PR #80 F36 fix — per-RPC explicit DDL (Phase 12 Round 9
+P2 #2 pattern). Each function definition in PR 1 migration MUST
+be immediately followed by:
+
 ```sql
-REVOKE ALL ON FUNCTION <name>(<args>) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION <name>(<args>) TO service_role;
+REVOKE ALL ON FUNCTION <name>(<exact_arg_types>) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION <name>(<exact_arg_types>) TO service_role;
+```
+
+Concrete examples for the 11 RPCs:
+
+```sql
+REVOKE ALL ON FUNCTION calculate_client_qualified_spend_12m(UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION calculate_client_qualified_spend_12m(UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION evaluate_client_privilege_tier(UUID, UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION evaluate_client_privilege_tier(UUID, UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION award_cashback_for_booking(UUID, UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION award_cashback_for_booking(UUID, UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION redeem_cashback_for_booking(UUID, UUID, DECIMAL)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION redeem_cashback_for_booking(UUID, UUID, DECIMAL)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION admin_force_privilege_tier(UUID, client_privilege_tier, JSONB, TEXT, DATE)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION admin_force_privilege_tier(UUID, client_privilege_tier, JSONB, TEXT, DATE)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION expire_old_loyalty_credits()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION expire_old_loyalty_credits()
+  TO service_role;
+
+REVOKE ALL ON FUNCTION auto_grant_diamond_shield_subscription(UUID, UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION auto_grant_diamond_shield_subscription(UUID, UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION schedule_diamond_shield_revoke(UUID, UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION schedule_diamond_shield_revoke(UUID, UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION reconcile_client_cashback_balance(UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION reconcile_client_cashback_balance(UUID)
+  TO service_role;
+
+-- Helpers (IMMUTABLE) — also revoked from PUBLIC for consistency.
+-- These are called only from other SECURITY DEFINER RPCs, never
+-- from PostgREST, so revocation is defense-in-depth.
+REVOKE ALL ON FUNCTION tier_rank(client_privilege_tier)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION tier_rank(client_privilege_tier)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION step_down_one(client_privilege_tier)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION step_down_one(client_privilege_tier)
+  TO service_role;
 ```
 
 Probe 41 asserts all 4 privilege checks per RPC (Phase 12 Round 9
-pattern).
+pattern): for each function the probe asserts ALL FOUR of
+`has_function_privilege('service_role',  $oid, 'EXECUTE') = true`,
+`has_function_privilege('public',        $oid, 'EXECUTE') = false`,
+`has_function_privilege('anon',          $oid, 'EXECUTE') = false`,
+`has_function_privilege('authenticated', $oid, 'EXECUTE') = false`.
 
 ---
 
@@ -1789,21 +1900,70 @@ booking_required), +1 RPC (reconcile per F14), +1 column
 
 ### Backfill plan (one-time at activation)
 
-After flag flip in step 3, run **one-time backfill SQL** to
-evaluate all existing clients:
+Round 4 PR #80 F32+F33+F34 fix — Round 1 renamed the spend-window
+column to `paid_at` but forgot to update this section. Also: for
+historical bookings (those that flipped to `payment_status='paid'`
+BEFORE Phase 13 migration ran), `paid_at` is NULL because the
+stamping trigger only fires on new transitions. The qualified-spend
+RPC filters on `paid_at`, so without backfill every client sees
+spend=0 and stays silver.
+
+**Backfill order** (run AFTER step 1 migration, BEFORE flag flip in step 3):
 
 ```sql
--- For each client with payment_status='paid' bookings in last 12 months
+-- Step A: backfill bookings.paid_at for historical paid rows using
+--         updated_at as the best-available proxy. Round 4 PR #80 F33
+--         fix. This is the chokepoint that makes the evaluate RPC see
+--         actual historical spend.
+--
+-- The D24 immutability trigger (reject_paid_state_mutation_after_paid)
+-- will REFUSE this UPDATE because OLD.paid_at IS NULL → on first set,
+-- OLD.paid_at IS NULL → IF (OLD.paid_at IS NOT NULL) is FALSE → trigger
+-- short-circuits → UPDATE permitted. Safe.
+UPDATE bookings
+SET paid_at = updated_at
+WHERE payment_status = 'paid'
+  AND paid_at IS NULL;
+
+-- Step B: evaluate each client with any historical paid booking in
+--         the last 12 months. NO cashback award (per Round 4 F34 —
+--         historical bookings DON'T earn retroactive cashback; the
+--         tier is computed but no `earn` events are inserted because
+--         the AFTER UPDATE trigger isn't fired by tier evaluation
+--         alone). Tier-only backfill.
 SELECT evaluate_client_privilege_tier(id) FROM clients
 WHERE id IN (
   SELECT DISTINCT client_id FROM bookings
-  WHERE payment_status = 'paid' AND payment_status_confirmed_at > NOW() - INTERVAL '12 months'
+  WHERE payment_status = 'paid'
+    AND paid_at > NOW() - INTERVAL '12 months'
+    AND client_id IS NOT NULL
 );
 ```
 
-Expected: most clients evaluated to gold/platinum based on historical
-spend. Audit `privilege_tier_change_log` for the bulk-evaluation
-batch.
+**Expected outcome**:
+- Most active clients evaluated to gold/platinum based on
+  historical 12mo spend.
+- `privilege_tier_change_log` shows a bulk-evaluation batch
+  (all `reason='auto_upgrade'` from silver → target_tier).
+- `client_loyalty_ledger` has 0 new `earn` events (no
+  retroactive cashback per Round 4 F34).
+- `clients.cashback_balance_sar` remains 0 for all clients.
+
+**Why no retroactive cashback (F34)**:
+- Avoids a one-time payout of millions of SAR in cashback for
+  bookings that pre-date the loyalty program (clients didn't
+  expect cashback when they booked).
+- Keeps the ledger clean — first earn event for every client
+  is their first NEW booking after Phase 13 activation.
+- Aligns with industry practice (loyalty programs grandfather
+  status, not balance).
+
+**Operator review checklist after backfill**:
+- Run reconcile cron once: verify `SUM(ledger) = balance` for
+  all clients (should all be 0).
+- Spot-check 5 clients in `privilege_tier_change_log` to confirm
+  their tier matches manual spend calculation.
+- Verify `audit_logs` has the bulk-eval batch.
 
 ---
 
