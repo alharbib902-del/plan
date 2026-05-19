@@ -343,9 +343,14 @@ DO $$ BEGIN
       'redeem',                               -- applied to a future booking
       'adjust',                               -- admin manual correction
       'expire',                               -- 24-month expiry sweep
-      'refund_back',                          -- RESERVED for Phase 13.1 (D25); no v1 producer
+      -- Round 2 PR #80 F24 fix: `refund_back` removed from v1 ENUM.
+      -- Phase 13.1 will add via `ALTER TYPE loyalty_ledger_event_type
+      -- ADD VALUE 'refund_back'` together with its producer
+      -- (process_refund_for_booking RPC). Dead ENUM values cause
+      -- amount_sign_check to carry untestable branches; better to
+      -- ship the value with the code that produces it.
       'diamond_shield_granted',               -- cross-product Diamond auto-grant
-      'diamond_shield_skipped_already_diamond',   -- Round 1 F12 fix: was 'diamond_shield_skipped' in J5; renamed for clarity
+      'diamond_shield_skipped_already_diamond',   -- Round 1 F12 fix
       'diamond_shield_skipped_paying_paid_plan',  -- D12 invariant
       'diamond_shield_revoked_on_downgrade',  -- diamond → lower, subscription end
       'diamond_shield_grant_failed'            -- D26: grant RPC raised an exception
@@ -447,8 +452,11 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   -- Invariants
+  -- Round 2 PR #80 F24 fix: `refund_back` removed from ENUM; this
+  -- branch now covers only `earn` (Phase 13.1 will re-add refund_back
+  -- to both ENUM and this CHECK when shipping the producer RPC).
   CONSTRAINT client_loyalty_ledger_amount_sign_check CHECK (
-    (event_type IN ('earn', 'refund_back') AND amount_sar > 0)
+    (event_type = 'earn' AND amount_sar > 0)
     OR (event_type IN ('redeem', 'expire') AND amount_sar < 0)
     OR (event_type = 'adjust')   -- can be either sign
     OR (event_type IN ('diamond_shield_granted',
@@ -469,8 +477,10 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
                         'diamond_shield_revoked_on_downgrade')
     OR source_change_log_id IS NOT NULL
   ),
+  -- Round 2 PR #80 F24 fix: refund_back removed from ENUM;
+  -- this CHECK no longer references it. Phase 13.1 will re-add.
   CONSTRAINT client_loyalty_ledger_booking_required_for_booking_events_check CHECK (
-    event_type NOT IN ('earn', 'redeem', 'refund_back')
+    event_type NOT IN ('earn', 'redeem')
     OR booking_id IS NOT NULL
   ),
   CONSTRAINT client_loyalty_ledger_expiry_only_on_earn CHECK (
@@ -607,9 +617,14 @@ ALTER TABLE bookings
     AND (total_amount - cashback_redemption_sar) >= 1
   );
 
--- D24: total_amount immutable after payment_status='paid'.
--- Rejecting any UPDATE that touches total_amount once paid_at IS NOT NULL.
--- Refund flow (D25 deferred) is the only sanctioned post-paid mutation path.
+-- D24: total_amount immutable AFTER payment_status='paid'.
+-- Round 2 PR #80 F22 clarification — admin pre-paid corrections
+-- are EXPLICITLY ALLOWED: the trigger only fires the rejection
+-- when OLD.paid_at IS NOT NULL (i.e. the booking has already been
+-- paid). For unpaid bookings (paid_at IS NULL, regardless of
+-- payment_status value), admin can freely adjust total_amount via
+-- the existing admin booking-edit flow. Refund flow (D25 deferred)
+-- is the only sanctioned post-paid mutation path.
 CREATE OR REPLACE FUNCTION reject_total_amount_mutation_after_paid()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
@@ -680,15 +695,32 @@ BEGIN
 END;
 $$;
 
--- BEFORE so we can set NEW.paid_at on the row that's being written.
+-- Round 2 PR #80 F21 fix — `UPDATE OF column` syntax is invalid in
+-- combined INSERT|UPDATE trigger declarations (column-list filter is
+-- UPDATE-specific in PostgreSQL). Split into 2 triggers sharing the
+-- same function:
+
 DROP TRIGGER IF EXISTS trg_bookings_payment_paid_award_cashback ON bookings;
-CREATE TRIGGER trg_bookings_payment_paid_award_cashback
-  BEFORE INSERT OR UPDATE OF payment_status ON bookings
+DROP TRIGGER IF EXISTS trg_bookings_payment_paid_award_cashback_ins ON bookings;
+DROP TRIGGER IF EXISTS trg_bookings_payment_paid_award_cashback_upd ON bookings;
+
+CREATE TRIGGER trg_bookings_payment_paid_award_cashback_ins
+  BEFORE INSERT ON bookings
   FOR EACH ROW
-  WHEN (NEW.payment_status = 'paid'
-        AND (TG_OP = 'INSERT' OR OLD.payment_status != 'paid'))
+  WHEN (NEW.payment_status = 'paid')
+  EXECUTE FUNCTION on_bookings_payment_paid_award_cashback();
+
+CREATE TRIGGER trg_bookings_payment_paid_award_cashback_upd
+  BEFORE UPDATE OF payment_status ON bookings
+  FOR EACH ROW
+  WHEN (NEW.payment_status = 'paid' AND OLD.payment_status != 'paid')
   EXECUTE FUNCTION on_bookings_payment_paid_award_cashback();
 ```
+
+The function `on_bookings_payment_paid_award_cashback` does not
+reference `OLD` directly (only `NEW.client_id`, `NEW.id`, `NEW.paid_at`,
+`NEW.source_discriminator`, `NEW.is_covered`), so it works
+correctly in both INSERT and UPDATE contexts without TG_OP guards.
 
 #### `reject_total_amount_mutation_after_paid` (D24)
 
@@ -1151,20 +1183,36 @@ but no RPC was defined. This is the worker called by
 `/api/cron/privilege/reconcile-balances/route.ts` (added to PR 3
 file list).
 
-Pure read-then-correct: computes `SUM(amount_sar)` over all ledger
-events for `p_client_id`, compares to `clients.cashback_balance_sar`,
-and:
+**Round 2 PR #80 F23 fix — REPORT-ONLY in v1**. The original Round 1
+design auto-wrote drift corrections via `adjust` events. Founder
+review flagged: auto-correct hides bugs in the award logic; v1
+should report only. Manual `admin_adjust_cashback` flow handles
+any drift the admin chooses to correct (with audit reason).
+
+Pure read-only: computes `SUM(amount_sar)` over all ledger events
+for `p_client_id`, compares to `clients.cashback_balance_sar`, and:
 
 - If equal → return `{ok:true, drift:false, balance:<value>}`.
-- If different → log `audit_logs` entry with the drift, post a
-  corrective `adjust` ledger event with `admin_reason='auto_reconcile_drift_detected'`,
-  and update the denormalized balance. Return `{ok:true, drift:true,
-  prior_balance:<old>, ledger_sum:<sum>, corrected_to:<sum>}`.
+- If different → log `audit_logs` entry with the drift
+  (action='cashback_balance_drift_detected', new_value contains
+  prior_balance + ledger_sum + delta). Return `{ok:true,
+  drift:true, prior_balance:<denorm>, ledger_sum:<actual>,
+  delta:<diff>, action_required:'admin_review'}`.
+- **No automatic correction**. No `adjust` event posted. The
+  denormalized `clients.cashback_balance_sar` is left as-is until
+  admin manually intervenes via `admin_adjust_cashback`.
 
 Cron `/api/cron/privilege/reconcile-balances` iterates all clients
 with `cashback_balance_sar > 0 OR any ledger event in last 24h`,
 calls this RPC per client, and aggregates results into a daily
-report (canary card #8 in PR 3 + founder summary email).
+report (canary card #8 in PR 3 + founder summary email when
+`drift > 0`). The canary card shows count of drifted clients +
+total drift magnitude for ops triage.
+
+Phase 13.x may upgrade to auto-correct when:
+1. Award logic has been stable for 30+ days with zero drift.
+2. A formal safeguard exists (e.g. drift threshold below 100 SAR
+   auto-corrects, larger drift requires admin review).
 
 ### §4.12 `award_cashback_for_booking` race-locking note
 
@@ -1259,14 +1307,43 @@ end-to-end).
 - `app/api/cron/privilege/reconcile-balances/route.ts` — daily
   ledger-vs-denorm reconciliation per D19 (Round 1 PR #80 F14 fix)
 - `lib/empty-legs/matching.ts` — modify scoring with
-  `privilege_tier_boost_hours` (D13) + enforce match-outbox
-  UNIQUE (empty_leg_id, client_id) per D27 (Round 1 PR #80 F7 fix
-  — prevents duplicate notifications across tier-boost windows)
+  `privilege_tier_boost_hours` (D13) per Round 1 PR #80 F7 fix
 - `lib/empty-legs/matching-tier-boost.ts` — extracted pure logic
   for testing
-- Migration delta: `ALTER TABLE empty_legs_match_outbox ADD
-  CONSTRAINT uq_empty_legs_match_outbox_leg_client UNIQUE
-  (empty_leg_id, client_id)` (D27)
+- Migration delta — Round 2 PR #80 F19 fix: **NEW table** (not
+  ALTER on imaginary `empty_legs_match_outbox`). Phase 7-10's
+  existing `empty_leg_notifications` is lead-based (uses
+  `lead_inquiry_id`), and Phase 10's `client_empty_leg_alert_status`
+  is just a singleton canary. No client × leg matching outbox
+  exists. Phase 13 PR 3 creates one:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS client_empty_leg_matches (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    empty_leg_id    UUID NOT NULL
+                      REFERENCES empty_legs(id) ON DELETE CASCADE,
+    client_id       UUID NOT NULL
+                      REFERENCES clients(id) ON DELETE CASCADE,
+    privilege_tier_at_match client_privilege_tier NOT NULL,
+    tier_boost_applied      BOOLEAN NOT NULL DEFAULT false,
+    boost_hours             INT NOT NULL DEFAULT 0,
+    matched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    notification_sent_at TIMESTAMPTZ,
+    -- D27: prevents duplicate notification across tier-boost windows
+    CONSTRAINT uq_client_empty_leg_matches_leg_client
+      UNIQUE (empty_leg_id, client_id)
+  );
+  ALTER TABLE client_empty_leg_matches ENABLE ROW LEVEL SECURITY;
+  CREATE INDEX IF NOT EXISTS idx_client_empty_leg_matches_leg
+    ON client_empty_leg_matches (empty_leg_id, matched_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_client_empty_leg_matches_client
+    ON client_empty_leg_matches (client_id, matched_at DESC);
+  ```
+
+  Per D27: matching cron writes to this table; UNIQUE prevents
+  the same client being matched twice for the same leg across
+  boost windows. F20 note: this is SEPARATE from
+  `empty_leg_notifications` (Phase 7-8 lead-based, kept as-is).
 - `app/(admin)/admin/(protected)/operators/canary/page.tsx` — add
   8th `<ChannelHealth>` card for privilege cron health
   (evaluate-all + expire-cashback + reconcile-balances rolled
@@ -1291,9 +1368,10 @@ Single SQL script. ~50 checks covering:
 
 **ENUMs (4)**:
 - `client_privilege_tier` (4 labels)
-- `loyalty_ledger_event_type` (10 labels — Round 1 PR #80 F12 fix
+- `loyalty_ledger_event_type` (9 labels — Round 1 PR #80 F12 fix
   added `diamond_shield_skipped_already_diamond` + D26 added
-  `diamond_shield_grant_failed`)
+  `diamond_shield_grant_failed`; Round 2 PR #80 F24 fix REMOVED
+  `refund_back` — Phase 13.1 will re-add via ALTER TYPE)
 - `privilege_tier_change_reason` (6 labels)
 - `privilege_admin_action_type` (4 labels)
 
