@@ -4,6 +4,10 @@ import Link from 'next/link';
 
 import { requireClientSession } from '@/lib/clients/auth';
 import { getMyMedevacRequestDetail } from '@/lib/medevac/queries/me-medevac';
+import {
+  loadAcceptCashbackContext,
+  type AcceptCashbackContext,
+} from '@/lib/privilege/accept-context';
 import { medevacAr } from '@/lib/i18n/medevac-ar';
 import {
   AcceptOfferButton,
@@ -70,10 +74,10 @@ export default async function MyMedevacDetailPage({ params }: PageProps) {
   const session = await requireClientSession();
   if (!session) redirect(`/login?next=/me/medevac/${params.id}`);
 
-  const detail = await getMyMedevacRequestDetail(
-    session.client_id,
-    params.id
-  );
+  const [detail, cashbackContext] = await Promise.all([
+    getMyMedevacRequestDetail(session.client_id, params.id),
+    loadAcceptCashbackContext(session.client_id),
+  ]);
   if (!detail) notFound();
 
   const r = detail;
@@ -169,7 +173,12 @@ export default async function MyMedevacDetailPage({ params }: PageProps) {
         ) : (
           <div className="space-y-3">
             {detail.offers.map((o) => (
-              <OfferCard key={o.id} offer={o} requestStatus={r.status} />
+              <OfferCard
+                key={o.id}
+                offer={o}
+                requestStatus={r.status}
+                cashbackContext={cashbackContext}
+              />
             ))}
           </div>
         )}
@@ -187,13 +196,19 @@ export default async function MyMedevacDetailPage({ params }: PageProps) {
 function OfferCard({
   offer,
   requestStatus,
+  cashbackContext,
 }: {
   offer: MedevacOfferRow;
   requestStatus: MedevacRequestStatus;
+  cashbackContext: AcceptCashbackContext;
 }) {
   const canAct =
     offer.status === 'pending' &&
     ['pending', 'offers_received'].includes(requestStatus);
+  // total_price_sar is DECIMAL serialized as string by Supabase;
+  // parse to number for the redemption input local D7 validation.
+  const totalNumeric = Number.parseFloat(offer.total_price_sar);
+  const offerTotalSar = Number.isFinite(totalNumeric) ? totalNumeric : 0;
 
   return (
     <article className="rounded-xl border border-border bg-navy-card/30 p-4">
@@ -237,7 +252,12 @@ function OfferCard({
       {canAct && (
         <footer className="mt-4 flex items-center justify-end gap-3">
           <DeclineOfferButton offerId={offer.id} />
-          <AcceptOfferButton offerId={offer.id} />
+          <AcceptOfferButton
+            offerId={offer.id}
+            offerTotalSar={offerTotalSar}
+            privilegeEnabled={cashbackContext.enabled}
+            cashbackBalanceSar={cashbackContext.cashback_balance_sar}
+          />
         </footer>
       )}
     </article>

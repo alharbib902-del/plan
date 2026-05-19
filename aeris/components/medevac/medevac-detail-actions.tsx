@@ -7,6 +7,7 @@ import {
   declineMyMedevacOffer,
   cancelMyMedevacRequest,
 } from '@/app/actions/medevac-clients';
+import { CashbackRedeemInput } from '@/components/privilege/cashback-redeem-input';
 
 const ERROR_COPY: Record<string, string> = {
   flag_disabled: 'الخدمة غير مفعلة',
@@ -25,28 +26,76 @@ const ERROR_COPY: Record<string, string> = {
   reason_too_long: 'سبب طويل جداً (الحد 500 حرف)',
 };
 
-export function AcceptOfferButton({ offerId }: { offerId: string }) {
+export function AcceptOfferButton({
+  offerId,
+  offerTotalSar,
+  cashbackBalanceSar = 0,
+  privilegeEnabled = false,
+}: {
+  offerId: string;
+  /** Required when privilegeEnabled = true. Non-covered medevac
+   *  bookings only (covered J5 bookings have no cash flow — the
+   *  parent page suppresses the input by passing
+   *  privilegeEnabled=false). */
+  offerTotalSar?: number;
+  cashbackBalanceSar?: number;
+  privilegeEnabled?: boolean;
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [redemption, setRedemption] = useState<number>(0);
+  const [redeemWarning, setRedeemWarning] = useState<string | null>(null);
+
+  const showRedemption =
+    privilegeEnabled && cashbackBalanceSar > 0 && typeof offerTotalSar === 'number';
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex flex-col items-stretch gap-2">
+      {showRedemption && offerTotalSar !== undefined ? (
+        <CashbackRedeemInput
+          bookingTotalSar={offerTotalSar}
+          currentBalanceSar={cashbackBalanceSar}
+          value={redemption}
+          onChange={setRedemption}
+          disabled={pending}
+        />
+      ) : null}
       <button
         type="button"
         disabled={pending}
         onClick={() => {
           if (!confirm('قبول هذا العرض سيُلغي باقي العروض. متابعة؟')) return;
           setError(null);
+          setRedeemWarning(null);
           startTransition(async () => {
-            const r = await acceptMyMedevacOffer({ offer_id: offerId });
-            if (!r.ok) setError(ERROR_COPY[r.error] ?? 'خطأ');
+            const r = await acceptMyMedevacOffer({
+              offer_id: offerId,
+              ...(redemption > 0
+                ? { cashback_redemption_sar: redemption }
+                : {}),
+            });
+            if (!r.ok) {
+              setError(ERROR_COPY[r.error] ?? 'خطأ');
+              return;
+            }
+            if (
+              r.cashback_redemption &&
+              r.cashback_redemption.ok === false
+            ) {
+              setRedeemWarning(
+                'تم القبول، لكن لم يُحسم رصيد الاسترداد. ادفع المبلغ كاملاً نقداً.'
+              );
+            }
           });
         }}
-        className="font-ar rounded-lg bg-emerald-500 px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+        className="font-ar self-end rounded-lg bg-emerald-500 px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
       >
         {pending ? 'جاري…' : 'قبول'}
       </button>
       {error && <span className="font-ar text-xs text-rose-300">{error}</span>}
+      {redeemWarning && (
+        <span className="font-ar text-xs text-amber-200">{redeemWarning}</span>
+      )}
     </div>
   );
 }

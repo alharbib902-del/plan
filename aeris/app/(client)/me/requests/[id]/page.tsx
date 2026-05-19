@@ -7,6 +7,7 @@ import { TripStatusChip, type TripStatus } from '@/components/clients/status-chi
 import { requireClientSession } from '@/lib/clients/auth';
 import { getTripRequestForClient } from '@/lib/clients/queries/me-requests';
 import { listOffersByTripUnified } from '@/lib/supabase/queries/unified-offers';
+import { loadAcceptCashbackContext } from '@/lib/privilege/accept-context';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 
 export const dynamic = 'force-dynamic';
@@ -62,12 +63,16 @@ export default async function ClientMeRequestDetailPage({
     );
   }
 
-  // Fetch offers in parallel — only meaningful when the trip
-  // could already have offers (anything past 'pending').
-  const offers =
+  // Fetch offers + cashback context in parallel — only meaningful
+  // when the trip could already have offers (anything past 'pending').
+  // Cashback context is fetched unconditionally so we can hide
+  // the redeem input early when balance is 0 (Phase 13 PR 3 round 2).
+  const [offers, cashbackContext] = await Promise.all([
     trip.status === 'pending'
-      ? []
-      : await listOffersByTripUnified(trip.id);
+      ? Promise.resolve([] as Awaited<ReturnType<typeof listOffersByTripUnified>>)
+      : listOffersByTripUnified(trip.id),
+    loadAcceptCashbackContext(session.client_id),
+  ]);
 
   const status = trip.status as TripStatus;
   const tripIsActionable = ACTIONABLE_OFFER_STATUSES.includes(status);
@@ -151,6 +156,8 @@ export default async function ClientMeRequestDetailPage({
                   } satisfies ClientOfferRow
                 }
                 tripIsActionable={tripIsActionable}
+                privilegeEnabled={cashbackContext.enabled}
+                cashbackBalanceSar={cashbackContext.cashback_balance_sar}
               />
             ))}
           </div>

@@ -7,6 +7,7 @@ import {
   clientAcceptOffer,
   clientDeclineOffer,
 } from '@/app/actions/clients-trip-requests';
+import { CashbackRedeemInput } from '@/components/privilege/cashback-redeem-input';
 import { ClientBanner, clientErrorMessage } from './error-banner';
 
 /**
@@ -97,25 +98,51 @@ function aircraftLabel(offer: ClientOfferRow): string {
 interface ClientOfferCardProps {
   offer: ClientOfferRow;
   tripIsActionable: boolean;
+  /**
+   * Phase 13 PR 3 round 2 — optional cashback context. When
+   * `privilegeEnabled = true` AND `cashbackBalanceSar > 0`, the
+   * card renders CashbackRedeemInput above the action buttons.
+   * Defaults preserve Phase 9 accept UX exactly when omitted.
+   */
+  privilegeEnabled?: boolean;
+  cashbackBalanceSar?: number;
 }
 
 export function ClientOfferCard({
   offer,
   tripIsActionable,
+  privilegeEnabled = false,
+  cashbackBalanceSar = 0,
 }: ClientOfferCardProps) {
   const showActions = tripIsActionable && offer.status === 'pending';
   const [isAccepting, startAccept] = useTransition();
   const [isDeclining, startDecline] = useTransition();
   const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [redemption, setRedemption] = useState<number>(0);
+  const [redeemWarning, setRedeemWarning] = useState<string | null>(null);
+
+  const showRedemption =
+    showActions && privilegeEnabled && cashbackBalanceSar > 0;
 
   const onAccept = () => {
     setErrorCode(null);
+    setRedeemWarning(null);
     startAccept(async () => {
       const result = await clientAcceptOffer({
         offer_id: offer.id,
         source: offer.source,
+        ...(redemption > 0 ? { cashback_redemption_sar: redemption } : {}),
       });
-      if (!result.ok) setErrorCode(result.error);
+      if (!result.ok) {
+        setErrorCode(result.error);
+        return;
+      }
+      if (
+        result.cashback_redemption &&
+        result.cashback_redemption.ok === false
+      ) {
+        setRedeemWarning(result.cashback_redemption.error);
+      }
       // success → page revalidates server-side via the Server
       // Action; let the route refresh handle the UI update.
     });
@@ -172,9 +199,25 @@ export function ClientOfferCard({
         </Field>
       </dl>
 
+      {showRedemption ? (
+        <CashbackRedeemInput
+          bookingTotalSar={offer.total_price_sar}
+          currentBalanceSar={cashbackBalanceSar}
+          value={redemption}
+          onChange={setRedemption}
+          disabled={isPending}
+        />
+      ) : null}
+
       {errorCode ? (
         <ClientBanner kind="error">
           {clientErrorMessage(errorCode)}
+        </ClientBanner>
+      ) : null}
+
+      {redeemWarning ? (
+        <ClientBanner kind="warning">
+          تم القبول، لكن لم يُحسم رصيد الاسترداد. ادفع المبلغ كاملاً نقداً.
         </ClientBanner>
       ) : null}
 

@@ -8,6 +8,7 @@ import {
   declineMyCargoOffer,
   cancelMyCargoRequest,
 } from '@/app/actions/cargo-clients';
+import { CashbackRedeemInput } from '@/components/privilege/cashback-redeem-input';
 
 /**
  * Phase 11 PR 2 — client-side action buttons for the cargo
@@ -82,30 +83,81 @@ function errorKeyFor(code: string): string {
 // AcceptOfferButton
 // ============================================================
 
-export function AcceptOfferButton({ offerId }: { offerId: string }) {
+export function AcceptOfferButton({
+  offerId,
+  offerTotalSar,
+  cashbackBalanceSar = 0,
+  privilegeEnabled = false,
+}: {
+  offerId: string;
+  /** Required when privilegeEnabled = true so the D7 caps in
+   *  CashbackRedeemInput can validate locally. Server-side
+   *  redeem_cashback_for_booking re-validates against the
+   *  authoritative booking row. */
+  offerTotalSar?: number;
+  cashbackBalanceSar?: number;
+  privilegeEnabled?: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
   const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [redemption, setRedemption] = useState<number>(0);
+  const [redeemWarning, setRedeemWarning] = useState<string | null>(null);
+
+  const showRedemption =
+    privilegeEnabled && cashbackBalanceSar > 0 && typeof offerTotalSar === 'number';
 
   const onClick = () => {
     if (typeof window === 'undefined') return;
     if (!window.confirm(cargoAr.meDetailConfirmAcceptBody)) return;
     setErrorCode(null);
+    setRedeemWarning(null);
     startTransition(async () => {
-      const result = await acceptMyCargoOffer({ offer_id: offerId });
-      if (!result.ok) setErrorCode(result.error);
-      // On success the page revalidates → status flips → button
-      // disappears (acceptable=false). No client redirect needed.
+      const result = await acceptMyCargoOffer({
+        offer_id: offerId,
+        ...(redemption > 0 ? { cashback_redemption_sar: redemption } : {}),
+      });
+      if (!result.ok) {
+        setErrorCode(result.error);
+        return;
+      }
+      // Booking created. If the optional redemption failed, the
+      // accept itself still succeeded — surface a soft warning
+      // so the user knows the cash amount is full price.
+      if (
+        result.cashback_redemption &&
+        result.cashback_redemption.ok === false
+      ) {
+        setRedeemWarning(result.cashback_redemption.error);
+      }
+      // Page revalidates → button disappears (acceptable=false).
     });
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      {showRedemption && offerTotalSar !== undefined ? (
+        <CashbackRedeemInput
+          bookingTotalSar={offerTotalSar}
+          currentBalanceSar={cashbackBalanceSar}
+          value={redemption}
+          onChange={setRedemption}
+          disabled={isPending}
+        />
+      ) : null}
       {errorCode ? (
         <p
           role="alert"
           className="font-ar rounded border border-rose-400/40 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-100"
         >
           {cargoErrorMessage(errorCode)}
+        </p>
+      ) : null}
+      {redeemWarning ? (
+        <p
+          role="alert"
+          className="font-ar rounded border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100"
+        >
+          تم القبول، لكن لم يُحسم رصيد الاسترداد. ادفع المبلغ كاملاً نقداً.
         </p>
       ) : null}
       <button
