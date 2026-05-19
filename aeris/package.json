@@ -50,6 +50,9 @@
     "test:medevac-cron-auth": "tsx app/api/cron/medevac/__tests__/cron-auth.test.ts",
     "test:privilege-tier-helpers": "tsx lib/privilege/__tests__/tier-helpers.test.ts",
     "test:privilege-admin-validators": "tsx app/actions/__tests__/privilege-admin-validators.test.ts",
+    "test:empty-legs-tier-boost": "tsx lib/empty-legs/__tests__/matching-tier-boost.test.ts",
+    "test:privilege-cashback-expiry-fifo": "tsx lib/privilege/__tests__/cashback-expiry-fifo.test.ts",
+    "test:privilege-cron-auth": "tsx app/api/cron/privilege/__tests__/cron-auth.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

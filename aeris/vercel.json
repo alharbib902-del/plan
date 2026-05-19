@@ -65,6 +65,14 @@
     {
       "path": "/api/cron/medevac/expire-certifications",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/privilege/evaluate-all",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/privilege/expire-cashback",
+      "schedule": "0 4 * * *"
     }
   ]
 }

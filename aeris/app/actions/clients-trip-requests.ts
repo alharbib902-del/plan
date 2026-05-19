@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireClientSession } from '@/lib/clients/auth';
 import { fireAndForgetTripDispatch } from '@/lib/automation/trip-dispatch-fire';
+import { redeemCashbackIfRequested } from '@/lib/privilege/redeem-helper';
 import {
   createTripRequestSchema,
   cancelTripRequestSchema,
@@ -270,13 +271,28 @@ export async function cancelMyTripRequest(input: {
 //      the freshly-booked trip + new booking row land on the
 //      client's surfaces immediately.
 
+/**
+ * Phase 13 PR 3 — accept response now carries an optional
+ * `cashback_redemption` field. Populated only when the caller
+ * passed `cashback_redemption_sar > 0`. The outer `ok: true`
+ * is preserved even on redeem failure (the booking is created;
+ * UI surfaces a soft warning if redeem.ok === false).
+ */
 export type ClientAcceptOfferResult =
-  | { ok: true; trip_request_id: string; booking_id: string | null }
+  | {
+      ok: true;
+      trip_request_id: string;
+      booking_id: string | null;
+      cashback_redemption?:
+        | { ok: true; redeemed_sar: number; new_balance_sar: number }
+        | { ok: false; error: string };
+    }
   | ClientTripActionFailure;
 
 export async function clientAcceptOffer(input: {
   offer_id: string;
   source: 'phase4' | 'phase5';
+  cashback_redemption_sar?: number;
 }): Promise<ClientAcceptOfferResult> {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
@@ -381,10 +397,39 @@ export async function clientAcceptOffer(input: {
   revalidatePath(`/me/requests/${result.trip_request_id}`);
   revalidatePath('/me/bookings');
 
+  // Phase 13 PR 3 — optional cashback redemption against the
+  // freshly created booking. The accept itself ALREADY succeeded;
+  // a redemption failure does NOT roll back the booking. UI uses
+  // the returned envelope to show a soft warning if the redeem
+  // failed (e.g. race-condition insufficient_balance).
+  //
+  // The legacy phase4 accept path doesn't return booking_id;
+  // skip redeem when no booking_id surfaced. UI prevents the
+  // redemption widget from rendering for those flows.
+  const redeem =
+    result.booking_id && parsed.data.cashback_redemption_sar
+      ? await redeemCashbackIfRequested({
+          client_id: session.client_id,
+          booking_id: result.booking_id,
+          cashback_redemption_sar: parsed.data.cashback_redemption_sar,
+        })
+      : null;
+
   return {
     ok: true,
     trip_request_id: result.trip_request_id,
     booking_id: result.booking_id ?? null,
+    ...(redeem
+      ? {
+          cashback_redemption: redeem.ok
+            ? {
+                ok: true as const,
+                redeemed_sar: redeem.redeemed_sar,
+                new_balance_sar: redeem.new_balance_sar,
+              }
+            : { ok: false as const, error: redeem.error },
+        }
+      : {}),
   };
 }
 

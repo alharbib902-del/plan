@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { requireClientSession } from '@/lib/clients/auth';
 import { loadMyCargoRequestDetail } from '@/lib/cargo/queries/client-detail';
+import { loadAcceptCashbackContext } from '@/lib/privilege/accept-context';
 import {
   AcceptOfferButton,
   DeclineOfferButton,
@@ -90,10 +91,10 @@ export default async function MyCargoRequestDetailPage({
   const session = await requireClientSession();
   if (!session) redirect(`/login?redirect=/me/cargo-requests/${params.id}`);
 
-  const detail = await loadMyCargoRequestDetail(
-    session.client_id,
-    params.id
-  );
+  const [detail, cashbackContext] = await Promise.all([
+    loadMyCargoRequestDetail(session.client_id, params.id),
+    loadAcceptCashbackContext(session.client_id),
+  ]);
   if (!detail) notFound();
 
   const { request, offers } = detail;
@@ -229,7 +230,12 @@ export default async function MyCargoRequestDetailPage({
                 ) : null}
                 {o.acceptable ? (
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <AcceptOfferButton offerId={o.id} />
+                    <AcceptOfferButton
+                      offerId={o.id}
+                      offerTotalSar={o.total_price_sar}
+                      privilegeEnabled={cashbackContext.enabled}
+                      cashbackBalanceSar={cashbackContext.cashback_balance_sar}
+                    />
                     <DeclineOfferButton offerId={o.id} />
                   </div>
                 ) : null}

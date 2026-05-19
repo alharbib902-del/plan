@@ -6,6 +6,7 @@ import { headers } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireClientSession } from '@/lib/clients/auth';
 import { cargoRequestAuthedSchema } from '@/lib/cargo/validators/cargo-request';
+import { redeemCashbackIfRequested } from '@/lib/privilege/redeem-helper';
 import {
   acceptOfferSchema,
   declineOfferSchema,
@@ -173,11 +174,17 @@ export type AcceptMyCargoOfferResult =
       offer_id: string;
       cargo_request_id: string;
       accepted_at: string;
+      // Phase 13 PR 3 — optional redemption envelope, populated
+      // only when caller passes cashback_redemption_sar > 0.
+      cashback_redemption?:
+        | { ok: true; redeemed_sar: number; new_balance_sar: number }
+        | { ok: false; error: string };
     }
   | CargoClientsActionFailure;
 
 export async function acceptMyCargoOffer(input: {
   offer_id: string;
+  cashback_redemption_sar?: number;
 }): Promise<AcceptMyCargoOfferResult> {
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
@@ -221,12 +228,33 @@ export async function acceptMyCargoOffer(input: {
   revalidatePath('/me/bookings');
   revalidatePath('/admin/cargo');
 
+  // Phase 13 PR 3 — optional cashback redemption (see charter
+  // accept for the full rationale). Soft-fails on redeem errors.
+  const redeem = parsed.data.cashback_redemption_sar
+    ? await redeemCashbackIfRequested({
+        client_id: session.client_id,
+        booking_id: result.booking_id,
+        cashback_redemption_sar: parsed.data.cashback_redemption_sar,
+      })
+    : null;
+
   return {
     ok: true,
     booking_id: result.booking_id,
     offer_id: result.offer_id,
     cargo_request_id: result.cargo_request_id,
     accepted_at: result.accepted_at,
+    ...(redeem
+      ? {
+          cashback_redemption: redeem.ok
+            ? {
+                ok: true as const,
+                redeemed_sar: redeem.redeemed_sar,
+                new_balance_sar: redeem.new_balance_sar,
+              }
+            : { ok: false as const, error: redeem.error },
+        }
+      : {}),
   };
 }
 
