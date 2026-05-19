@@ -238,9 +238,12 @@ from competitors (NetJets Card, VistaJet Membership) by combining:
    2 Gold matched first.
 7. Silver candidates appear in tick 2-3 (after the tier window
    shifts).
-8. Match outbox event records: `{ tier_boost_applied: true,
-   privilege_tier_at_match: 'diamond', boost_hours: 12 }`
-   for telemetry.
+8. Match outbox event records: `{ boost_hours_applied: 12,
+   privilege_tier_at_match: 'diamond' }` for telemetry. Round 6
+   PR #80 F9 fix — Round 3 F25 merged `tier_boost_applied BOOLEAN`
+   + `boost_hours INT` into single `boost_hours_applied INT`
+   (value=0 = no boost, value>0 = boost hours from
+   `privilege_tier_thresholds.empty_legs_boost_hours`).
 9. **Invariant**: silver clients are NOT excluded — they're delayed.
    Per D-spec D8, after `max(boost_hours) = 12h` from leg
    creation, all candidates re-merge into a single FCFS pool.
@@ -325,8 +328,8 @@ schema/RPC/probe sections for traceability.
 | **D21** | **Idempotent cashback award**: `award_cashback_for_booking` RPC checks `EXISTS (earn for booking_id)` BEFORE INSERT, returns `{ok:true, already_awarded:true, skipped_reason:'duplicate_earn_for_booking'}` if found. DB-side `UNIQUE INDEX (booking_id) WHERE event_type='earn'` enforces the invariant defense-in-depth. | Prevents double-award across all code paths: trigger replay on same `paid` UPDATE, `refunded→paid` re-confirmation, manual admin re-award attempts. Cannot silently corrupt ledger balance. |
 | **D22** | **`bookings.paid_at` is the canonical payment-confirmation timestamp** added by Phase 13 PR 1 (not Phase 6/14 — Round 1 PR #80 F1 fix verified column does NOT exist anywhere in current schema). Trigger §3.4 stamps `paid_at = NOW()` on the same UPDATE that flips `payment_status='paid'`. The qualified-spend window (D1) filters on `paid_at > NOW() - INTERVAL '12 months'`. | Eliminates spec-vs-schema drift; Phase 13 owns the column it depends on. |
 | **D23** | **`amount_paid_sar` is computed inline** as `(total_amount - cashback_redemption_sar)` at award-time, NOT a stored column. `award_cashback_for_booking` reads `total_amount` + `cashback_redemption_sar` from `bookings` inside the FOR UPDATE lock and derives `v_amount_paid` locally (Round 1 PR #80 F2 fix). | Avoids stored-derived column inconsistency; the single source of truth is `(total_amount, cashback_redemption_sar)`. |
-| **D24** | **`total_amount` immutability after `payment_status='paid'`**: enforced by AFTER UPDATE trigger that rejects any UPDATE of `total_amount` once the booking is paid. Out-of-band amount adjustments (refunds, disputes) MUST flow through dedicated refund RPC (D25), which atomically updates `cashback_redemption_sar` + posts refund_back ledger event. | Prevents `amount_paid_sar` drift from constraint re-eval after payment; aligns with revenue-recognition contract (Round 1 PR #80 F4 fix). |
-| **D25** | **Refund flow deferred to Phase 13.1 mini-spec**: v1 supports full bookings cancellation BEFORE `payment_status='paid'` (no cashback impact since none earned). Once paid, total_amount is locked (D24); any post-paid refund requires a dedicated `process_refund_for_booking` RPC + new ledger logic. The `refund_back` ENUM value + `on_bookings_payment_refunded_reverse_cashback` trigger are **reserved placeholders** in v1 — no producer path exists. Trigger DDL is omitted from PR 1 migration to avoid dead code (Round 1 PR #80 F5 fix). | Avoids opening a tax/accounting decision tree (proportional cashback reversal, partial vs full, VAT handling) inside Phase 13 v1. The decision belongs with Phase 14 payment gateway integration (refund webhooks). |
+| **D24** | **`total_amount` + `paid_at` immutability after `payment_status='paid'`**: enforced by BEFORE UPDATE trigger (`reject_paid_state_mutation_after_paid`) that rejects any UPDATE of either field once the booking is paid (D24 + Round 3 F26). Out-of-band amount adjustments (refunds, disputes) are NOT supported in v1 — the immutability is absolute. Phase 13.1 will introduce the refund RPC (D25) which will conditionally lift this constraint. | Prevents drift in the inline-computed `amount_paid = total_amount - cashback_redemption_sar` from constraint re-eval after payment; aligns with revenue-recognition contract. |
+| **D25** | **Refund flow deferred to Phase 13.1 mini-spec — completely absent from v1**. Round 6 PR #80 F10 fix — unified the wording: **no `refund_back` ENUM value, no `on_bookings_payment_refunded_reverse_cashback` trigger, and no related index ship in v1**. Round 2 PR #80 F24 removed `refund_back` from the ENUM exactly because reserved-but-unimplemented values pollute `amount_sign_check` with untestable branches. v1 supports full bookings cancellation BEFORE `payment_status='paid'` (no cashback impact since none earned); post-paid refunds are blocked by D24 immutability. Phase 13.1 will add the ENUM value + trigger + index + producer RPC together as a single atomic delta. | Avoids opening a tax/accounting decision tree (proportional cashback reversal, partial vs full, VAT handling) inside Phase 13 v1. The decision belongs with Phase 14 payment gateway integration (refund webhooks). |
 | **D26** | **Diamond × Shield grant failure is non-fatal to payment confirmation**: `evaluate_client_privilege_tier` wraps `auto_grant_diamond_shield_subscription` call in BEGIN/EXCEPTION. On failure, logs `diamond_shield_grant_failed` ledger event (new ENUM value) + writes to `audit_logs` + continues. Payment UPDATE succeeds regardless. Admin reviews failed grants via canary card (PR 3). | Decouples Privilege side-effects from payment confirmation — a Phase 12 schema change cannot block payment receipt (Round 1 PR #80 F6 fix). |
 | **D27** | **EL match outbox enforces `UNIQUE (empty_leg_id, client_id)` to prevent duplicate notifications** across tier-boost windows. Gold matched at T0 (boost active) cannot be re-matched at T+2h (FCFS round); the second insert fails via UNIQUE → matching cron logs `tier_boost_already_consumed` skip reason. | Per founder review of EL early access: privilege gives priority window, not multiple matches (Round 1 PR #80 F7 fix). |
 | **D28** | **VAT treatment**: `bookings.total_amount` is the **VAT-inclusive (gross)** value (Saudi 15% VAT included). Cashback is computed on the gross figure: `gross_amount_paid * cashback_pct / 100`. Phase 14 will introduce explicit `vat_amount_sar` + `pre_vat_amount_sar` columns when ZATCA integration ships; until then, the gross-basis simplifies the v1 ledger arithmetic + matches how the client sees the offer total in `/accept-offer`. | Avoids opening tax-accounting decision tree in v1; defers VAT-aware cashback to Phase 14 alongside the ZATCA invoice work. Round 4 PR #80 F38 fix. |
@@ -791,9 +794,14 @@ BEGIN
 
   -- Re-evaluate tier. D26: Diamond grant failure inside this call
   -- is caught + logged but does NOT block payment confirmation
-  -- (the AFTER trigger has already let the payment UPDATE commit;
-  -- the only side effect of a failure here is a missing Diamond
-  -- Shield grant, surfaced via the canary card).
+  -- (the AFTER trigger fires post-row-visibility but STILL within
+  -- the same transaction — Round 6 PR #80 F12 fix: corrected the
+  -- earlier "already committed" misstatement. The row is visible
+  -- to downstream SELECTs (which is what F1 fixed), but an uncaught
+  -- exception here would abort the payment transaction. D26's
+  -- BEGIN/EXCEPTION wrapper around the Diamond grant is what
+  -- prevents that abort; without it, a grant failure would roll
+  -- back the payment itself).
   IF NEW.client_id IS NOT NULL THEN
     v_tier_eval_result := evaluate_client_privilege_tier(NEW.client_id, NEW.id);
   END IF;
@@ -832,19 +840,27 @@ so both INSERT and UPDATE paths work without TG_OP guards.
 
 Defined inline in §3.3 above. Enforces D24 immutability.
 
-#### Refund-reversal trigger — **deferred to Phase 13.1**
+#### Refund-reversal trigger — **NOT shipping in v1**
 
-Round 1 PR #80 F5 fix — the `on_bookings_payment_refunded_reverse_cashback`
-trigger and the `process_refund_for_booking` RPC are explicitly
-**OUT OF SCOPE for Phase 13 v1** (per D25). The `refund_back` ENUM
-value and `idx_client_loyalty_ledger_booking_refund_back` indexes
-are reserved placeholders. No producer path ships in v1.
+Round 6 PR #80 F10 fix — unified wording per Round 2 F24 decision:
+**No `refund_back` enum/trigger/index ships in v1; Phase 13.1
+adds all three together with the producer RPC.** Earlier rounds
+described these as "reserved placeholders" in v1, but Round 2 F24
+removed the ENUM value entirely (reserved-but-unimplemented values
+pollute `amount_sign_check` with untestable branches). Same
+deletion applies to the trigger + indexes — they don't exist in
+the PR 1 migration.
 
-Phase 13.1 will:
-1. Decide partial vs full refund proportional cashback reversal.
-2. Decide VAT/commission handling on reversal.
-3. Add `process_refund_for_booking(p_booking_id, p_refund_amount, p_reason)` RPC.
-4. Lift the D24 immutability constraint to permit refund-authored mutations.
+Phase 13.1 will add as a single atomic delta:
+1. `ALTER TYPE loyalty_ledger_event_type ADD VALUE 'refund_back'`
+2. `CREATE OR REPLACE FUNCTION on_bookings_payment_refunded_reverse_cashback()` + trigger
+3. `CREATE INDEX idx_client_loyalty_ledger_booking_refund_back` (if a hot read path emerges)
+4. `CREATE OR REPLACE FUNCTION process_refund_for_booking(p_booking_id, p_refund_amount, p_reason)` — the sole producer
+5. Lift the D24 immutability constraint to permit refund-authored mutations
+
+Open business decisions for 13.1: partial vs full refund cashback
+reversal, VAT/commission handling, interaction with Phase 14
+payment gateway refund webhooks.
 
 ### §3.5 RLS policies
 
@@ -1143,8 +1159,13 @@ $$;
 Computes cashback based on **tier at the moment of payment
 confirmation** and `amount_paid_sar` (D6 — no compound).
 
+Round 6 PR #80 F11 fix — Round 1 F2 removed `amount_paid_sar` as
+a stored column (D23 inline computation); the description formula
+now matches the pseudocode below:
+
 ```
-amount = booking.amount_paid_sar * cashback_pct(client.tier) / 100
+amount_paid = booking.total_amount - booking.cashback_redemption_sar
+cashback   = amount_paid * cashback_pct(client.tier) / 100
 ```
 
 INSERTs `earn` ledger event + UPDATEs `clients.cashback_balance_sar`
@@ -1798,10 +1819,12 @@ Single SQL script. ~50 checks covering:
 
 **Constraints (named, 11)** — Round 1 PR #80 F3 added
 `privilege_tier_change_log_from_to_distinct_check`:
-- `client_loyalty_ledger_amount_sign_check` (NOTE: must include
-  the new `diamond_shield_grant_failed` event_type in the
-  `amount_sar = 0` branch — verifier asserts the actual
-  pg_constraint definition matches the 10-value ENUM)
+- `client_loyalty_ledger_amount_sign_check` (NOTE: after Round 5
+  PR #80 F7, the `amount_sar = 0` branch uses the prefix check
+  `event_type::text LIKE 'diamond_shield_%'` rather than enumerated
+  labels — verifier asserts the pg_constraint definition matches
+  the current `loyalty_ledger_event_type` labels (Round 6 PR #80
+  F13 fix — removed stale "10-value ENUM" wording).
 - `client_loyalty_ledger_admin_reason_required_for_adjust`
 - `client_loyalty_ledger_subscription_required_for_grant`
 - `client_loyalty_ledger_change_log_required_for_diamond`
