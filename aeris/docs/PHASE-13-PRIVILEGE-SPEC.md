@@ -328,7 +328,7 @@ schema/RPC/probe sections for traceability.
 | **D21** | **Idempotent cashback award**: `award_cashback_for_booking` RPC checks `EXISTS (earn for booking_id)` BEFORE INSERT, returns `{ok:true, already_awarded:true, skipped_reason:'duplicate_earn_for_booking'}` if found. DB-side `UNIQUE INDEX (booking_id) WHERE event_type='earn'` enforces the invariant defense-in-depth. | Prevents double-award across all code paths: trigger replay on same `paid` UPDATE, `refunded→paid` re-confirmation, manual admin re-award attempts. Cannot silently corrupt ledger balance. |
 | **D22** | **`bookings.paid_at` is the canonical payment-confirmation timestamp** added by Phase 13 PR 1 (not Phase 6/14 — Round 1 PR #80 F1 fix verified column does NOT exist anywhere in current schema). Trigger §3.4 stamps `paid_at = NOW()` on the same UPDATE that flips `payment_status='paid'`. The qualified-spend window (D1) filters on `paid_at > NOW() - INTERVAL '12 months'`. | Eliminates spec-vs-schema drift; Phase 13 owns the column it depends on. |
 | **D23** | **`amount_paid_sar` is computed inline** as `(total_amount - cashback_redemption_sar)` at award-time, NOT a stored column. `award_cashback_for_booking` reads `total_amount` + `cashback_redemption_sar` from `bookings` inside the FOR UPDATE lock and derives `v_amount_paid` locally (Round 1 PR #80 F2 fix). | Avoids stored-derived column inconsistency; the single source of truth is `(total_amount, cashback_redemption_sar)`. |
-| **D24** | **`total_amount` + `paid_at` immutability after `payment_status='paid'`**: enforced by BEFORE UPDATE trigger (`reject_paid_state_mutation_after_paid`) that rejects any UPDATE of either field once the booking is paid (D24 + Round 3 F26). Out-of-band amount adjustments (refunds, disputes) are NOT supported in v1 — the immutability is absolute. Phase 13.1 will introduce the refund RPC (D25) which will conditionally lift this constraint. | Prevents drift in the inline-computed `amount_paid = total_amount - cashback_redemption_sar` from constraint re-eval after payment; aligns with revenue-recognition contract. |
+| **D24** | **`total_amount` + `paid_at` + `payment_status` immutability after `paid_at` is set**: enforced by BEFORE UPDATE trigger (`reject_paid_state_mutation_after_paid`) that rejects any UPDATE of these three fields once `OLD.paid_at IS NOT NULL` (D24 + Round 3 F26 + Round 7 PR #80 F14). Out-of-band amount adjustments AND `paid→refunded` transitions are NOT supported in v1 — the immutability is absolute. Phase 13.1 refund RPC will conditionally lift this via a session-var bypass. | Prevents drift in inline-computed `amount_paid`; prevents silent spend_12m mutation from `paid→refunded` while leaving cashback `earn` events in the ledger; aligns with revenue-recognition contract. |
 | **D25** | **Refund flow deferred to Phase 13.1 mini-spec — completely absent from v1**. Round 6 PR #80 F10 fix — unified the wording: **no `refund_back` ENUM value, no `on_bookings_payment_refunded_reverse_cashback` trigger, and no related index ship in v1**. Round 2 PR #80 F24 removed `refund_back` from the ENUM exactly because reserved-but-unimplemented values pollute `amount_sign_check` with untestable branches. v1 supports full bookings cancellation BEFORE `payment_status='paid'` (no cashback impact since none earned); post-paid refunds are blocked by D24 immutability. Phase 13.1 will add the ENUM value + trigger + index + producer RPC together as a single atomic delta. | Avoids opening a tax/accounting decision tree (proportional cashback reversal, partial vs full, VAT handling) inside Phase 13 v1. The decision belongs with Phase 14 payment gateway integration (refund webhooks). |
 | **D26** | **Diamond × Shield grant failure is non-fatal to payment confirmation**: `evaluate_client_privilege_tier` wraps `auto_grant_diamond_shield_subscription` call in BEGIN/EXCEPTION. On failure, logs `diamond_shield_grant_failed` ledger event (new ENUM value) + writes to `audit_logs` + continues. Payment UPDATE succeeds regardless. Admin reviews failed grants via canary card (PR 3). | Decouples Privilege side-effects from payment confirmation — a Phase 12 schema change cannot block payment receipt (Round 1 PR #80 F6 fix). |
 | **D27** | **EL match outbox enforces `UNIQUE (empty_leg_id, client_id)` to prevent duplicate notifications** across tier-boost windows. Gold matched at T0 (boost active) cannot be re-matched at T+2h (FCFS round); the second insert fails via UNIQUE → matching cron logs `tier_boost_already_consumed` skip reason. | Per founder review of EL early access: privilege gives priority window, not multiple matches (Round 1 PR #80 F7 fix). |
@@ -464,8 +464,11 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
   client_id             UUID NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
   event_type            loyalty_ledger_event_type NOT NULL,
   amount_sar            DECIMAL(12, 2) NOT NULL,
-    -- POSITIVE for earn/adjust+/refund_back; NEGATIVE for redeem/expire/adjust-.
-    -- Always interpreted as the delta to balance.
+    -- Round 7 PR #80 F17 fix — sign comment now matches v1 ENUM
+    -- (refund_back ships in Phase 13.1 alongside its producer RPC,
+    -- per D25; v1 has no producer so mentioning it here was stale).
+    -- POSITIVE for earn / adjust+; NEGATIVE for redeem / expire / adjust-;
+    -- ZERO for all diamond_shield_* events. Delta to balance.
   balance_after_sar     DECIMAL(14, 2) NOT NULL CHECK (balance_after_sar >= 0),
   booking_id            UUID REFERENCES bookings(id) ON DELETE RESTRICT,
     -- NULL for adjust/expire/diamond_shield_* events.
@@ -666,23 +669,26 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- D24 + Round 3 PR #80 F26 fix: total_amount + paid_at BOTH
--- immutable AFTER payment_status='paid'. The trigger now guards
--- both fields:
---   - total_amount: cannot change once paid_at is set (existing D24)
---   - paid_at: cannot be cleared (NEW.paid_at → NULL) or shifted
---     (NEW.paid_at → different non-NULL timestamp) once set.
---     This is critical because paid_at drives the rolling-12-month
---     spend window (D1/D22); mutating it post-set would silently
---     re-classify a client's tier eligibility.
+-- D24 + Round 3 F26 + Round 7 PR #80 F14 fix: total_amount +
+-- paid_at + payment_status ALL immutable AFTER paid_at is set.
+-- The trigger now guards all three fields:
+--   - total_amount: cannot change once paid (D24)
+--   - paid_at: cannot be cleared or shifted (Round 3 F26)
+--   - payment_status: cannot transition out of 'paid' (Round 7 F14)
+--
+-- F14 rationale: without this guard, an admin/script could:
+--   UPDATE bookings SET payment_status='refunded' WHERE id=<paid>
+-- which would silently mutate spend_12m (the qualified-spend RPC
+-- filters on payment_status='paid', so the row disappears from
+-- the tier window) while leaving the cashback `earn` event in the
+-- ledger — a stale balance against no qualifying spend. D25 says
+-- refund flow doesn't ship in v1, so the ONLY post-paid mutation
+-- path should be Phase 13.1's refund RPC (which will lift this
+-- constraint conditionally). In v1: absolute block.
 --
 -- Round 2 PR #80 F22 clarification still holds — admin pre-paid
 -- corrections are EXPLICITLY ALLOWED (rejection fires only when
 -- OLD.paid_at IS NOT NULL).
---
--- Renamed function: `reject_paid_state_mutation_after_paid` to
--- reflect both-field coverage (was `reject_total_amount_*` in
--- Round 1).
 CREATE OR REPLACE FUNCTION reject_paid_state_mutation_after_paid()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
@@ -695,6 +701,16 @@ BEGIN
     -- Block paid_at mutation (clear OR shift)
     IF NEW.paid_at IS DISTINCT FROM OLD.paid_at THEN
       RAISE EXCEPTION 'bookings_paid_at_immutable_after_set: cannot mutate paid_at once set (booking_id=%, old=%, new=%)', OLD.id, OLD.paid_at, NEW.paid_at
+        USING ERRCODE = '22023';
+    END IF;
+    -- F14: Block payment_status mutation (e.g. paid→refunded).
+    -- The ONLY way to "unpaid" a booking in v1 is to not have paid
+    -- it; once paid_at is set, the row is locked. Phase 13.1
+    -- refund RPC will conditionally bypass this by setting a
+    -- session var (e.g. `aeris.refund_rpc=true`) inside its
+    -- BEGIN block; v1 has no such bypass.
+    IF NEW.payment_status IS DISTINCT FROM OLD.payment_status THEN
+      RAISE EXCEPTION 'bookings_payment_status_immutable_after_paid: cannot mutate payment_status once paid_at is set (booking_id=%, old=%, new=%)', OLD.id, OLD.payment_status, NEW.payment_status
         USING ERRCODE = '22023';
     END IF;
   END IF;
@@ -1157,7 +1173,11 @@ $$;
 ### §4.3 `award_cashback_for_booking(p_client_id UUID, p_booking_id UUID) RETURNS JSONB`
 
 Computes cashback based on **tier at the moment of payment
-confirmation** and `amount_paid_sar` (D6 — no compound).
+confirmation** and the inline-computed `amount_paid =
+total_amount - cashback_redemption_sar` (D6 — no compound; D23 —
+no stored column). Round 7 PR #80 F17 fix — replaced the earlier
+`amount_paid_sar` wording with the computed name to avoid
+suggesting a column exists.
 
 Round 6 PR #80 F11 fix — Round 1 F2 removed `amount_paid_sar` as
 a stored column (D23 inline computation); the description formula
@@ -1328,9 +1348,25 @@ INSERTs `redeem` ledger event + UPDATEs
 
 **Round 3 PR #80 F27 + F30 fix** (FOR UPDATE on clients +
 idempotency) **+ Round 5 PR #80 F3 fix** (P1 — booking ownership
-lock at DB boundary; SECURITY DEFINER cannot trust caller). The
-RPC now locks the booking row FOR UPDATE with `client_id` predicate
-in the SELECT — preventing cross-client redemption attempts:
+lock at DB boundary; SECURITY DEFINER cannot trust caller)
+**+ Round 7 PR #80 F15 fix** (P1 — lock order swap to prevent
+ABBA deadlock with payment confirmation).
+
+**F15 (P1) — Lock order is now `booking THEN client`** to match
+the payment-confirmation path (`bookings UPDATE` holds the
+booking row lock, then the AFTER trigger calls
+`award_cashback_for_booking` which locks the client row). Earlier
+rounds locked client first, then booking — creating a classic
+ABBA deadlock if redeem and payment confirmation raced for the
+same client:
+- Payment: holds booking lock, waits for client lock
+- Redeem: holds client lock, waits for booking lock
+- Both block forever → DB detects + aborts one
+
+The fix: redeem now locks `bookings` first (with the same
+`AND client_id = p_client_id FOR UPDATE` from F3), then locks
+`clients`. Award + redeem now agree on lock order, so they
+serialize cleanly under contention.
 
 ```sql
 CREATE OR REPLACE FUNCTION redeem_cashback_for_booking(
@@ -1353,7 +1389,7 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'redemption_amount_invalid');
   END IF;
 
-  -- F28 idempotency
+  -- F28 idempotency (no lock; just an early-exit check)
   IF EXISTS (
     SELECT 1 FROM client_loyalty_ledger
     WHERE booking_id = p_booking_id AND event_type = 'redeem'
@@ -1361,7 +1397,30 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'already_redeemed_for_booking');
   END IF;
 
-  -- F27: lock clients row (serializes all balance writes)
+  -- F15 (P1) + F3 (P1): lock BOOKING FIRST with client_id predicate.
+  -- Lock order: booking → client (matches award_cashback_for_booking
+  -- and the payment-confirmation trigger to prevent ABBA deadlock).
+  -- The AND client_id filter is the cross-client security boundary
+  -- (without it, any caller with a valid p_booking_id could redeem
+  -- against any client's balance).
+  SELECT total_amount, paid_at INTO v_total_amount, v_paid_at
+  FROM bookings
+  WHERE id = p_booking_id AND client_id = p_client_id
+  FOR UPDATE;
+  IF v_total_amount IS NULL THEN
+    -- Same error envelope for "doesn't exist" and "not owned"
+    -- (don't leak booking existence to other clients).
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_not_owned');
+  END IF;
+
+  -- D29: redemption must happen BEFORE payment confirmation.
+  -- Checked from the locked booking row.
+  IF v_paid_at IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_already_paid');
+  END IF;
+
+  -- F27: NOW lock the clients row (second in the lock order).
+  -- All balance writes serialize on this lock.
   SELECT cashback_balance_sar INTO v_current_balance
   FROM clients WHERE id = p_client_id FOR UPDATE;
   IF v_current_balance IS NULL THEN
@@ -1372,21 +1431,6 @@ BEGIN
       'ok', false, 'error', 'insufficient_balance',
       'current_balance', v_current_balance, 'requested', p_redemption_amount
     );
-  END IF;
-
-  -- F3 (P1): lock booking row WITH client_id predicate. This is
-  -- the security boundary — without the AND client_id filter, any
-  -- caller with a valid p_booking_id could redeem against any
-  -- client's balance.
-  SELECT total_amount, paid_at INTO v_total_amount, v_paid_at
-  FROM bookings
-  WHERE id = p_booking_id AND client_id = p_client_id
-  FOR UPDATE;
-  IF v_total_amount IS NULL THEN
-    -- Either booking doesn't exist OR client_id doesn't match.
-    -- Same error envelope for both (don't leak booking existence
-    -- to other clients).
-    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_not_owned');
   END IF;
 
   -- D7 cap 1
@@ -1403,11 +1447,8 @@ BEGIN
     );
   END IF;
 
-  -- D29: redemption must happen BEFORE payment confirmation.
-  -- Now checked from the locked booking row (no second SELECT).
-  IF v_paid_at IS NOT NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'booking_already_paid');
-  END IF;
+  -- (D29 paid_at check moved above the clients-lock block per F15
+  -- lock-order swap — it short-circuits before any client write.)
 
   v_new_balance := v_current_balance - p_redemption_amount;
 
@@ -1927,13 +1968,18 @@ booking_required), +1 RPC (reconcile per F14), +1 column
 6. **D21 race assertion** — try direct INSERT into
    `client_loyalty_ledger` with `(booking_id=<id>, event_type='earn')`
    → expect `23505 unique_violation` from `uq_client_loyalty_ledger_earn_per_booking`.
-7. **Edge: refunded→paid transition** — UPDATE booking →
-   payment_status='refunded' → UPDATE → payment_status='paid'.
-   Trigger WHEN fires (OLD='refunded' != NEW='paid'). The RPC
-   idempotency guard catches → no second earn event. Ledger
-   remains 1 `earn`. (Future `refund_back` event mechanics are
-   in scope of D-spec refund TBD; this probe only verifies the
-   earn-side invariant.)
+7. **Edge: direct admin re-invocation** (Round 7 PR #80 F16 fix —
+   replaces the earlier `refunded→paid` edge case, which
+   contradicted D25/D30 v1 immutability — refunds don't exist
+   in v1). Manually invoke
+   `SELECT award_cashback_for_booking(c1, booking_id)` a second
+   time directly (bypassing the trigger entirely). Verify:
+   - Returns `{ok:true, already_awarded:true,
+     skipped_reason:'duplicate_earn_for_booking'}`
+   - Ledger remains exactly 1 `earn` event for this booking
+   - `clients.cashback_balance_sar` unchanged
+   This proves the RPC-level EXISTS guard (D21 layer 2) catches
+   the duplicate even when the trigger isn't the caller.
 
 ### Probe 43 — Redeem cashback within D7 cap
 
