@@ -40,14 +40,16 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
                   WHERE t.typname = 'loyalty_ledger_event_type' AND n.nspname = 'public') THEN
     CREATE TYPE loyalty_ledger_event_type AS ENUM (
-      'earn',                                      -- cashback from confirmed booking
-      'redeem',                                    -- applied to a future booking
-      'adjust',                                    -- admin manual correction
-      'expire',                                    -- 24-month expiry sweep
-      'refund_back',                               -- D25 reserved; no producer in v1
-      'diamond_shield_granted',                    -- D11 cross-product
-      'diamond_shield_skipped_paying_paid_plan',   -- D12 invariant
-      'diamond_shield_revoked_on_downgrade'        -- D11 downgrade path
+      'earn',                                       -- cashback from confirmed booking
+      'redeem',                                     -- applied to a future booking
+      'adjust',                                     -- admin manual correction
+      'expire',                                     -- 24-month expiry sweep
+      'refund_back',                                -- D25 reserved; no producer in v1
+      'diamond_shield_granted',                     -- D11 cross-product auto-grant
+      'diamond_shield_skipped_already_diamond',     -- J5 skip: active paying diamond exists
+      'diamond_shield_skipped_paying_paid_plan',    -- D12 skip: paying lower paid plan
+      'diamond_shield_grant_failed',                -- D26 BEGIN/EXCEPTION caught; canary
+      'diamond_shield_revoked_on_downgrade'         -- D11 downgrade path
     );
   END IF;
 END $$;
@@ -175,13 +177,14 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
   cashback_expiry_at    TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
+  -- Round 5 PR #80 F7 fix — all diamond_shield_* events have
+  -- amount_sar=0 (they record state transitions, not balance deltas).
+  -- Prefix check covers all 5 current variants + any future addition.
   CONSTRAINT client_loyalty_ledger_amount_sign_check CHECK (
     (event_type IN ('earn', 'refund_back') AND amount_sar > 0)
     OR (event_type IN ('redeem', 'expire') AND amount_sar < 0)
     OR (event_type = 'adjust')
-    OR (event_type IN ('diamond_shield_granted', 'diamond_shield_skipped_paying_paid_plan',
-                        'diamond_shield_revoked_on_downgrade')
-        AND amount_sar = 0)
+    OR (event_type::text LIKE 'diamond_shield_%' AND amount_sar = 0)
   ),
   CONSTRAINT client_loyalty_ledger_admin_reason_required_for_adjust CHECK (
     event_type != 'adjust' OR admin_reason IS NOT NULL
@@ -189,9 +192,11 @@ CREATE TABLE IF NOT EXISTS client_loyalty_ledger (
   CONSTRAINT client_loyalty_ledger_subscription_required_for_grant CHECK (
     event_type != 'diamond_shield_granted' OR source_subscription_id IS NOT NULL
   ),
+  -- Round 5 PR #80 F7 fix — prefix check covers all diamond_shield_*
+  -- variants (granted/skipped_*/grant_failed/revoked) without
+  -- enumeration drift.
   CONSTRAINT client_loyalty_ledger_change_log_required_for_diamond CHECK (
-    event_type NOT IN ('diamond_shield_granted', 'diamond_shield_skipped_paying_paid_plan',
-                        'diamond_shield_revoked_on_downgrade')
+    NOT (event_type::text LIKE 'diamond_shield_%')
     OR source_change_log_id IS NOT NULL
   ),
   CONSTRAINT client_loyalty_ledger_booking_required_for_booking_events_check CHECK (
@@ -519,6 +524,13 @@ DECLARE
   v_expiry_months    INT;
   v_new_balance      DECIMAL(14,2);
   v_ledger_id        UUID;
+  v_booking_client   UUID;
+  v_payment_status   TEXT;
+  v_paid_at          TIMESTAMPTZ;
+  v_discriminator    TEXT;
+  v_is_covered       BOOLEAN;
+  v_total_amount     DECIMAL(14,2);
+  v_redemption       DECIMAL(14,2);
 BEGIN
   -- D21 layer 2: RPC EXISTS guard
   IF EXISTS (
@@ -534,7 +546,37 @@ BEGIN
     );
   END IF;
 
-  -- Load tier + cashback %
+  -- Round 5 PR #80 F2 fix (P1): lock booking row + verify ownership
+  -- + state at DB boundary. SECURITY DEFINER cannot trust the trigger
+  -- caller. 5 guards: not_found, client_mismatch, not_paid,
+  -- not_eligible, covered_medevac_excluded.
+  SELECT client_id, payment_status::text, paid_at,
+         source_discriminator::text, COALESCE(is_covered, false),
+         total_amount, cashback_redemption_sar
+    INTO v_booking_client, v_payment_status, v_paid_at,
+         v_discriminator, v_is_covered,
+         v_total_amount, v_redemption
+  FROM bookings
+  WHERE id = p_booking_id
+  FOR UPDATE;
+
+  IF v_booking_client IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found');
+  END IF;
+  IF v_booking_client != p_client_id THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_client_mismatch');
+  END IF;
+  IF v_payment_status != 'paid' OR v_paid_at IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_paid');
+  END IF;
+  IF v_discriminator NOT IN ('charter', 'cargo', 'medevac') THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_eligible_for_cashback');
+  END IF;
+  IF v_discriminator = 'medevac' AND v_is_covered THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_covered_medevac_excluded');
+  END IF;
+
+  -- Load tier + cashback % (lock clients row)
   SELECT c.privilege_tier, t.cashback_pct, t.cashback_expiry_months
     INTO v_tier, v_pct, v_expiry_months
   FROM clients c
@@ -546,13 +588,10 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'client_not_found');
   END IF;
 
-  -- D23 inline computation of amount_paid (NOT total_amount; D6)
-  SELECT COALESCE(total_amount - cashback_redemption_sar, 0)
-    INTO v_amount_paid
-  FROM bookings WHERE id = p_booking_id;
-
-  IF v_amount_paid IS NULL OR v_amount_paid <= 0 THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_zero');
+  -- D23 inline computation
+  v_amount_paid := v_total_amount - COALESCE(v_redemption, 0);
+  IF v_amount_paid <= 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_zero_amount_paid');
   END IF;
 
   v_cashback_amount := ROUND(v_amount_paid * v_pct / 100, 2);
@@ -618,6 +657,7 @@ AS $$
 DECLARE
   v_current_balance  DECIMAL(14,2);
   v_total_amount     DECIMAL(14,2);
+  v_paid_at          TIMESTAMPTZ;
   v_new_balance      DECIMAL(14,2);
   v_ledger_id        UUID;
 BEGIN
@@ -648,10 +688,18 @@ BEGIN
     );
   END IF;
 
-  SELECT total_amount INTO v_total_amount
-  FROM bookings WHERE id = p_booking_id;
+  -- Round 5 PR #80 F3 fix (P1): lock booking row WITH client_id
+  -- predicate. Same boundary as F2 — SECURITY DEFINER cannot trust
+  -- the caller; without the AND client_id filter, any caller with
+  -- a valid booking_id could redeem against any client's balance.
+  SELECT total_amount, paid_at INTO v_total_amount, v_paid_at
+  FROM bookings
+  WHERE id = p_booking_id AND client_id = p_client_id
+  FOR UPDATE;
   IF v_total_amount IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found');
+    -- Same envelope for both branches (don't leak booking existence
+    -- across clients).
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_not_owned');
   END IF;
 
   -- D7 cap 1: redemption <= 50% of total_amount
@@ -668,11 +716,9 @@ BEGIN
     );
   END IF;
 
-  -- D29: redemption must happen BEFORE payment confirmation
-  IF EXISTS (
-    SELECT 1 FROM bookings
-    WHERE id = p_booking_id AND paid_at IS NOT NULL
-  ) THEN
+  -- D29: redemption must happen BEFORE payment confirmation.
+  -- Now read from the locked booking row (no second SELECT).
+  IF v_paid_at IS NOT NULL THEN
     RETURN jsonb_build_object('ok', false, 'error', 'booking_already_paid');
   END IF;
 
