@@ -274,6 +274,17 @@ export const acceptOfferSchema = z.object({
     message: 'معرّف العرض غير صالح',
   }),
   source: offerSourceSchema,
+  // Phase 13 PR 3 — optional cashback redemption against the
+  // freshly created booking. Server-side D7 caps live in the
+  // `redeem_cashback_for_booking` RPC; we only enforce the
+  // basic shape here (non-negative integer SAR). UI prevents
+  // sending values that would clearly fail (>= 50% of total
+  // OR > current balance).
+  cashback_redemption_sar: z
+    .number()
+    .int('قيمة الاسترداد يجب أن تكون عدداً صحيحاً')
+    .min(0, 'قيمة الاسترداد لا يمكن أن تكون سالبة')
+    .optional(),
 });
 
 export type AcceptOfferInput = z.infer<typeof acceptOfferSchema>;

@@ -25,6 +25,13 @@ const reasonField = z
 
 export const acceptOfferSchema = z.object({
   offer_id: z.string().uuid('معرّف العرض غير صحيح'),
+  // Phase 13 PR 3 — optional cashback redemption at accept time
+  // (D7 caps enforced server-side by redeem_cashback_for_booking).
+  cashback_redemption_sar: z
+    .number()
+    .int('قيمة الاسترداد يجب أن تكون عدداً صحيحاً')
+    .min(0, 'قيمة الاسترداد لا يمكن أن تكون سالبة')
+    .optional(),
 });
 
 export const declineOfferSchema = z.object({

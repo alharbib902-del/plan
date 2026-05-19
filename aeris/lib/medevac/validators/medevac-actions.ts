@@ -12,6 +12,16 @@ import { z } from 'zod';
 export const acceptOfferSchema = z
   .object({
     offer_id: z.string().uuid('معرّف العرض غير صحيح'),
+    // Phase 13 PR 3 — optional cashback redemption (D7 caps
+    // enforced server-side). UI must NOT send a redemption for
+    // J5 covered-event medevac bookings; covered bookings have
+    // no cash flow to credit. Phase 13.1 will add an RPC-level
+    // guard on is_covered.
+    cashback_redemption_sar: z
+      .number()
+      .int('قيمة الاسترداد يجب أن تكون عدداً صحيحاً')
+      .min(0, 'قيمة الاسترداد لا يمكن أن تكون سالبة')
+      .optional(),
   })
   .strict();
 

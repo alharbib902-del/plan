@@ -105,6 +105,10 @@ function makeClientCandidate(
     last_empty_leg_notified_at: null,
     empty_legs_opt_in: true,
     notification_preferences: null,
+    // Phase 13 PR 3 — fixture defaults to NULL so the existing
+    // matching-clients suite (which doesn't gate on tier) keeps
+    // behaving as before. Per-test overrides can set 'gold' etc.
+    privilege_tier: null,
     ...overrides,
   };
 }

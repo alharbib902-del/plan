@@ -28,6 +28,10 @@ import {
   enqueueClientLegNotifications,
   type EnqueuedRow,
 } from './notifications';
+import {
+  decideTierBoostEligibility,
+  type TierBoostRule,
+} from './matching-tier-boost';
 
 /**
  * Phase 7 PR 2e — empty-legs matching engine.
@@ -90,6 +94,13 @@ export type MatchOutcome =
         // notification_preferences. Observability counter only —
         // does NOT affect shouldMarkOutboxProcessed (round 7 P1 #1).
         clients_skipped_preferences?: number;
+        // Phase 13 PR 3 D13: count of clients that passed
+        // candidate-pool + frequency-cap + preferences but whose
+        // tier-boost window had not yet opened. Observability
+        // counter only — these clients ARE retryable on the next
+        // cron tick (the candidate-pool will re-include them and
+        // tier-boost will gate again until their window opens).
+        clients_skipped_tier_boost?: number;
       };
     }
   | { ok: true; skipped: 'suppress_notifications'; leg_id: string }
@@ -138,6 +149,108 @@ function isNotificationsFlagEnabled(): boolean {
  */
 function isClientPortalFlagEnabled(): boolean {
   return process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true';
+}
+
+/**
+ * Phase 13 PR 3 — feature flag for tier-boost gating (D13).
+ * When OFF (default in fresh installs), the matcher ignores
+ * privilege_tier entirely and every eligible client matches
+ * immediately (Phase 10 behaviour). When ON, the matcher gates
+ * lower tiers behind their boost window per
+ * `decideTierBoostEligibility` and records audit rows in
+ * `client_empty_leg_matches` (UNIQUE constraint dedupes across
+ * cron ticks).
+ */
+function isPrivilegeFlagEnabled(): boolean {
+  return process.env.ENABLE_PRIVILEGE === 'true';
+}
+
+/**
+ * Phase 13 PR 3 — load the per-tier boost-hours seed once per
+ * matchLeg call. Cheap (4 rows). Returns [] on read error so the
+ * tier-boost decision falls through to its `no_gating` branch
+ * rather than blocking the entire client-loop.
+ */
+async function loadTierBoostRules(
+  client: ReturnType<typeof createAdminClient>
+): Promise<TierBoostRule[]> {
+  type LoosePicker = {
+    from: (table: string) => {
+      select: (cols: string) => Promise<{
+        data: unknown;
+        error: { message?: string } | null;
+      }>;
+    };
+  };
+  const picker = client as unknown as LoosePicker;
+  const { data, error } = await picker
+    .from('privilege_tier_thresholds')
+    .select('tier, empty_legs_boost_hours');
+
+  if (error) {
+    console.error('[matching] loadTierBoostRules error', error);
+    return [];
+  }
+  const rows = (data ?? []) as Array<{
+    tier: 'silver' | 'gold' | 'platinum' | 'diamond';
+    empty_legs_boost_hours: number;
+  }>;
+  return rows.map((r) => ({
+    tier: r.tier,
+    empty_legs_boost_hours: Number(r.empty_legs_boost_hours) || 0,
+  }));
+}
+
+/**
+ * Phase 13 PR 3 — record audit rows in client_empty_leg_matches
+ * for clients that matched + got enqueued under the privilege
+ * tier-boost gate. Inserts are idempotent on the
+ * UNIQUE(empty_leg_id, client_id) constraint — replay across
+ * cron ticks is silently swallowed (logged at debug only).
+ *
+ * Caller passes only clients that PASSED the tier-boost gate
+ * AND were successfully enqueued (so a partial enqueue failure
+ * doesn't create orphan audit rows).
+ */
+async function recordClientEmptyLegMatches(
+  client: ReturnType<typeof createAdminClient>,
+  legId: string,
+  matches: Array<{
+    client_id: string;
+    privilege_tier_at_match: 'silver' | 'gold' | 'platinum' | 'diamond';
+    boost_hours_applied: number;
+  }>
+): Promise<void> {
+  if (matches.length === 0) return;
+  type LooseInserter = {
+    from: (table: string) => {
+      upsert: (
+        rows: unknown,
+        opts: { onConflict: string; ignoreDuplicates: boolean }
+      ) => Promise<{ data: unknown; error: { message?: string } | null }>;
+    };
+  };
+  const inserter = client as unknown as LooseInserter;
+  const rows = matches.map((m) => ({
+    empty_leg_id: legId,
+    client_id: m.client_id,
+    privilege_tier_at_match: m.privilege_tier_at_match,
+    boost_hours_applied: m.boost_hours_applied,
+    notification_sent_at: new Date().toISOString(),
+  }));
+  const { error } = await inserter
+    .from('client_empty_leg_matches')
+    .upsert(rows, {
+      onConflict: 'empty_leg_id,client_id',
+      ignoreDuplicates: true,
+    });
+  if (error) {
+    // Non-fatal: empty_leg_notifications already wrote the
+    // user-visible row; audit failure here doesn't justify
+    // re-running the entire matcher. Surfaces in logs for
+    // canary triage.
+    console.error('[matching] recordClientEmptyLegMatches error', error);
+  }
 }
 
 // ============================================================
@@ -382,15 +495,57 @@ export async function matchLeg(
   // silently dropping client matches.
   let clientsWritten: number | undefined;
   let clientsSkippedPreferences: number | undefined;
+  let clientsSkippedTierBoost: number | undefined;
   if (isClientPortalFlagEnabled()) {
     try {
+      // Phase 13 PR 3 D13: load tier-boost rules once per matchLeg
+      // call (cheap — 4 rows). Empty rules array → decision falls
+      // through to `no_gating` so the existing Phase 10 behaviour
+      // is preserved when the privilege flag is off OR the
+      // thresholds table is empty.
+      const tierBoostRules = isPrivilegeFlagEnabled()
+        ? await loadTierBoostRules(createAdminClient())
+        : [];
+      const tierBoostActive =
+        isPrivilegeFlagEnabled() && tierBoostRules.length > 0;
+
       const clientCandidates = await listEligibleClientCandidates();
       const eligibleClients: { cand: ClientCandidateRow; score: number }[] = [];
+      let skippedTierBoost = 0;
+      // Track which clients passed tier-boost so we can audit
+      // them post-enqueue. Only populated when tier-boost is
+      // active; empty otherwise (the existing Phase 10 path is
+      // unaffected).
+      const tierBoostMatches: Array<{
+        client_id: string;
+        privilege_tier_at_match: 'silver' | 'gold' | 'platinum' | 'diamond';
+        boost_hours_applied: number;
+      }> = [];
+
       for (const cand of clientCandidates) {
         const skip = await shouldSkipClientCandidate(cand.client_id, leg.id);
         if (skip) continue;
         const score = scoreCandidateAgainstLeg(leg, cand);
         if (score <= 0) continue;
+
+        // Phase 13 PR 3 D13 gate.
+        if (tierBoostActive) {
+          const decision = decideTierBoostEligibility({
+            publishedAt: leg.created_at,
+            clientTier: cand.privilege_tier,
+            thresholds: tierBoostRules,
+          });
+          if (!decision.eligible) {
+            skippedTierBoost += 1;
+            continue;
+          }
+          tierBoostMatches.push({
+            client_id: cand.client_id,
+            privilege_tier_at_match: cand.privilege_tier ?? 'silver',
+            boost_hours_applied: decision.boost_hours_applied,
+          });
+        }
+
         eligibleClients.push({ cand, score });
       }
       eligibleClients.sort((a, b) => b.score - a.score);
@@ -403,6 +558,21 @@ export async function matchLeg(
       });
       clientsWritten = clientResult.written.length;
       clientsSkippedPreferences = clientResult.skipped_preferences;
+      if (tierBoostActive) {
+        clientsSkippedTierBoost = skippedTierBoost;
+        // Record audit rows for ONLY the clients we actually
+        // included in the enqueue batch. enqueueClientLegNotifications
+        // filters out preference-opted-out clients downstream, but
+        // those still count as "matched under tier-boost rules"
+        // for D27 audit purposes (the boost window decision was
+        // applied), so we keep all tierBoostMatches entries that
+        // landed in topClients.
+        const topClientIds = new Set(topClients.map((c) => c.client_id));
+        const auditRows = tierBoostMatches.filter((m) =>
+          topClientIds.has(m.client_id)
+        );
+        await recordClientEmptyLegMatches(createAdminClient(), leg.id, auditRows);
+      }
     } catch (err) {
       console.error('[matching] client-loop failed', err);
       return {
@@ -421,6 +591,9 @@ export async function matchLeg(
       ...(clientsWritten !== undefined && { clients_written: clientsWritten }),
       ...(clientsSkippedPreferences !== undefined && {
         clients_skipped_preferences: clientsSkippedPreferences,
+      }),
+      ...(clientsSkippedTierBoost !== undefined && {
+        clients_skipped_tier_boost: clientsSkippedTierBoost,
       }),
     },
   };

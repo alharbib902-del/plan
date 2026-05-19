@@ -6,6 +6,7 @@ import { headers } from 'next/headers';
 import { requireClientSession } from '@/lib/clients/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { medevacRequestAuthedSchema } from '@/lib/medevac/validators/medevac-request';
+import { redeemCashbackIfRequested } from '@/lib/privilege/redeem-helper';
 import {
   acceptOfferSchema,
   declineOfferSchema,
@@ -269,11 +270,18 @@ export type AcceptMyMedevacOfferResult =
       offer_id: string;
       medevac_request_id: string;
       accepted_at: string;
+      // Phase 13 PR 3 — optional redemption envelope (only
+      // populated when caller passes cashback_redemption_sar > 0,
+      // which UI must suppress for J5 covered-event bookings).
+      cashback_redemption?:
+        | { ok: true; redeemed_sar: number; new_balance_sar: number }
+        | { ok: false; error: string };
     }
   | MedevacClientsActionFailure;
 
 export async function acceptMyMedevacOffer(input: {
   offer_id: string;
+  cashback_redemption_sar?: number;
 }): Promise<AcceptMyMedevacOfferResult> {
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
@@ -317,12 +325,34 @@ export async function acceptMyMedevacOffer(input: {
   revalidatePath('/me/bookings');
   revalidatePath('/admin/medevac');
 
+  // Phase 13 PR 3 — optional cashback redemption (see charter
+  // accept for the rationale). UI suppresses the input for J5
+  // covered-event bookings.
+  const redeem = parsed.data.cashback_redemption_sar
+    ? await redeemCashbackIfRequested({
+        client_id: session.client_id,
+        booking_id: result.booking_id,
+        cashback_redemption_sar: parsed.data.cashback_redemption_sar,
+      })
+    : null;
+
   return {
     ok: true,
     booking_id: result.booking_id,
     offer_id: result.offer_id,
     medevac_request_id: result.medevac_request_id,
     accepted_at: result.accepted_at,
+    ...(redeem
+      ? {
+          cashback_redemption: redeem.ok
+            ? {
+                ok: true as const,
+                redeemed_sar: redeem.redeemed_sar,
+                new_balance_sar: redeem.new_balance_sar,
+              }
+            : { ok: false as const, error: redeem.error },
+        }
+      : {}),
   };
 }
 

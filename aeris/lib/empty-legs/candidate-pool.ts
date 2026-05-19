@@ -173,6 +173,20 @@ export interface ClientCandidateRow extends CandidateRow {
   /** Per-client opt-in JSONB — read at matching time by
    *  `lib/clients/notification-preferences.ts::isClientOptedIn`. */
   notification_preferences: Record<string, unknown> | null;
+  /**
+   * Phase 13 PR 3 — D13 tier-boost signal. Populated from the
+   * clients.privilege_tier column added by PR 1. NULL if the
+   * client predates the PR 1 backfill (extremely unlikely
+   * because PR 1's `applyPrivilegeBackfill` sets every existing
+   * row to 'silver'). Tier-boost decision falls back to silver
+   * for NULL so the gating still works.
+   */
+  privilege_tier:
+    | 'silver'
+    | 'gold'
+    | 'platinum'
+    | 'diamond'
+    | null;
 }
 
 interface RawClientRow {
@@ -181,6 +195,7 @@ interface RawClientRow {
   contact_phone?: string | null;
   signup_status?: string | null;
   notification_preferences?: Record<string, unknown> | null;
+  privilege_tier?: 'silver' | 'gold' | 'platinum' | 'diamond' | null;
 }
 
 interface RawTripRequestSignalRow {
@@ -198,10 +213,14 @@ export async function listEligibleClientCandidates(
   const client = createAdminClient();
 
   // 1. Pull all active clients (preferences filtered at matching time).
+  // Phase 13 PR 3: include privilege_tier for D13 tier-boost gating
+  // in the matching engine. Backward-compatible: the column was
+  // added by Phase 13 PR 1 and backfilled to 'silver' for every
+  // pre-existing client.
   const { data: clientsData, error: clientsError } = await client
     .from(CLIENTS_TABLE)
     .select(
-      'id, full_name, contact_phone, signup_status, notification_preferences'
+      'id, full_name, contact_phone, signup_status, notification_preferences, privilege_tier'
     )
     .eq('signup_status', 'active')
     .order('created_at', { ascending: false })
@@ -283,6 +302,8 @@ export async function listEligibleClientCandidates(
       // Phase 10 ClientCandidateRow extensions
       client_id: r.id,
       notification_preferences: r.notification_preferences ?? null,
+      // Phase 13 PR 3 — D13 tier-boost signal
+      privilege_tier: r.privilege_tier ?? null,
     });
   }
   return out;

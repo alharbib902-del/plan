@@ -101,4 +101,15 @@ export const privilegeAr = {
   noteUpgradeImmediate: 'الترقية فورية عند بلوغ الحد',
   noteDowngradeGrace: 'الهبوط بعد 90 يوماً من عدم الوصول للحد',
   noteCashbackExpiry: 'صلاحية الاسترداد 24 شهر',
+
+  // Phase 13 PR 3 — Canary card
+  canaryChannelLabel: 'دورات تقييم Aeris Privilege',
+  canaryLastTierChangeLabel: 'آخر تغيير مستوى',
+  canaryLastExpireLabel: 'آخر انتهاء صلاحية',
+  canaryEligibleClientsLabel: 'العملاء فوق Silver',
+  canaryStatusHealthy: 'سليم',
+  canaryStatusStale: 'لا نشاط حديث',
+  canaryStatusUnknown: 'غير معروف',
+  canaryNeverFired: 'لم يحدث بعد',
+  canaryNoEligibleNote: 'لا يوجد عملاء فوق Silver — لا نشاط متوقع',
 } as const;

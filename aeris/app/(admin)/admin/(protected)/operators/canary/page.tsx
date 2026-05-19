@@ -16,11 +16,16 @@ import { getClientEmptyLegAlertStatus } from '@/lib/notifications/client-empty-l
 import { getCargoEmailAlertStatus } from '@/lib/cargo/email-alert-status';
 import { getCargoDispatchRuns24h } from '@/lib/cargo/canary-queries';
 import { getMedevacEmailAlertStatus } from '@/lib/medevac/email-alert-status';
+import {
+  getPrivilegeCronCanary,
+  type PrivilegeCronCanary,
+} from '@/lib/privilege/canary-queries';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { cargoAr } from '@/lib/i18n/cargo-ar';
 import { medevacAr } from '@/lib/i18n/medevac-ar';
+import { privilegeAr } from '@/lib/i18n/privilege-ar';
 
 /**
  * Phase 8 PR 2e — admin canary readout for operator-side
@@ -72,6 +77,7 @@ export default async function AdminOperatorsCanaryPage() {
     cargoAlertStatus,
     cargoDispatchRuns24h,
     medevacAlertStatus,
+    privilegeCanary,
     attemptMix,
     cronHealth,
   ] = await Promise.all([
@@ -97,6 +103,11 @@ export default async function AdminOperatorsCanaryPage() {
     // from cargo so a degraded medevac email doesn't mislabel
     // cargo health, and vice versa.
     getMedevacEmailAlertStatus(),
+    // Phase 13 PR 3 §6.3 — 8th canary card for the privilege
+    // cron pipeline. Reads tier_change + expire ledger
+    // signals; no new singleton. "Stale" only flags when
+    // there ARE eligible clients (otherwise idle is normal).
+    getPrivilegeCronCanary(),
     getSignupAttemptMix(),
     getCronTickHealth(),
   ]);
@@ -129,6 +140,7 @@ export default async function AdminOperatorsCanaryPage() {
         cargoAlertStatus={cargoAlertStatus}
         cargoDispatchRuns24h={cargoDispatchRuns24h}
         medevacAlertStatus={medevacAlertStatus}
+        privilegeCanary={privilegeCanary}
       />
 
       <AttemptMixCard mix={attemptMix} />
@@ -190,6 +202,7 @@ function NotificationHealthCard({
   cargoAlertStatus,
   cargoDispatchRuns24h,
   medevacAlertStatus,
+  privilegeCanary,
 }: {
   alertStatus: Awaited<ReturnType<typeof getOperatorNotificationAlertStatus>>;
   clientAlertStatus: Awaited<
@@ -201,6 +214,7 @@ function NotificationHealthCard({
   cargoAlertStatus: Awaited<ReturnType<typeof getCargoEmailAlertStatus>>;
   cargoDispatchRuns24h: number;
   medevacAlertStatus: Awaited<ReturnType<typeof getMedevacEmailAlertStatus>>;
+  privilegeCanary: PrivilegeCronCanary;
 }) {
   if (!alertStatus) {
     return (
@@ -291,8 +305,94 @@ function NotificationHealthCard({
             medevacAlertStatus?.last_failure_reason ?? null
           }
         />
+        {/* Phase 13 PR 3 §6.3 — 8th canary card for the
+            privilege cron pipeline (evaluate-all + expire-cashback).
+            No singleton row; staleness is derived from the
+            latest tier_change_log + expire-event ledger row.
+            "Stale" is suppressed when there are no eligible
+            clients yet (Silver-only deployment). */}
+        <PrivilegeCanaryCard canary={privilegeCanary} />
       </div>
     </Card>
+  );
+}
+
+function PrivilegeCanaryCard({ canary }: { canary: PrivilegeCronCanary }) {
+  const tone: 'emerald' | 'amber' | 'muted' =
+    canary.status === 'healthy'
+      ? 'emerald'
+      : canary.status === 'stale'
+        ? 'amber'
+        : 'muted';
+  const Icon =
+    tone === 'emerald'
+      ? CheckCircle2
+      : tone === 'amber'
+        ? AlertTriangle
+        : Activity;
+  const statusLabel =
+    canary.status === 'healthy'
+      ? privilegeAr.canaryStatusHealthy
+      : canary.status === 'stale'
+        ? privilegeAr.canaryStatusStale
+        : privilegeAr.canaryStatusUnknown;
+
+  return (
+    <div
+      className={`rounded-lg border px-3 py-3 ${
+        tone === 'emerald'
+          ? 'border-emerald-500/40 bg-emerald-500/5'
+          : tone === 'amber'
+            ? 'border-amber-500/40 bg-amber-500/5'
+            : 'border-border bg-navy-secondary/30'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <Icon
+          className={`h-4 w-4 ${
+            tone === 'emerald'
+              ? 'text-emerald-300'
+              : tone === 'amber'
+                ? 'text-amber-300'
+                : 'text-ink-muted'
+          }`}
+          aria-hidden
+        />
+        <span className="font-ar text-sm text-ink-primary">
+          {privilegeAr.canaryChannelLabel}
+        </span>
+        <span className="font-ar mr-auto text-xs text-ink-muted">
+          {statusLabel}
+        </span>
+      </div>
+      <dl className="font-ar mt-2 space-y-1 text-xs text-ink-muted">
+        <div className="flex justify-between">
+          <dt>{privilegeAr.canaryEligibleClientsLabel}</dt>
+          <dd dir="ltr" className="font-mono">
+            {canary.eligible_clients_count.toLocaleString('en-US')}
+          </dd>
+        </div>
+        <div className="flex justify-between">
+          <dt>{privilegeAr.canaryLastTierChangeLabel}</dt>
+          <dd dir="ltr" className="font-mono">
+            {canary.last_tier_change_at
+              ? formatRelativeTime(canary.last_tier_change_at)
+              : privilegeAr.canaryNeverFired}
+          </dd>
+        </div>
+        <div className="flex justify-between">
+          <dt>{privilegeAr.canaryLastExpireLabel}</dt>
+          <dd dir="ltr" className="font-mono">
+            {canary.last_expire_at
+              ? formatRelativeTime(canary.last_expire_at)
+              : privilegeAr.canaryNeverFired}
+          </dd>
+        </div>
+        {canary.eligible_clients_count === 0 ? (
+          <p className="text-ink-muted">{privilegeAr.canaryNoEligibleNote}</p>
+        ) : null}
+      </dl>
+    </div>
   );
 }
 
