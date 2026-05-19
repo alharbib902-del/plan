@@ -296,7 +296,7 @@ schema/RPC/probe sections for traceability.
 | **D16** | Eligible products for cashback: Charter, Cargo, MedEvac out-of-pocket. NOT eligible: covered MedEvac (Shield events), Aeris Shield subscription fee itself | Cashback rewards spend, not subscription fees or pre-paid covered events. |
 | **D17** | PII redaction continues: admin tier-change actions logged with admin cookie fingerprint (Phase 12 §4.10 pattern), no PII leaked in audit log | Consistency with D8/D12 across Aeris. |
 | **D18** | Cashback expiry: 24 months from earn date (configurable via `privilege_tier_thresholds.cashback_expiry_months`) | Standard loyalty industry practice; ledger event `expire` written by daily cron. |
-| **D19** | `clients.cashback_balance_sar` is a **denormalized snapshot** maintained by ledger triggers, NOT a computed view; reconciliation cron verifies match against `SUM(ledger)` daily | Performance for booking checkout (no aggregate query per page load); integrity verified hourly. |
+| **D19** | `clients.cashback_balance_sar` is a **denormalized snapshot** maintained by the SECURITY DEFINER RPCs (award/redeem/adjust/expire) that INSERT into `client_loyalty_ledger`, NOT a computed view nor a DB trigger. Round 2 PR #80 F23 fix: reconciliation cron is **report-only** in v1; manual `admin_adjust_cashback` corrects any drift. Round 3 PR #80 F29 clarifying — "trigger maintained" wording in earlier rounds was inaccurate; the RPC is the sole writer and is the single chokepoint that updates both ledger + denorm in the same transaction. | Performance for booking checkout (no aggregate query per page load); RPC-level atomicity guarantees ledger + denorm stay in sync per write; reconcile cron detects drift if it ever appears. |
 | **D20** | Activation is gated by `ENABLE_PRIVILEGE=true` env var (mirror `ENABLE_MEDEVAC` pattern from Phase 12) | Safe rollout; allows schema deploy before flag flip. |
 | **D21** | **Idempotent cashback award**: `award_cashback_for_booking` RPC checks `EXISTS (earn for booking_id)` BEFORE INSERT, returns `{ok:true, already_awarded:true, skipped_reason:'duplicate_earn_for_booking'}` if found. DB-side `UNIQUE INDEX (booking_id) WHERE event_type='earn'` enforces the invariant defense-in-depth. | Prevents double-award across all code paths: trigger replay on same `paid` UPDATE, `refunded→paid` re-confirmation, manual admin re-award attempts. Cannot silently corrupt ledger balance. |
 | **D22** | **`bookings.paid_at` is the canonical payment-confirmation timestamp** added by Phase 13 PR 1 (not Phase 6/14 — Round 1 PR #80 F1 fix verified column does NOT exist anywhere in current schema). Trigger §3.4 stamps `paid_at = NOW()` on the same UPDATE that flips `payment_status='paid'`. The qualified-spend window (D1) filters on `paid_at > NOW() - INTERVAL '12 months'`. | Eliminates spec-vs-schema drift; Phase 13 owns the column it depends on. |
@@ -501,11 +501,20 @@ CREATE INDEX IF NOT EXISTS idx_client_loyalty_ledger_expiry_sweep
 -- D21: defense-in-depth idempotency. The RPC checks before INSERT;
 -- this UNIQUE index ensures the DB rejects any concurrent double-insert
 -- attempt (e.g. trigger fires twice in racing transactions). Partial on
--- WHERE event_type='earn' so other event types (redeem, adjust, refund_back)
+-- WHERE event_type='earn' so adjust/expire/diamond_shield_* events
 -- remain freely multi-per-booking.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_client_loyalty_ledger_earn_per_booking
   ON client_loyalty_ledger (booking_id)
   WHERE event_type = 'earn' AND booking_id IS NOT NULL;
+
+-- Round 3 PR #80 F28 fix — same idempotency invariant for redeem:
+-- a booking can have AT MOST ONE redeem event. Multiple
+-- redeem-per-booking would also conflict with D7 (50% cap is
+-- single-redemption-based, not cumulative). The RPC short-circuits
+-- on EXISTS too; this index is the DB backstop.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_client_loyalty_ledger_redeem_per_booking
+  ON client_loyalty_ledger (booking_id)
+  WHERE event_type = 'redeem' AND booking_id IS NOT NULL;
 
 ALTER TABLE client_loyalty_ledger ENABLE ROW LEVEL SECURITY;
 ```
@@ -617,32 +626,49 @@ ALTER TABLE bookings
     AND (total_amount - cashback_redemption_sar) >= 1
   );
 
--- D24: total_amount immutable AFTER payment_status='paid'.
--- Round 2 PR #80 F22 clarification — admin pre-paid corrections
--- are EXPLICITLY ALLOWED: the trigger only fires the rejection
--- when OLD.paid_at IS NOT NULL (i.e. the booking has already been
--- paid). For unpaid bookings (paid_at IS NULL, regardless of
--- payment_status value), admin can freely adjust total_amount via
--- the existing admin booking-edit flow. Refund flow (D25 deferred)
--- is the only sanctioned post-paid mutation path.
-CREATE OR REPLACE FUNCTION reject_total_amount_mutation_after_paid()
+-- D24 + Round 3 PR #80 F26 fix: total_amount + paid_at BOTH
+-- immutable AFTER payment_status='paid'. The trigger now guards
+-- both fields:
+--   - total_amount: cannot change once paid_at is set (existing D24)
+--   - paid_at: cannot be cleared (NEW.paid_at → NULL) or shifted
+--     (NEW.paid_at → different non-NULL timestamp) once set.
+--     This is critical because paid_at drives the rolling-12-month
+--     spend window (D1/D22); mutating it post-set would silently
+--     re-classify a client's tier eligibility.
+--
+-- Round 2 PR #80 F22 clarification still holds — admin pre-paid
+-- corrections are EXPLICITLY ALLOWED (rejection fires only when
+-- OLD.paid_at IS NOT NULL).
+--
+-- Renamed function: `reject_paid_state_mutation_after_paid` to
+-- reflect both-field coverage (was `reject_total_amount_*` in
+-- Round 1).
+CREATE OR REPLACE FUNCTION reject_paid_state_mutation_after_paid()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
-  IF OLD.paid_at IS NOT NULL
-     AND NEW.total_amount IS DISTINCT FROM OLD.total_amount
-  THEN
-    RAISE EXCEPTION 'bookings_total_amount_immutable_after_paid: cannot mutate total_amount once paid_at is set (booking_id=%)', OLD.id
-      USING ERRCODE = '22023';
+  IF OLD.paid_at IS NOT NULL THEN
+    -- Block total_amount mutation
+    IF NEW.total_amount IS DISTINCT FROM OLD.total_amount THEN
+      RAISE EXCEPTION 'bookings_total_amount_immutable_after_paid: cannot mutate total_amount once paid_at is set (booking_id=%)', OLD.id
+        USING ERRCODE = '22023';
+    END IF;
+    -- Block paid_at mutation (clear OR shift)
+    IF NEW.paid_at IS DISTINCT FROM OLD.paid_at THEN
+      RAISE EXCEPTION 'bookings_paid_at_immutable_after_set: cannot mutate paid_at once set (booking_id=%, old=%, new=%)', OLD.id, OLD.paid_at, NEW.paid_at
+        USING ERRCODE = '22023';
+    END IF;
   END IF;
   RETURN NEW;
 END;
 $$;
 
+-- Round 3 PR #80 F26 fix — trigger + function renamed.
 DROP TRIGGER IF EXISTS trg_bookings_total_amount_immutable_after_paid ON bookings;
-CREATE TRIGGER trg_bookings_total_amount_immutable_after_paid
+DROP TRIGGER IF EXISTS trg_bookings_paid_state_immutable_after_paid ON bookings;
+CREATE TRIGGER trg_bookings_paid_state_immutable_after_paid
   BEFORE UPDATE ON bookings
   FOR EACH ROW
-  EXECUTE FUNCTION reject_total_amount_mutation_after_paid();
+  EXECUTE FUNCTION reject_paid_state_mutation_after_paid();
 
 -- D22: replaced payment_status_confirmed_at (ghost) with paid_at.
 CREATE INDEX IF NOT EXISTS idx_bookings_paid_at_for_loyalty
@@ -1104,6 +1130,120 @@ INSERTs `redeem` ledger event + UPDATEs
 `clients.cashback_balance_sar` (decrement) + sets
 `bookings.cashback_redemption_sar`.
 
+**Round 3 PR #80 F27 + F30 fix — full pseudocode** showing the
+FOR UPDATE serialization (prevents double-spend race) + the F28
+UNIQUE-index idempotency catch:
+
+```sql
+CREATE OR REPLACE FUNCTION redeem_cashback_for_booking(
+  p_client_id          UUID,
+  p_booking_id         UUID,
+  p_redemption_amount  DECIMAL
+)
+RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_current_balance  DECIMAL(14,2);
+  v_total_amount     DECIMAL(14,2);
+  v_existing_redeem  DECIMAL(14,2);
+  v_new_balance      DECIMAL(14,2);
+  v_ledger_id        UUID;
+BEGIN
+  -- Validation 1: redemption amount positive + non-zero
+  IF p_redemption_amount IS NULL OR p_redemption_amount <= 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'redemption_amount_invalid');
+  END IF;
+
+  -- F28 idempotency: a booking can have AT MOST ONE redeem event.
+  -- Short-circuit early to avoid wasted lock + clean envelope.
+  IF EXISTS (
+    SELECT 1 FROM client_loyalty_ledger
+    WHERE booking_id = p_booking_id AND event_type = 'redeem'
+  ) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'already_redeemed_for_booking');
+  END IF;
+
+  -- F27 race fix: FOR UPDATE on clients serializes all balance
+  -- writes (mirror of award_cashback_for_booking lock). Two
+  -- concurrent redeems for different bookings of same client
+  -- queue rather than racing the balance check.
+  SELECT cashback_balance_sar INTO v_current_balance
+  FROM clients WHERE id = p_client_id FOR UPDATE;
+
+  IF v_current_balance < p_redemption_amount THEN
+    RETURN jsonb_build_object(
+      'ok', false, 'error', 'insufficient_balance',
+      'current_balance', v_current_balance, 'requested', p_redemption_amount
+    );
+  END IF;
+
+  -- Load booking total + verify D7 caps. The CHECK constraint
+  -- on `bookings_cashback_redemption_cap_check` (§3.3) re-enforces
+  -- this at UPDATE time; we validate here for a clean error envelope.
+  SELECT total_amount INTO v_total_amount
+  FROM bookings WHERE id = p_booking_id;
+  IF v_total_amount IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found');
+  END IF;
+
+  -- D7 cap 1: redemption <= 50% of total_amount
+  IF p_redemption_amount > v_total_amount * 0.5 THEN
+    RETURN jsonb_build_object(
+      'ok', false, 'error', 'redemption_exceeds_cap',
+      'max_allowed', v_total_amount * 0.5
+    );
+  END IF;
+  -- D7 cap 2: at least 1 SAR cash payment must remain
+  IF (v_total_amount - p_redemption_amount) < 1 THEN
+    RETURN jsonb_build_object(
+      'ok', false, 'error', 'redemption_leaves_no_cash_payment'
+    );
+  END IF;
+
+  -- D7 doesn't allow paying via cashback if the booking ALREADY
+  -- has paid_at IS NOT NULL — redemption must happen BEFORE
+  -- payment confirmation (it adjusts what the client pays).
+  IF EXISTS (
+    SELECT 1 FROM bookings
+    WHERE id = p_booking_id AND paid_at IS NOT NULL
+  ) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_already_paid');
+  END IF;
+
+  v_new_balance := v_current_balance - p_redemption_amount;
+
+  -- Append ledger event. F28 UNIQUE index is the race backstop:
+  -- if another transaction interleaved between EXISTS check and
+  -- INSERT, the 23505 violation is caught.
+  BEGIN
+    INSERT INTO client_loyalty_ledger (
+      client_id, event_type, amount_sar, balance_after_sar, booking_id
+    ) VALUES (
+      p_client_id, 'redeem', -p_redemption_amount, v_new_balance, p_booking_id
+    ) RETURNING id INTO v_ledger_id;
+  EXCEPTION WHEN unique_violation THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'already_redeemed_for_booking_race');
+  END;
+
+  -- Update denormalized balance + booking
+  UPDATE clients SET cashback_balance_sar = v_new_balance
+    WHERE id = p_client_id;
+  UPDATE bookings SET cashback_redemption_sar = p_redemption_amount
+    WHERE id = p_booking_id;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'ledger_id', v_ledger_id,
+    'redeemed_sar', p_redemption_amount,
+    'new_balance_sar', v_new_balance,
+    'booking_id', p_booking_id
+  );
+END;
+$$;
+```
+
 ### §4.5 `admin_force_privilege_tier(p_client_id UUID, p_new_tier client_privilege_tier, p_session_metadata JSONB, p_reason TEXT, p_lock_until DATE DEFAULT NULL) RETURNS JSONB`
 
 Admin manual override. Same audit pattern as Phase 12 §4.10
@@ -1147,12 +1287,42 @@ Round 1 PR #80 F11 fix — explicit return contract for all 3 branches:
 | **Skip — already Diamond** | Active subscription with `plan='diamond'` | `NULL` | Ledger event `diamond_shield_skipped_already_diamond` (links change_log_id only) |
 | **Skip — paid higher plan** | Active subscription with `plan != 'diamond'` AND `annual_fee_at_signup_sar > 0` | `NULL` | Ledger event `diamond_shield_skipped_paying_paid_plan` (links change_log_id; commercial conflict avoidance per D12) |
 
-The covered_members JSONB shape for the grant branch (per Phase 12
-schema §3.7): `[{"name": <client.full_name>, "relationship":
-"self", "dob": <client.dob OR NULL>}]`. Per Round 1 PR #80 F16,
-if `clients.dob IS NULL`, the entry is still inserted with
-`dob: null` — Phase 12 spec allows nullable dob for self-relationship
-covered_members (admin can edit later via /admin/medevac/subscriptions).
+**Round 3 PR #80 F31 fix — covered_members handling**:
+Earlier rounds assumed `clients.dob` exists and could seed the
+self-relationship covered_member. Verification proved:
+- `clients` table (Phase 9) has NO `dob` column
+- Phase 12 `subscribe_to_aeris_shield` RPC takes `p_owner_dob DATE`
+  as REQUIRED parameter (sourced from the subscribe form, not the
+  clients table)
+
+There is no source of DOB for an auto-grant triggered by a tier
+upgrade. The fix:
+
+Auto-grant inserts the subscription with `covered_members='[]'::jsonb`
+(empty array — Phase 12 schema `covered_members JSONB NOT NULL
+DEFAULT '[]'` accepts this). The `notes` field records:
+`'Auto-granted via Phase 13 Diamond tier upgrade. covered_members
+must be populated by client/admin before first Shield use.
+change_log_id=<id>'`.
+
+The client (or admin) populates covered_members later via:
+- `/me/medevac/shield/[id]` — client edits own subscription
+  (Phase 12 PR 2 page; supports adding members + DOB)
+- `/admin/medevac/subscriptions/[id]` — admin edits any
+  subscription (Phase 12 admin tool)
+
+This forces an explicit human touchpoint before Shield is consumed
+on a covered medevac request — which is appropriate for a free
+auto-granted benefit (vs the paid Phase 12 subscribe flow that
+collected DOB upfront).
+
+Side-effect: a Diamond client without populated covered_members
+who tries `use_subscription=true` on a medevac request will fail
+the §4.7 `consume_aeris_shield_event` covered_members
+(name, dob) match guard — the UI must surface a clear "populate
+covered members first" CTA on `/me/medevac/new` when the only
+active subscription has empty covered_members. Phase 13 PR 2
+file list adds this CTA to the medevac form.
 
 ### §4.8 `schedule_diamond_shield_revoke(p_client_id UUID, p_change_log_id UUID) RETURNS VOID`
 
@@ -1325,8 +1495,12 @@ end-to-end).
     client_id       UUID NOT NULL
                       REFERENCES clients(id) ON DELETE CASCADE,
     privilege_tier_at_match client_privilege_tier NOT NULL,
-    tier_boost_applied      BOOLEAN NOT NULL DEFAULT false,
-    boost_hours             INT NOT NULL DEFAULT 0,
+    -- Round 3 PR #80 F25 fix — merged `tier_boost_applied BOOLEAN` +
+    -- `boost_hours INT` into single column. Value=0 means no boost
+    -- (silver or FCFS round); value>0 is the boost hours from
+    -- privilege_tier_thresholds.empty_legs_boost_hours.
+    boost_hours_applied INT NOT NULL DEFAULT 0
+      CHECK (boost_hours_applied >= 0),
     matched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     notification_sent_at TIMESTAMPTZ,
     -- D27: prevents duplicate notification across tier-boost windows
@@ -1397,16 +1571,20 @@ Single SQL script. ~50 checks covering:
 - `privilege_tier_change_log_from_to_distinct_check` (Round 1 F3 fix)
 - `bookings_cashback_redemption_cap_check`
 
-**Triggers (2)** — Round 1 PR #80 F4 added `reject_total_amount_mutation_after_paid`:
-- `trg_bookings_payment_paid_award_cashback` (BEFORE INSERT OR
-  UPDATE — F15 fix extended to INSERT)
-- `trg_bookings_total_amount_immutable_after_paid` (D24)
+**Triggers (3)** — Round 2 PR #80 F21 split combined trigger into
+`_ins` + `_upd`; Round 3 PR #80 F26 renamed immutability trigger
+to cover both total_amount + paid_at:
+- `trg_bookings_payment_paid_award_cashback_ins` (BEFORE INSERT — F15+F21)
+- `trg_bookings_payment_paid_award_cashback_upd` (BEFORE UPDATE OF payment_status — F21)
+- `trg_bookings_paid_state_immutable_after_paid` (D24 + F26 — renamed
+  from `_total_amount_immutable_*`)
 
-**Indexes (9)** — Round 1 PR #80 F1+F8 renamed `idx_bookings_payment_confirmed_for_loyalty` → `idx_bookings_paid_at_for_loyalty`:
+**Indexes (10)** — Round 1 PR #80 F1+F8 renamed `idx_bookings_payment_confirmed_for_loyalty` → `idx_bookings_paid_at_for_loyalty`; Round 3 PR #80 F28 added `uq_client_loyalty_ledger_redeem_per_booking`:
 - `idx_client_loyalty_ledger_client`
 - `idx_client_loyalty_ledger_booking`
 - `idx_client_loyalty_ledger_expiry_sweep`
 - **`uq_client_loyalty_ledger_earn_per_booking`** (D21 UNIQUE)
+- **`uq_client_loyalty_ledger_redeem_per_booking`** (Round 3 F28 UNIQUE)
 - `idx_privilege_tier_change_log_client`
 - `idx_privilege_tier_change_log_pending_grace`
 - `idx_clients_privilege_tier`
