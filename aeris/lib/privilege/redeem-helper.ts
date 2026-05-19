@@ -80,6 +80,11 @@ type LooseRpcClient = {
  * we never accidentally redeem against a paid booking; in
  * Phase 13 every freshly created booking is `payment_status='pending'`.
  */
+// Phase 13 invariant: all current accept RPCs create bookings with
+// bookings.total_amount = accepted_offer.total_price_sar before any
+// Phase 14 addons/VAT recompute. UI redemption caps may preview from
+// offer.total_price_sar, but the DB RPC remains the authority and
+// re-validates against bookings.total_amount after accept.
 export async function redeemCashbackIfRequested(args: {
   client_id: string;
   booking_id: string;
