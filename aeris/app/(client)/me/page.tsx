@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { TwoFactorBanner } from '@/components/privilege/two-factor-banner';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 
 export const dynamic = 'force-dynamic';
@@ -16,9 +17,10 @@ export const metadata: Metadata = {
  * a primary charter CTA). PR 3 will replace this with a
  * requests-list dashboard.
  */
-export default function ClientMeLandingPage() {
+export default async function ClientMeLandingPage() {
   return (
     <section className="space-y-6">
+      <TwoFactorBanner />
       <header>
         <h1 className="font-ar text-2xl text-ink-primary sm:text-3xl">
           {clientsAr.meLandingTitle}
