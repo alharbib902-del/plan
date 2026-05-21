@@ -73,6 +73,10 @@
     {
       "path": "/api/cron/privilege/expire-cashback",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup/public-action-attempts",
+      "schedule": "0 5 * * *"
     }
   ]
 }

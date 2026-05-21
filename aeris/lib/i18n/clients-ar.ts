@@ -363,6 +363,8 @@ export const clientsAr = {
     server_error: 'خطأ غير متوقع. حاول لاحقاً أو تواصل مع الدعم.',
     invalid_input: 'البيانات المُرسلة غير صحيحة.',
     unauthorized: 'يجب تسجيل الدخول أولاً.',
+    rate_limited:
+      'تم تجاوز الحدّ المسموح من المحاولات. حاول بعد قليل أو تواصل عبر واتساب.',
   } as Record<string, string>,
 
   // Bookings page chips (Decision #10 unified /me/bookings).

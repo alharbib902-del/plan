@@ -12,6 +12,10 @@ import { buildFlightRequestWhatsAppLink } from '@/lib/utils/whatsapp';
 import { insertLead } from '@/lib/supabase/queries/leads';
 import { notifyAdminOfNewLead } from '@/lib/notifications/lead-email';
 import { assertKnownAirport } from '@/lib/supabase/queries/airports';
+import {
+  checkPublicActionRateLimit,
+  recordPublicActionAttempt,
+} from '@/lib/rate-limit/public-action';
 import type { LeadInquiryRow } from '@/types/database';
 
 export type FlightRequestActionResult =
@@ -108,9 +112,39 @@ async function resolveAirportSide(
 export async function submitFlightRequest(
   formData: FormData
 ): Promise<FlightRequestActionResult> {
-  // Honeypot — silently accept and drop bot submissions.
+  // Rate-limit FIRST (before honeypot) so bot abuse can't burn
+  // through validation cycles without consuming budget. The
+  // check itself does one indexed SELECT against
+  // public_action_attempts; cost is negligible.
+  const rl = await checkPublicActionRateLimit('flight_request');
+  if (!rl.ok) {
+    // Don't double-record on storage/secret errors — we want
+    // those to fail-closed without polluting the ledger with
+    // synthetic rate_limited rows.
+    if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
+      await recordPublicActionAttempt(
+        'flight_request',
+        rl.actorFingerprint,
+        'rate_limited'
+      );
+    }
+    return {
+      ok: false,
+      fieldErrors: {},
+      formError: 'rate_limited',
+    };
+  }
+
+  // Honeypot — silently accept and drop bot submissions, but
+  // STILL count toward the rate-limit budget so a bot that keeps
+  // tripping it eventually hits the lockout.
   const honeypot = (formData.get('hp_company') as string | null) ?? '';
   if (honeypot.trim().length > 0) {
+    await recordPublicActionAttempt(
+      'flight_request',
+      rl.actorFingerprint,
+      'honeypot'
+    );
     return {
       ok: true,
       requestNumber: null,
@@ -174,6 +208,11 @@ export async function submitFlightRequest(
       const key = issue.path.join('.') || 'form';
       if (!fieldErrors[key]) fieldErrors[key] = issue.message;
     }
+    await recordPublicActionAttempt(
+      'flight_request',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
     return { ok: false, fieldErrors };
   }
 
@@ -188,6 +227,11 @@ export async function submitFlightRequest(
     data.origin_freeform
   );
   if (!originResolved.ok) {
+    await recordPublicActionAttempt(
+      'flight_request',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
     return { ok: false, fieldErrors: { origin: 'origin_iata_unknown' } };
   }
   const destinationResolved = await resolveAirportSide(
@@ -195,6 +239,11 @@ export async function submitFlightRequest(
     data.destination_freeform
   );
   if (!destinationResolved.ok) {
+    await recordPublicActionAttempt(
+      'flight_request',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
     return {
       ok: false,
       fieldErrors: { destination: 'destination_iata_unknown' },
@@ -247,6 +296,16 @@ export async function submitFlightRequest(
     originLabel: persistInput.originLabel,
     destinationLabel: persistInput.destinationLabel,
   });
+
+  // Record the terminal outcome. A persistence failure still
+  // returns ok:true to the user (the WhatsApp deep-link works
+  // either way), but we log the rpc_error for canary triage +
+  // so it counts toward the rate-limit budget for replay storms.
+  await recordPublicActionAttempt(
+    'flight_request',
+    rl.actorFingerprint,
+    persisted ? 'success' : 'rpc_error'
+  );
 
   return {
     ok: true,

@@ -14,6 +14,10 @@ import {
   publicConfirmOptOutSchema,
   publicReserveEmptyLegSchema,
 } from '@/lib/validators/empty-legs';
+import {
+  checkPublicActionRateLimit,
+  recordPublicActionAttempt,
+} from '@/lib/rate-limit/public-action';
 import type {
   ReleaseEmptyLegReservationResult,
   ReserveEmptyLegResult,
@@ -101,8 +105,29 @@ export async function reserveEmptyLeg(input: {
     return { ok: false, error: 'flag_disabled_public' };
   }
 
+  // 0. Rate-limit gate (per-IP, 5 failures/15min, 30 attempts/hr —
+  // more permissive than other public actions because the Dutch-
+  // auction price-drop window legitimately drives repeated retries
+  // from the same browser).
+  const rl = await checkPublicActionRateLimit('empty_leg_reserve');
+  if (!rl.ok) {
+    if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
+      await recordPublicActionAttempt(
+        'empty_leg_reserve',
+        rl.actorFingerprint,
+        'rate_limited'
+      );
+    }
+    return { ok: false, error: 'rate_limited' };
+  }
+
   const parsed = publicReserveEmptyLegSchema.safeParse(input);
   if (!parsed.success) {
+    await recordPublicActionAttempt(
+      'empty_leg_reserve',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
     return {
       ok: false,
       error: 'validation_failed',
@@ -115,6 +140,11 @@ export async function reserveEmptyLeg(input: {
     allowedStatuses: ['available'],
   });
   if (!leg) {
+    await recordPublicActionAttempt(
+      'empty_leg_reserve',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
     return { ok: false, error: 'leg_not_found' };
   }
 
@@ -127,6 +157,11 @@ export async function reserveEmptyLeg(input: {
     minted = mintReservationToken({ legId: leg.id });
   } catch (err) {
     console.error('[empty-legs.reserveEmptyLeg] mint failed', err);
+    await recordPublicActionAttempt(
+      'empty_leg_reserve',
+      rl.actorFingerprint,
+      'rpc_error'
+    );
     return { ok: false, error: 'reservation_mint_failed' };
   }
 
@@ -144,11 +179,21 @@ export async function reserveEmptyLeg(input: {
 
   if (error) {
     console.error('[empty-legs.reserveEmptyLeg] RPC error', error);
+    await recordPublicActionAttempt(
+      'empty_leg_reserve',
+      rl.actorFingerprint,
+      'rpc_error'
+    );
     return { ok: false, error: 'rpc_failed' };
   }
 
   const result = data as ReserveEmptyLegResult;
   if (!result.ok) {
+    await recordPublicActionAttempt(
+      'empty_leg_reserve',
+      rl.actorFingerprint,
+      'rpc_error'
+    );
     return { ok: false, error: result.error };
   }
 
@@ -204,6 +249,12 @@ export async function reserveEmptyLeg(input: {
   // correctly on subsequent visits.
   revalidatePath('/empty-legs');
   revalidatePath(`/empty-legs/${v.leg_number}`);
+
+  await recordPublicActionAttempt(
+    'empty_leg_reserve',
+    rl.actorFingerprint,
+    'success'
+  );
 
   return {
     ok: true,
