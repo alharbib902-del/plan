@@ -1,8 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 /**
- * Phase 8 PR 2c + Phase 9 PR 1 — pathname-passthrough
- * middleware.
+ * Phase 8 PR 2c + Phase 9 PR 1 — pathname-passthrough proxy.
+ *
+ * Originally shipped as `middleware.ts` / `export function
+ * middleware(...)`. Renamed to `proxy.ts` / `export function
+ * proxy(...)` per the Next 16 file-convention rename
+ * (https://nextjs.org/docs/messages/middleware-to-proxy);
+ * behaviour and matcher contract are unchanged.
  *
  * Next.js App Router server components do NOT receive
  * pathname directly. Two surfaces need it:
@@ -19,11 +24,11 @@ import { NextResponse, type NextRequest } from 'next/server';
  *      pre-wired in PR 1 even though the consumer logic
  *      lands later, mirroring the operator-side pattern.
  *
- * The middleware injects `x-pathname` into the request
- * headers so authed layouts can read it via Next.js's
- * `headers()` API and apply redirects.
+ * Injects `x-pathname` into the request headers so authed
+ * layouts can read it via Next.js's `headers()` API and apply
+ * redirects.
  */
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-pathname', request.nextUrl.pathname);
   return NextResponse.next({
