@@ -24,12 +24,52 @@ import { createHmac } from 'crypto';
  * over-cap requests don't drain the budget further.
  */
 
+/**
+ * Per-(actor_fingerprint, admin_user_id) caps. The dominant
+ * throttle in the common case — same browser/IP fingerprinted
+ * via HMAC against the per-admin scope.
+ */
 export const ADMIN_MFA_CHALLENGE_RATE_LIMIT = {
   failureWindowMs: 15 * 60 * 1000,
   maxFailures: 5,
   attemptWindowMs: 60 * 60 * 1000,
   maxAttempts: 20,
 } as const;
+
+/**
+ * Round-2 hardening on PR #92: per-admin cap that ignores the
+ * actor fingerprint. Closes the distributed-guessing path —
+ * an attacker rotating across many IPs (botnet, residential
+ * proxies) would otherwise stay under the per-actor cap on
+ * each IP yet rack up hundreds of attempts on a single
+ * pending admin session.
+ *
+ * Sizing rationale (assumes 6-digit TOTP with ±1 step window
+ * = ~3 valid OTPs at any moment):
+ *   - 15 failures / 30 min × 3 valid OTPs = 45 guesses against
+ *     10^6 keyspace per 30-min window
+ *   - 50% break-in expectation requires ~11,000 such windows
+ *     = ~225 days of continuous distributed brute-force
+ *
+ * Numbers stricter than the per-actor cap because this scope
+ * legitimately includes multiple devices (a founder may log
+ * in from laptop + phone). Set higher than per-actor max so a
+ * single-IP burst still trips the per-actor cap first and
+ * never reaches this layer.
+ */
+export const ADMIN_MFA_CHALLENGE_ADMIN_LIMIT = {
+  failureWindowMs: 30 * 60 * 1000,
+  maxFailures: 15,
+  attemptWindowMs: 60 * 60 * 1000,
+  maxAttempts: 50,
+} as const;
+
+interface RateLimitConfig {
+  failureWindowMs: number;
+  maxFailures: number;
+  attemptWindowMs: number;
+  maxAttempts: number;
+}
 
 export type AdminMfaChallengeOutcome =
   | 'success'
@@ -80,15 +120,20 @@ export function fingerprintMfaChallengeActor(
     .digest('hex');
 }
 
-export function evaluateAdminMfaChallengeRateLimit(
+/**
+ * Generic per-config evaluator. Both per-actor and per-admin
+ * scopes call this with their own limits + their own attempt
+ * ledger slice. Anti-enumeration: returns a uniform verdict
+ * shape regardless of scope.
+ */
+function evaluateWithConfig(
   attempts: AdminMfaChallengeAttemptRow[],
-  now: Date = new Date()
+  config: RateLimitConfig,
+  now: Date
 ): AdminMfaChallengeRateLimitVerdict {
   const nowMs = now.getTime();
-  const failureCutoff =
-    nowMs - ADMIN_MFA_CHALLENGE_RATE_LIMIT.failureWindowMs;
-  const attemptCutoff =
-    nowMs - ADMIN_MFA_CHALLENGE_RATE_LIMIT.attemptWindowMs;
+  const failureCutoff = nowMs - config.failureWindowMs;
+  const attemptCutoff = nowMs - config.attemptWindowMs;
 
   const parsed = attempts
     .map((attempt) => ({
@@ -106,7 +151,7 @@ export function evaluateAdminMfaChallengeRateLimit(
   const recentAttempts = parsed.filter(
     (attempt) => attempt.attemptedAtMs >= attemptCutoff
   );
-  if (recentAttempts.length >= ADMIN_MFA_CHALLENGE_RATE_LIMIT.maxAttempts) {
+  if (recentAttempts.length >= config.maxAttempts) {
     const oldest = Math.min(
       ...recentAttempts.map((attempt) => attempt.attemptedAtMs)
     );
@@ -114,7 +159,7 @@ export function evaluateAdminMfaChallengeRateLimit(
       ok: false,
       reason: 'too_many_attempts',
       retryAfterSeconds: secondsUntil(
-        oldest + ADMIN_MFA_CHALLENGE_RATE_LIMIT.attemptWindowMs,
+        oldest + config.attemptWindowMs,
         nowMs
       ),
     };
@@ -124,7 +169,7 @@ export function evaluateAdminMfaChallengeRateLimit(
     (attempt) =>
       attempt.outcome !== 'success' && attempt.attemptedAtMs >= failureCutoff
   );
-  if (recentFailures.length >= ADMIN_MFA_CHALLENGE_RATE_LIMIT.maxFailures) {
+  if (recentFailures.length >= config.maxFailures) {
     const newest = Math.max(
       ...recentFailures.map((attempt) => attempt.attemptedAtMs)
     );
@@ -132,11 +177,40 @@ export function evaluateAdminMfaChallengeRateLimit(
       ok: false,
       reason: 'too_many_failures',
       retryAfterSeconds: secondsUntil(
-        newest + ADMIN_MFA_CHALLENGE_RATE_LIMIT.failureWindowMs,
+        newest + config.failureWindowMs,
         nowMs
       ),
     };
   }
 
   return { ok: true };
+}
+
+/**
+ * Per-(actor_fingerprint, admin_user_id) scope evaluator.
+ * Stays in place as the legacy entry point so existing tests +
+ * call sites don't shift.
+ */
+export function evaluateAdminMfaChallengeRateLimit(
+  attempts: AdminMfaChallengeAttemptRow[],
+  now: Date = new Date()
+): AdminMfaChallengeRateLimitVerdict {
+  return evaluateWithConfig(attempts, ADMIN_MFA_CHALLENGE_RATE_LIMIT, now);
+}
+
+/**
+ * Round-2 admin-scope evaluator (any actor against this admin).
+ * Closes the distributed-guessing path that the per-actor
+ * evaluator alone cannot — see ADMIN_MFA_CHALLENGE_ADMIN_LIMIT
+ * sizing notes above.
+ */
+export function evaluateAdminMfaChallengeRateLimitAdminScope(
+  attempts: AdminMfaChallengeAttemptRow[],
+  now: Date = new Date()
+): AdminMfaChallengeRateLimitVerdict {
+  return evaluateWithConfig(
+    attempts,
+    ADMIN_MFA_CHALLENGE_ADMIN_LIMIT,
+    now
+  );
 }
