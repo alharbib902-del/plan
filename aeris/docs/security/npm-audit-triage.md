@@ -1,5 +1,24 @@
 # npm Audit Triage
 
+> **Update 2026-05-21 — closure round 2 (PR after #92):** Advisories
+> **#2 (`@sentry/nextjs`)**, **#3 (`@supabase/ssr`)**, **#4 (`cookie`)**,
+> and **#9 (`rollup`)** are now **CLOSED via dependency removal** rather
+> than upgrade:
+>
+> - `@sentry/nextjs` was declared but never wired into any active code
+>   path; removed from `dependencies`.
+> - `@supabase/ssr` was used only by `lib/supabase/{server,client}.ts`,
+>   both files dead code (never imported anywhere). Both files deleted
+>   alongside the dep.
+>
+> Phase 3.5's `npm audit fix` (PR #84) had already closed advisories
+> covered by non-breaking transitive bumps (e.g. `protobufjs`,
+> `cookie` via `ws`). Remaining open: **#1 (`next`)**, **#5/6/7
+> (`eslint-config-next` + `@next/eslint-plugin-next` + `glob`)**, and
+> **#8 (`postcss`)** — all coupled to the Next 14 → 16 major upgrade.
+>
+> The summary table at the bottom reflects the new state.
+
 ## Purpose
 
 Document every advisory currently surfaced by `npm audit` against the
@@ -182,15 +201,15 @@ re-opened.
 
 | # | Package | Severity | Direct? | Decision | Follow-up trigger |
 |---|---|---|:-:|---|---|
-| 1 | `next` | high | yes | wait for vendor | 14.x backport, or Phase 4 coordinated 14→15 LTS upgrade |
-| 2 | `@sentry/nextjs` | high | yes | wait for vendor | wire Sentry in Phase 4 (and upgrade), or drop dep |
-| 3 | `@supabase/ssr` | low | yes | wait for vendor | 0.3.x backport, or unrelated Phase 4 feature requires 0.10.x |
-| 4 | `cookie` | low | no | wait for vendor | closes with #3 |
+| 1 | `next` | high | yes | wait for vendor | 14.x backport, or coordinated 14→16 LTS upgrade |
+| 2 | `@sentry/nextjs` | high | yes | **CLOSED (removed 2026-05-21)** | re-evaluate if a new observability vendor is wired in |
+| 3 | `@supabase/ssr` | low | yes | **CLOSED (removed 2026-05-21)** | re-add (at 0.10.x or later) if Supabase Auth JWT cookies are ever introduced |
+| 4 | `cookie` | low | no | **CLOSED (via #3 removal)** | re-evaluate if @supabase/ssr is reinstated |
 | 5 | `eslint-config-next` | high | yes | wait for vendor | 14.x backport, or closes with #1 |
 | 6 | `@next/eslint-plugin-next` | high | no | wait for vendor | closes with #5 |
 | 7 | `glob` | high | no | wait for vendor | closes with #5 (or earlier if any script ever calls `glob` CLI with `-c`) |
 | 8 | `postcss` | moderate | no | wait for vendor | closes with #1 (or earlier if user input ever reaches PostCSS) |
-| 9 | `rollup` | high | no | wait for vendor | closes with #2 |
+| 9 | `rollup` | high | no | **CLOSED (via #2 removal)** | re-evaluate if Sentry is reinstated |
 
 ## Decisions not made
 
