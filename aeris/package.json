@@ -78,7 +78,7 @@
     "date-fns": "^3.6.0",
     "framer-motion": "^11.2.0",
     "inngest": "^3.16.0",
-    "lucide-react": "^0.378.0",
+    "lucide-react": "^1.16.0",
     "mapbox-gl": "^3.4.0",
     "next": "^16.2.6",
     "postcss": "^8.4.38",
