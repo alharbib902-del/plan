@@ -17,8 +17,15 @@
  *
  * The fake intercepts `createAdminClient` via a global hatch
  * (`globalThis.__aerisAdminClientOverride`). Production code
- * doesn't read that hatch; only this test sets it.
+ * never honors the hatch — queries.ts gates it behind
+ * `AERIS_ALLOW_MFA_TEST_OVERRIDE === '1'`, which we set HERE
+ * BEFORE importing queries.ts. Setting it inside the test file
+ * (rather than via package.json env) keeps the test
+ * cross-platform without needing cross-env on Windows.
  */
+
+// MUST run before any import of @/lib/admin/mfa/queries.
+process.env.AERIS_ALLOW_MFA_TEST_OVERRIDE = '1';
 
 import { strict as assert } from 'node:assert';
 

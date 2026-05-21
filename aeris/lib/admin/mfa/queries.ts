@@ -78,22 +78,29 @@ type LooseStore = {
  * Returns the admin Supabase client cast to the loose chain
  * shape this module uses.
  *
- * Test-only escape hatch: when
- * `globalThis.__aerisAdminClientOverride` is set (only the
- * structural-test harness does this), use it instead of the
- * real createAdminClient. Production code never touches the
- * hatch — it's checked via a `unknown` cast so accidental
- * collision with a global is type-safe.
+ * Test-only escape hatch: ONLY honored when the runtime env
+ * var `AERIS_ALLOW_MFA_TEST_OVERRIDE === '1'` is set. The
+ * structural-test harness sets this flag at the top of its
+ * file BEFORE importing queries.ts. Production deployments
+ * NEVER set the flag — even if an attacker found a way to
+ * mutate `globalThis.__aerisAdminClientOverride` from another
+ * code path, the env-flag check ignores it.
+ *
+ * Cross-platform: the flag is set inside the test file (not in
+ * package.json scripts) so it works identically on Windows /
+ * macOS / Linux without needing cross-env.
  */
 interface GlobalWithMfaHatch {
   __aerisAdminClientOverride?: unknown;
 }
 
 function store(): LooseStore {
-  const hatch = (globalThis as GlobalWithMfaHatch)
-    .__aerisAdminClientOverride;
-  if (hatch !== undefined) {
-    return hatch as LooseStore;
+  if (process.env.AERIS_ALLOW_MFA_TEST_OVERRIDE === '1') {
+    const hatch = (globalThis as GlobalWithMfaHatch)
+      .__aerisAdminClientOverride;
+    if (hatch !== undefined) {
+      return hatch as LooseStore;
+    }
   }
   return createAdminClient() as unknown as LooseStore;
 }
