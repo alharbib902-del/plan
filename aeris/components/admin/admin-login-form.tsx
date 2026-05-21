@@ -8,6 +8,7 @@ const ERROR_AR: Record<Exclude<SignInResult, { ok: true }>['error'], string> = {
   env: 'الإعدادات غير مكتملة. تواصل مع مسؤول النظام.',
   invalid_password: 'كلمة المرور غير صحيحة.',
   invalid_input: 'من فضلك أدخل كلمة المرور.',
+  rate_limited: 'تم إيقاف محاولات الدخول مؤقتاً. حاول مرة أخرى بعد قليل.',
 };
 
 export function AdminLoginForm() {
