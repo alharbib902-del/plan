@@ -180,7 +180,7 @@ export async function validateClientSession(): Promise<ValidateClientSessionResu
 export async function requireClientSession(): Promise<ClientSessionContext> {
   const result = await validateClientSession();
   if (!result.ok) {
-    if (result.reason !== 'no_cookie') clearClientSessionCookie();
+    if (result.reason !== 'no_cookie') await clearClientSessionCookie();
     redirect('/login');
   }
   return result.session;

@@ -166,7 +166,7 @@ export async function validateOperatorSession(): Promise<ValidateOperatorSession
 export async function requireOperatorSession(): Promise<OperatorSessionContext> {
   const result = await validateOperatorSession();
   if (!result.ok) {
-    if (result.reason !== 'no_cookie') clearOperatorSessionCookie();
+    if (result.reason !== 'no_cookie') await clearOperatorSessionCookie();
     redirect('/operator/login');
   }
   return result.session;
