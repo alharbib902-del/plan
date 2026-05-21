@@ -128,7 +128,7 @@ Apply via Supabase SQL Editor against the production project:
 
 ## 3. Vercel cron entries
 
-The 5 NEW cron paths (added by `vercel.json` in PRs #83 + #87):
+The 3 NEW cron paths (added by `vercel.json` in PRs #83 + #87):
 
 | Path | Schedule | Source |
 |---|---|---|
@@ -197,7 +197,30 @@ Execute:
 - [ ] Verify redirect to `/admin/leads` (or any admin page —
       `must_change_password` gate is now cleared)
 
-### Step 4 — Enroll MFA for the founder
+### Step 4 — Remove `ADMIN_INBOX_PASSWORD` IMMEDIATELY
+
+Round-1 review on PR #96 P1: the shared env-bound password
+existed for exactly ONE purpose — the one-shot founder seed in
+Step 3. After that runs successfully, the env var is dead weight
+that widens the credential surface for every minute it remains
+set. Pull it BEFORE any MFA / smoke probe / flag flip so the
+attack window is as narrow as possible.
+
+- [ ] Vercel → Project → Settings → Environment Variables
+- [ ] DELETE `ADMIN_INBOX_PASSWORD` on the Production environment
+      (preferred; rotating to a fresh random value is acceptable
+      but DELETE is cleaner — the auto-seed branch is now dead
+      anyway because `admin_users` is non-empty)
+- [ ] Trigger a redeploy (so the running serverless instances no
+      longer have the value in `process.env`)
+- [ ] Verify a fresh `/admin/login` attempt with the OLD shared
+      password fails with `invalid_credentials`
+
+Companion outside-repo action — see Section 5.2 — should follow
+in the SAME session: delete `D:/Plan/password manage.txt` from
+the founder's local machine now that the env-bound copy is gone.
+
+### Step 5 — Enroll MFA for the founder
 
 - [ ] Visit `/admin/account/mfa/enroll`
 - [ ] Scan the QR code with an authenticator app (Authy / Google
@@ -207,7 +230,7 @@ Execute:
       are shown ONCE.
 - [ ] Verify the manage page now shows "المصادقة الثنائية مفعّلة"
 
-### Step 5 — Cycle the session to verify the full flow
+### Step 6 — Cycle the session to verify the full flow
 
 - [ ] Click logout
 - [ ] Log back in with the NEW password
@@ -215,11 +238,11 @@ Execute:
 - [ ] Enter a fresh 6-digit OTP → confirm
 - [ ] Verify redirect to `/admin/leads`
 
-### Step 6 — Run smoke probes
+### Step 7 — Run smoke probes
 
 See **Section 6** below for the per-probe checklist.
 
-### Step 7 — Flip `ENABLE_PRIVILEGE=true`
+### Step 8 — Flip `ENABLE_PRIVILEGE=true`
 
 - [ ] Vercel → Project → Settings → Environment Variables
 - [ ] Set `ENABLE_PRIVILEGE=true` on **Production** environment
@@ -230,7 +253,12 @@ See **Section 6** below for the per-probe checklist.
 - [ ] Verify `/me/privilege` (signed in as a client) shows the
       tier dashboard
 
-### Step 8 — Founder actions outside the repo (see Section 5)
+### Step 9 — Cloudflare WAF + Phase 13 status flip (see Section 5)
+
+The two narrow outside-repo actions (rotate env + delete local
+file) already happened in Step 4 + Section 5.2 above. The
+optional Cloudflare WAF rules in Section 5.3 are the last
+hardening step and can land any time after Step 8.
 
 ---
 
@@ -239,19 +267,12 @@ See **Section 6** below for the per-probe checklist.
 These cannot be done from inside the repository and require the
 founder. **Execute in order.**
 
-### 5.1 — Rotate `ADMIN_INBOX_PASSWORD`
+### 5.1 — Rotate / remove `ADMIN_INBOX_PASSWORD` (already covered in Step 4)
 
-Now that the founder has seeded + rotated their personal admin
-password (Step 3 above), the env-bound shared password is dead
-weight. Keeping it set widens the attack surface (anyone with the
-env var value could pretend to be a fresh deploy and re-seed if
-`admin_users` is ever emptied).
-
-- [ ] On Vercel → Production env vars: either DELETE
-      `ADMIN_INBOX_PASSWORD`, OR rotate it to a fresh random
-      string (preferred: delete, since auto-seed has already run)
-- [ ] Verify a fresh login attempt with the OLD shared password
-      fails
+Already executed inline as Step 4 of Section 4 above. This row
+stays in the runbook as a pointer so a future reader scanning
+Section 5 (founder-outside-repo actions) doesn't miss the
+companion task.
 
 ### 5.2 — Delete `D:/Plan/password manage.txt`
 
@@ -365,11 +386,58 @@ errors:
    to pre-migration state for end users.
 3. **If a specific PR caused the issue:** revert that PR via `gh
    pr` (creates a revert PR), merge, redeploy.
-4. **If the admin login itself is broken** (e.g. founder cannot
-   log in via the new email+password flow): set
-   `ADMIN_INBOX_PASSWORD` back to a known value AND empty
-   `admin_users` via Supabase SQL Editor → next `/admin/login`
-   re-runs the auto-seed.
+4. **Break-glass: founder admin login broken** (e.g. lost MFA
+   device, password forgotten, session subsystem in a bad
+   state). Round-1 review on PR #96 P1: do NOT empty
+   `admin_users` — that would CASCADE-delete every admin row,
+   every session, and every MFA secret for any other admins the
+   founder later added. The narrow, recoverable break-glass:
+   1. Pick a known temporary password — call it
+      `<TEMP_PASSWORD>`. Compute its bcrypt hash via a one-line
+      Node REPL: `node -e 'require("bcryptjs").hash("<TEMP_PASSWORD>",
+      12).then(console.log)'`.
+   2. In the Supabase SQL Editor, run:
+      ```sql
+      UPDATE admin_users
+         SET password_hash         = '<paste bcrypt hash>',
+             must_change_password  = true,
+             disabled_at           = NULL,
+             status                = 'active'
+       WHERE email = '<ADMIN_FOUNDER_EMAIL value>';
+
+      UPDATE admin_user_sessions
+         SET revoked_at = NOW(),
+             revoked_by_admin_user_id = (
+               SELECT id FROM admin_users
+                WHERE email = '<ADMIN_FOUNDER_EMAIL value>'
+             )
+       WHERE admin_user_id = (
+         SELECT id FROM admin_users
+          WHERE email = '<ADMIN_FOUNDER_EMAIL value>'
+       )
+         AND revoked_at IS NULL;
+
+      DELETE FROM admin_mfa_secrets
+       WHERE admin_user_id = (
+         SELECT id FROM admin_users
+          WHERE email = '<ADMIN_FOUNDER_EMAIL value>'
+       );
+
+      DELETE FROM admin_mfa_recovery_codes
+       WHERE admin_user_id = (
+         SELECT id FROM admin_users
+          WHERE email = '<ADMIN_FOUNDER_EMAIL value>'
+       );
+      ```
+   3. Login again with `<ADMIN_FOUNDER_EMAIL>` + `<TEMP_PASSWORD>`.
+      The `must_change_password=true` flag forces immediate
+      rotation; no MFA challenge fires because the secret row
+      was deleted. Re-enroll MFA via Step 5.
+   4. **Do NOT use this as a normal admin-reset path** — it
+      bypasses the password-knowledge + OTP gates that protect
+      the disable flow in PR #92. It's strictly for the
+      founder's own account when no other admin can perform a
+      proper reset.
 
 ---
 
