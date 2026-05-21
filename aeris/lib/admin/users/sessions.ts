@@ -72,6 +72,14 @@ export interface AdminUserSessionRow {
   expires_at: string;
   last_seen_at: string;
   revoked_at: string | null;
+  /**
+   * PR-3b — when true, the session was issued via password
+   * verification only; the admin must complete the MFA TOTP /
+   * recovery-code challenge before this session grants any
+   * operational access. requireAdminSession() denies all
+   * non-challenge routes while true.
+   */
+  mfa_pending: boolean;
 }
 
 export interface CreateAdminUserSessionInput {
@@ -79,6 +87,7 @@ export interface CreateAdminUserSessionInput {
   user_agent_snapshot?: string | null;
   ip_fingerprint?: string | null;
   ttl_ms?: number;
+  mfa_pending?: boolean;
 }
 
 export interface CreatedAdminUserSession {
@@ -104,8 +113,11 @@ export async function createAdminUserSession(
       last_seen_at: now.toISOString(),
       user_agent_snapshot: input.user_agent_snapshot ?? null,
       ip_fingerprint: input.ip_fingerprint ?? null,
+      mfa_pending: input.mfa_pending === true,
     })
-    .select('id, admin_user_id, created_at, expires_at, last_seen_at, revoked_at')
+    .select(
+      'id, admin_user_id, created_at, expires_at, last_seen_at, revoked_at, mfa_pending'
+    )
     .single();
 
   if (error) {
@@ -153,7 +165,9 @@ export async function validateAdminUserSessionToken(
   const sessionStore = store();
   const { data, error } = await sessionStore
     .from(TABLE)
-    .select('id, admin_user_id, created_at, expires_at, last_seen_at, revoked_at')
+    .select(
+      'id, admin_user_id, created_at, expires_at, last_seen_at, revoked_at, mfa_pending'
+    )
     .eq('token_hash', hash)
     .is('revoked_at', null)
     .gt('expires_at', now)
@@ -211,6 +225,47 @@ export async function touchAdminUserSession(
   if (error) {
     console.error('[admin-user-sessions.touch] failed', error);
   }
+}
+
+/**
+ * PR-3b — flip mfa_pending to false on a specific session
+ * after the admin completes the MFA challenge. Scoped to BOTH
+ * id AND mfa_pending=true so a race can't accidentally clear
+ * the flag on a session that wasn't in the pending state.
+ */
+type LooseClearPendingStore = {
+  from: (table: string) => {
+    update: (patch: Record<string, unknown>) => {
+      eq: (col: string, val: unknown) => {
+        eq: (col: string, val: unknown) => {
+          select: (cols: string) => {
+            maybeSingle: () => Promise<{
+              data: unknown;
+              error: { message?: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+};
+
+export async function clearAdminUserSessionMfaPending(
+  sessionId: string
+): Promise<boolean> {
+  const pendingStore = store() as unknown as LooseClearPendingStore;
+  const { data, error } = await pendingStore
+    .from(TABLE)
+    .update({ mfa_pending: false })
+    .eq('id', sessionId)
+    .eq('mfa_pending', true)
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    console.error('[admin-user-sessions.clearMfaPending] failed', error);
+    return false;
+  }
+  return data !== null;
 }
 
 export async function revokeAdminUserSession(

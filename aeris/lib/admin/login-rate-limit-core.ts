@@ -11,7 +11,12 @@ export type AdminLoginAttemptOutcome =
   | 'success'
   | 'invalid_password'
   | 'invalid_input'
-  | 'rate_limited';
+  | 'rate_limited'
+  // PR #92 round-1 fix: password verified but MFA still owed.
+  // Distinct from 'success' so the ledger truthfully reflects
+  // "first factor passed, second factor pending" — the MFA
+  // outcome lives in admin_mfa_challenge_attempts.
+  | 'password_ok_pending_mfa';
 
 export interface AdminLoginAttemptRow {
   outcome: AdminLoginAttemptOutcome;
@@ -109,7 +114,13 @@ export function evaluateAdminLoginRateLimit(
 
   const recentFailures = parsed.filter(
     (attempt) =>
-      attempt.outcome !== 'success' && attempt.attemptedAtMs >= failureCutoff
+      // 'success' AND 'password_ok_pending_mfa' both represent
+      // a successful password layer; only one of them is the
+      // FINAL login outcome. Neither counts toward the failure
+      // cap.
+      attempt.outcome !== 'success' &&
+      attempt.outcome !== 'password_ok_pending_mfa' &&
+      attempt.attemptedAtMs >= failureCutoff
   );
   if (recentFailures.length >= ADMIN_LOGIN_RATE_LIMIT.maxFailures) {
     const newest = Math.max(
