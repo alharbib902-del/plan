@@ -123,7 +123,7 @@ export async function readAdminClientPrivilegeDetail(
   if (!isUuid(clientId)) return null;
 
   const rawCookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
-  const session = requireAdminSession();
+  const session = await requireAdminSession();
   if (!rawCookie) {
     redirect('/admin/login');
   }
@@ -253,7 +253,7 @@ export async function forceAdminClientPrivilegeTier(args: {
   }
 
   const rawCookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
-  const session = requireAdminSession();
+  const session = await requireAdminSession();
   if (!rawCookie) {
     redirect('/admin/login');
   }

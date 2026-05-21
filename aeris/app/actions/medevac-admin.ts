@@ -92,7 +92,7 @@ export async function upsertMedicalCertification(
   input: UpsertMedicalCertificationInput
 ): Promise<UpsertMedicalCertificationResult> {
   // 1. Admin auth gate (Phase 11 round 1 PR #65 P1 #1 discipline)
-  requireAdminSession();
+  await requireAdminSession();
 
   // 2. Flag gate (fail-closed)
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
@@ -239,7 +239,7 @@ export type AdminAcceptMedevacOfferResult =
 export async function adminAcceptMedevacOfferOnBehalf(input: {
   offer_id: string;
 }): Promise<AdminAcceptMedevacOfferResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = acceptOfferSchema.safeParse(input);
@@ -299,7 +299,7 @@ export async function adminDeclineMedevacOfferOnBehalf(input: {
   offer_id: string;
   reason?: string;
 }): Promise<AdminDeclineMedevacOfferResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = declineOfferSchema.safeParse(input);
@@ -356,7 +356,7 @@ export async function adminCancelMedevacRequestOnBehalf(input: {
   request_id: string;
   reason?: string;
 }): Promise<AdminCancelMedevacRequestResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = cancelRequestSchema.safeParse(input);
@@ -422,7 +422,7 @@ export type AdminActivateSubscriptionResult =
 export async function adminActivateSubscription(input: {
   subscription_id: string;
 }): Promise<AdminActivateSubscriptionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = activateSubscriptionSchema.safeParse(input);
@@ -494,7 +494,7 @@ export type AdminManualDispatchResult =
 export async function adminManualDispatchMedevacRequest(
   input: AdminManualDispatchInput
 ): Promise<AdminManualDispatchResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   if (!input.request_id || !isUuid(input.request_id)) {
@@ -545,7 +545,7 @@ export type AdminUpsertShieldConfigResult =
 export async function adminUpsertShieldConfig(
   input: UpsertShieldConfigInput
 ): Promise<AdminUpsertShieldConfigResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   if (

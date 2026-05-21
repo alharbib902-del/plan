@@ -6,8 +6,10 @@ import { signIn, type SignInResult } from '@/app/(admin)/admin/actions/admin-aut
 
 const ERROR_AR: Record<Exclude<SignInResult, { ok: true }>['error'], string> = {
   env: 'الإعدادات غير مكتملة. تواصل مع مسؤول النظام.',
-  invalid_password: 'كلمة المرور غير صحيحة.',
-  invalid_input: 'من فضلك أدخل كلمة المرور.',
+  // Anti-enumeration: same message whether the email doesn't
+  // exist, the account is disabled, or the password is wrong.
+  invalid_credentials: 'بيانات الدخول غير صحيحة.',
+  invalid_input: 'من فضلك أدخل البريد الإلكتروني وكلمة المرور.',
   rate_limited: 'تم إيقاف محاولات الدخول مؤقتاً. حاول مرة أخرى بعد قليل.',
 };
 
@@ -25,14 +27,19 @@ export function AdminLoginForm() {
         const result = await signIn(formData);
         if (!result.ok) {
           setError(ERROR_AR[result.error]);
+          return;
+        }
+        // Successful login. Navigate explicitly — the server
+        // action does not redirect anymore (it returns the
+        // must_change_password flag so the UI can route to the
+        // password-rotation page if needed). The rotation route
+        // ships in PR-2b; until then we land everyone on /admin/leads.
+        if (result.must_change_password) {
+          window.location.href = '/admin/account/password';
+        } else {
+          window.location.href = '/admin/leads';
         }
       } catch (err) {
-        // Server action throws NEXT_REDIRECT on success — that's the happy path.
-        // Any other error here is a real failure.
-        const message = err instanceof Error ? err.message : '';
-        if (message.includes('NEXT_REDIRECT')) {
-          throw err;
-        }
         console.error('[admin-login] sign-in error', err);
         setError('تعذّر تسجيل الدخول. حاول مرة أخرى.');
       }
@@ -58,6 +65,26 @@ export function AdminLoginForm() {
 
       <div>
         <label
+          htmlFor="admin-email"
+          className="font-ar mb-2 block text-sm text-ink"
+        >
+          البريد الإلكتروني
+          <span className="text-gold"> *</span>
+        </label>
+        <input
+          id="admin-email"
+          name="email"
+          type="email"
+          autoComplete="username"
+          required
+          dir="ltr"
+          maxLength={254}
+          className="font-ar block w-full rounded-md border border-border bg-navy-secondary/60 px-4 py-3 text-base text-ink placeholder:text-ink-muted/70 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40"
+        />
+      </div>
+
+      <div>
+        <label
           htmlFor="admin-password"
           className="font-ar mb-2 block text-sm text-ink"
         >
@@ -71,6 +98,7 @@ export function AdminLoginForm() {
           autoComplete="current-password"
           required
           dir="ltr"
+          maxLength={128}
           className="font-ar block w-full rounded-md border border-border bg-navy-secondary/60 px-4 py-3 text-base text-ink placeholder:text-ink-muted/70 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40"
         />
       </div>

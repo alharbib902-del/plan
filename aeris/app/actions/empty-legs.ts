@@ -120,7 +120,7 @@ export async function adminPublishEmptyLeg(input: {
   auction_window_lead_hours?: number | null;
   suppress_notifications?: boolean | null;
 }): Promise<AdminPublishEmptyLegActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminPublishEmptyLegSchema.safeParse(input);
@@ -200,7 +200,7 @@ export async function adminUpdatePrice(input: {
   leg_id: string;
   new_price: number;
 }): Promise<AdminUpdatePriceActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminUpdatePriceSchema.safeParse(input);
@@ -249,7 +249,7 @@ export async function adminCancel(input: {
   leg_id: string;
   reason?: string | null;
 }): Promise<AdminCancelActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminCancelSchema.safeParse(input);
@@ -293,7 +293,7 @@ export async function adminMarkSoldManual(input: {
   customer_name: string;
   customer_phone: string;
 }): Promise<AdminMarkSoldManualActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminMarkSoldManualSchema.safeParse(input);
@@ -341,7 +341,7 @@ export async function adminConfirmReservation(input: {
   leg_id: string;
   token: string;
 }): Promise<AdminConfirmReservationActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminConfirmReservationSchema.safeParse(input);
@@ -389,7 +389,7 @@ export type AdminReleaseReservationActionResult =
 export async function adminReleaseReservation(input: {
   leg_id: string;
 }): Promise<AdminReleaseReservationActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminReleaseReservationSchema.safeParse(input);
@@ -445,7 +445,7 @@ export type AdminConfirmReservationForClientActionResult =
 export async function adminConfirmReservationForClient(input: {
   leg_id: string;
 }): Promise<AdminConfirmReservationForClientActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminReleaseReservationSchema.safeParse(input);
@@ -514,7 +514,7 @@ export type MarkOutreachSentActionResult =
 export async function markOutreachSent(input: {
   notification_id: string;
 }): Promise<MarkOutreachSentActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = markOutreachSentSchema.safeParse(input);

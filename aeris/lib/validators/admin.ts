@@ -11,9 +11,14 @@ export const LEAD_STATUSES = [
 export type LeadStatusValue = (typeof LEAD_STATUSES)[number];
 
 export const adminLoginSchema = z.object({
+  email: z
+    .string({ required_error: 'email_required' })
+    .min(1, 'email_required')
+    .max(254, 'email_too_long'),
   password: z
     .string({ required_error: 'password_required' })
-    .min(1, 'password_required'),
+    .min(1, 'password_required')
+    .max(128, 'password_too_long'),
 });
 
 export const updateLeadStatusSchema = z.object({

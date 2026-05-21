@@ -71,7 +71,7 @@ export async function adminCreatePhase7OperatorStub(input: {
   contact_phone: string;
   notes?: string | null;
 }): Promise<AdminCreatePhase7OperatorStubActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminCreateOperatorStubSchema.safeParse(input);
@@ -132,7 +132,7 @@ const PORTAL_URL_PREFIX = '/operator/empty-legs/';
 export async function adminMintOperatorSession(input: {
   operator_stub_id: string;
 }): Promise<AdminMintOperatorSessionActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminMintOperatorSessionSchema.safeParse(input);

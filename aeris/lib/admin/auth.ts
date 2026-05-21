@@ -2,7 +2,49 @@ import 'server-only';
 
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { createHash, createHmac, timingSafeEqual, randomBytes } from 'crypto';
+
+import {
+  createAdminUserSession,
+  revokeAdminUserSession,
+  touchAdminUserSession,
+  validateAdminUserSessionToken,
+} from '@/lib/admin/users/sessions';
+import type { AdminUserRole } from '@/lib/admin/users/queries';
+
+/**
+ * Admin auth module — Option B Phase 1b (login cutover).
+ *
+ * Prior to this PR, /admin/login authenticated against a shared
+ * ADMIN_INBOX_PASSWORD and issued a stateless signed cookie.
+ * That coupled every admin to the same secret and gave audit
+ * logs no actor attribution.
+ *
+ * Now:
+ *   - Login is email + password against admin_users (Phase 1a).
+ *   - Cookie carries a raw 256-bit session token (NOT signed —
+ *     the DB lookup by sha256(token) is the authoritative check).
+ *   - requireAdminSession() validates the token + ensures the
+ *     owning admin_users row is still status='active' (Phase 1a
+ *     P1 fix in sessions.ts).
+ *   - Sign-out REVOKES the session in DB, not just clears the
+ *     cookie — a stolen cookie is invalidated server-side too.
+ *
+ * Env contract:
+ *   - ADMIN_AUTH_SECRET     — required. Reused as the HMAC seed
+ *                              for rate-limit fingerprints +
+ *                              (later) MFA enrollment QR signing.
+ *   - ADMIN_INBOX_PASSWORD  — optional after founder seed. Only
+ *                              read by the auto-seed branch in
+ *                              signInWithEmail when admin_users
+ *                              is empty.
+ *   - ADMIN_FOUNDER_EMAIL   — required by the auto-seed branch.
+ *                              Fail-closed if unset AND no
+ *                              admin row exists yet.
+ *
+ * Old V1 cookies (period/version/expiry/nonce/sig) will fail the
+ * new validation and the caller gets redirected to /admin/login.
+ * One-time inconvenience at cutover time.
+ */
 
 type AdminCookieOptions = {
   httpOnly: true;
@@ -13,8 +55,7 @@ type AdminCookieOptions = {
 };
 
 export const ADMIN_COOKIE_NAME = 'aeris_admin';
-const COOKIE_VERSION = 'v1';
-const SEVEN_DAYS_SECONDS = 60 * 60 * 24 * 7;
+export const SEVEN_DAYS_SECONDS = 60 * 60 * 24 * 7;
 
 export class AdminEnvError extends Error {
   constructor(detail: string) {
@@ -24,112 +65,216 @@ export class AdminEnvError extends Error {
 }
 
 export interface AdminEnv {
-  password: string;
+  /** The shared rate-limit/MFA HMAC secret. Always required. */
   secret: string;
 }
 
 export function requireAdminEnv(): AdminEnv {
-  const password = process.env.ADMIN_INBOX_PASSWORD;
   const secret = process.env.ADMIN_AUTH_SECRET;
-
-  if (!password || password.trim().length === 0) {
-    throw new AdminEnvError('ADMIN_INBOX_PASSWORD is missing or empty');
-  }
   if (!secret || secret.trim().length === 0) {
     throw new AdminEnvError('ADMIN_AUTH_SECRET is missing or empty');
   }
-  return { password, secret };
+  if (secret.trim().length < 16) {
+    throw new AdminEnvError('ADMIN_AUTH_SECRET must be at least 16 chars');
+  }
+  return { secret };
 }
 
-function sha256(input: string): Buffer {
-  return createHash('sha256').update(input, 'utf8').digest();
-}
+// --------------------------------------------------------------
+// Cookie helpers — raw-token format
+// --------------------------------------------------------------
 
-export function verifyPassword(input: string): boolean {
-  const env = requireAdminEnv();
-  const a = sha256(input ?? '');
-  const b = sha256(env.password);
-  return timingSafeEqual(a, b);
-}
-
-function signPayload(payload: string, secret: string): string {
-  return createHmac('sha256', secret).update(payload).digest('hex');
-}
-
-export function createAdminCookieValue(
+export function getAdminCookieOptions(
   maxAgeSeconds: number = SEVEN_DAYS_SECONDS
-): string {
-  const env = requireAdminEnv();
-  const expiry = Math.floor(Date.now() / 1000) + maxAgeSeconds;
-  const nonce = randomBytes(8).toString('hex');
-  const payload = `${COOKIE_VERSION}.${expiry}.${nonce}`;
-  const signature = signPayload(payload, env.secret);
-  return `${payload}.${signature}`;
-}
-
-export interface VerifiedCookie {
-  valid: boolean;
-  expiry?: number;
-}
-
-export function verifyAdminCookieValue(value: string | undefined): VerifiedCookie {
-  if (!value) return { valid: false };
-
-  const env = requireAdminEnv();
-  const parts = value.split('.');
-  if (parts.length !== 4) return { valid: false };
-
-  const [version, expiryStr, nonce, signature] = parts;
-  if (version !== COOKIE_VERSION) return { valid: false };
-
-  const expiry = Number(expiryStr);
-  if (!Number.isFinite(expiry)) return { valid: false };
-  if (expiry <= Math.floor(Date.now() / 1000)) return { valid: false };
-
-  const payload = `${version}.${expiryStr}.${nonce}`;
-  const expectedSig = signPayload(payload, env.secret);
-  const a = Buffer.from(signature, 'hex');
-  const b = Buffer.from(expectedSig, 'hex');
-  if (a.length !== b.length) return { valid: false };
-  if (!timingSafeEqual(a, b)) return { valid: false };
-
-  return { valid: true, expiry };
-}
-
-export function getAdminCookieOptions(): AdminCookieOptions {
+): AdminCookieOptions {
   return {
     httpOnly: true,
     sameSite: 'lax',
     path: '/admin',
-    maxAge: SEVEN_DAYS_SECONDS,
+    maxAge: maxAgeSeconds,
     secure: process.env.NODE_ENV === 'production',
   };
 }
 
-/**
- * Single source of truth used by the (protected) layout AND every admin
- * mutation Server Action. On failure, redirects to /admin/login (which
- * throws NEXT_REDIRECT and aborts the caller).
- */
-export function requireAdminSession(): VerifiedCookie {
-  // Ensure env is sane before reading the cookie. Bubbles up as a clear
-  // error in the UI when env is misconfigured.
-  requireAdminEnv();
-
-  const cookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
-  const verified = verifyAdminCookieValue(cookie);
-  if (!verified.valid) {
-    redirect('/admin/login');
-  }
-  return verified;
+/** Set the admin cookie with the freshly minted raw token. */
+export function setAdminCookie(rawToken: string): void {
+  cookies().set(
+    ADMIN_COOKIE_NAME,
+    rawToken,
+    getAdminCookieOptions(SEVEN_DAYS_SECONDS)
+  );
 }
 
-export function hasAdminSession(): boolean {
+/** Clear the cookie + revoke the underlying session row. */
+export async function clearAdminCookieAndSession(): Promise<void> {
+  const cookieJar = cookies();
+  const raw = cookieJar.get(ADMIN_COOKIE_NAME)?.value;
+  cookieJar.delete({ name: ADMIN_COOKIE_NAME, path: '/admin' });
+
+  if (raw && raw.length > 0) {
+    const verdict = await validateAdminUserSessionToken(raw);
+    if (verdict.ok) {
+      // Self-revoke: we don't know the actor id at this point
+      // (we're about to clear it), so revoked_by stays NULL.
+      await revokeAdminUserSession(verdict.session.id, null);
+    }
+  }
+}
+
+// --------------------------------------------------------------
+// Session resolution
+// --------------------------------------------------------------
+
+export interface AdminSessionInfo {
+  sessionId: string;
+  adminUserId: string;
+  role: AdminUserRole;
+  email: string;
+  mustChangePassword: boolean;
+  /** Unix seconds. Kept for back-compat with admin-pii audit
+   *  loggers that used to read VerifiedCookie.expiry. */
+  expiry: number;
+}
+
+/**
+ * Validate the cookie + return the resolved session. On failure
+ * the cookie is cleared (so a stale/revoked cookie doesn't keep
+ * triggering DB lookups on every request) and the caller is
+ * redirected to /admin/login.
+ *
+ * `touchSession=true` (default) updates last_seen_at — small
+ * extra write per request but worth it for session hygiene.
+ * Pass false from very-hot read endpoints if needed.
+ */
+export async function requireAdminSession(opts: {
+  touchSession?: boolean;
+} = {}): Promise<AdminSessionInfo> {
+  requireAdminEnv();
+
+  const cookieJar = cookies();
+  const raw = cookieJar.get(ADMIN_COOKIE_NAME)?.value;
+  if (!raw || raw.length === 0) {
+    redirect('/admin/login');
+  }
+
+  const verdict = await validateAdminUserSessionToken(raw);
+  if (!verdict.ok) {
+    // Clear the bad cookie before redirect so the user doesn't
+    // get stuck in a loop. We can't await revoke here — the
+    // session row already doesn't satisfy the validate predicate.
+    cookieJar.delete({ name: ADMIN_COOKIE_NAME, path: '/admin' });
+    redirect('/admin/login');
+  }
+
+  // Pull the user row so the caller has role + must_change_password
+  // without a second hop. validateAdminUserSessionToken already
+  // joined to admin_users to gate on status='active', so this
+  // second read is at most a small index hit.
+  const userInfo = await loadAdminUserSummary(verdict.session.admin_user_id);
+  if (!userInfo) {
+    // FK CASCADE should make this unreachable, but fail-closed.
+    cookieJar.delete({ name: ADMIN_COOKIE_NAME, path: '/admin' });
+    redirect('/admin/login');
+  }
+
+  if (opts.touchSession !== false) {
+    // Fire-and-forget timestamp update; we don't block the
+    // request on it.
+    void touchAdminUserSession(verdict.session.id);
+  }
+
+  return {
+    sessionId: verdict.session.id,
+    adminUserId: verdict.session.admin_user_id,
+    role: userInfo.role,
+    email: userInfo.email,
+    mustChangePassword: userInfo.must_change_password,
+    expiry: Math.floor(
+      new Date(verdict.session.expires_at).getTime() / 1000
+    ),
+  };
+}
+
+/**
+ * Non-redirecting variant used by the /admin/login page to
+ * decide whether to bounce an already-authenticated user
+ * straight to the dashboard.
+ */
+export async function hasAdminSession(): Promise<boolean> {
   try {
     requireAdminEnv();
   } catch {
     return false;
   }
-  const cookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
-  return verifyAdminCookieValue(cookie).valid;
+  const raw = cookies().get(ADMIN_COOKIE_NAME)?.value;
+  if (!raw || raw.length === 0) return false;
+  const verdict = await validateAdminUserSessionToken(raw);
+  return verdict.ok;
+}
+
+/**
+ * Mint a new session for the freshly authenticated admin +
+ * persist the cookie. Returns the resolved session info so the
+ * caller (signIn Server Action) can decide whether to redirect
+ * to /admin/account/password (must_change_password=true) or
+ * the default dashboard.
+ */
+export async function issueAdminSession(input: {
+  adminUserId: string;
+  userAgent: string | null;
+  ipFingerprint: string | null;
+}): Promise<{ raw_token: string; sessionId: string } | null> {
+  const created = await createAdminUserSession({
+    admin_user_id: input.adminUserId,
+    user_agent_snapshot: input.userAgent,
+    ip_fingerprint: input.ipFingerprint,
+  });
+  if (!created) return null;
+  setAdminCookie(created.raw_token);
+  return { raw_token: created.raw_token, sessionId: created.session.id };
+}
+
+// --------------------------------------------------------------
+// Internal: small admin-user summary read (used by requireAdminSession)
+// --------------------------------------------------------------
+
+interface AdminUserSummary {
+  email: string;
+  role: AdminUserRole;
+  must_change_password: boolean;
+}
+
+type LooseSummaryStore = {
+  from: (table: string) => {
+    select: (cols: string) => {
+      eq: (col: string, val: unknown) => {
+        maybeSingle: () => Promise<{
+          data: unknown;
+          error: { code?: string; message?: string } | null;
+        }>;
+      };
+    };
+  };
+};
+
+async function loadAdminUserSummary(
+  adminUserId: string
+): Promise<AdminUserSummary | null> {
+  // Local import to avoid a top-level cycle with createAdminClient
+  // (which itself transitively re-imports auth.ts in some test
+  // setups; the function-local require pattern keeps this safe).
+  const { createAdminClient } = await import('@/lib/supabase/admin');
+  const store = createAdminClient() as unknown as LooseSummaryStore;
+  const { data, error } = await store
+    .from('admin_users')
+    .select('email, role, must_change_password')
+    .eq('id', adminUserId)
+    .maybeSingle();
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      console.error('[admin-auth.loadSummary] read failed', error);
+    }
+    return null;
+  }
+  return (data as AdminUserSummary | null) ?? null;
 }

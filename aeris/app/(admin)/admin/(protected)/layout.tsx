@@ -5,13 +5,13 @@ import { AdminShell } from '@/components/admin/admin-shell';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export default function ProtectedAdminLayout({
+export default async function ProtectedAdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   try {
-    requireAdminSession();
+    await requireAdminSession();
   } catch (err) {
     if (err instanceof AdminEnvError) {
       // Log full detail server-side so the operator can act on it,

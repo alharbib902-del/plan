@@ -11,8 +11,8 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function AdminLoginPage() {
-  if (hasAdminSession()) {
+export default async function AdminLoginPage() {
+  if (await hasAdminSession()) {
     redirect('/admin/leads');
   }
 
