@@ -59,6 +59,8 @@ export const medevacAr = {
   errorIpRequired: 'تعذّر تحديد موقعك. تأكد من الاتصال وحاول مرة أخرى.',
   errorValidationFailed: 'بعض الحقول غير صحيحة. راجع الأخطاء أدناه.',
   errorServerError: 'حدث خطأ في الخادم. حاول لاحقاً.',
+  errorRateLimited:
+    'تم تجاوز الحدّ المسموح من المحاولات. حاول بعد قليل أو تواصل عبر واتساب.',
 
   // Admin queue
   adminQueueTitle: 'قائمة طلبات الإخلاء الطبي',

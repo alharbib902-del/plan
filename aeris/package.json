@@ -54,6 +54,7 @@
     "test:privilege-cashback-expiry-fifo": "tsx lib/privilege/__tests__/cashback-expiry-fifo.test.ts",
     "test:privilege-cron-auth": "tsx app/api/cron/privilege/__tests__/cron-auth.test.ts",
     "test:admin-login-rate-limit": "tsx lib/admin/__tests__/login-rate-limit.test.ts",
+    "test:public-action-rate-limit": "tsx lib/rate-limit/__tests__/public-action.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"

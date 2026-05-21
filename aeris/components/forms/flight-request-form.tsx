@@ -52,6 +52,8 @@ const ERROR_MESSAGES_AR: Record<string, string> = {
   phone_too_long: 'رقم الهاتف طويل جداً.',
   phone_invalid: 'رقم الهاتف غير صالح. استخدم أرقاماً وعلامة + إن لزم.',
   notes_too_long: 'الملاحظات طويلة جداً.',
+  rate_limited:
+    'تم تجاوز الحدّ المسموح من المحاولات. يُرجى المحاولة بعد قليل أو التواصل عبر واتساب مباشرة.',
 };
 
 function translateError(code: string): string {

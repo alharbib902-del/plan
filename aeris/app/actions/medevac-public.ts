@@ -5,6 +5,10 @@ import { headers } from 'next/headers';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { medevacRequestPublicSchema } from '@/lib/medevac/validators/medevac-request';
+import {
+  checkPublicActionRateLimit,
+  recordPublicActionAttempt,
+} from '@/lib/rate-limit/public-action';
 
 /**
  * Phase 12 PR 1 — public medevac intake Server Action.
@@ -94,10 +98,30 @@ export async function submitMedevacRequestPublic(
 ): Promise<SubmitMedevacRequestPublicResult> {
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
+  // 0. Rate-limit gate (per-IP, 5 failures/15min, 20 attempts/hr —
+  // slightly more permissive than cargo since medevac is emergency-
+  // adjacent and a panicked retry shouldn't lock the user out).
+  const rl = await checkPublicActionRateLimit('medevac_intake');
+  if (!rl.ok) {
+    if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
+      await recordPublicActionAttempt(
+        'medevac_intake',
+        rl.actorFingerprint,
+        'rate_limited'
+      );
+    }
+    return { ok: false, error: 'rate_limited' };
+  }
+
   // 1. Zod validation. severity='stable' is enforced here at the
   //    boundary (D1 — moderate/critical require an authed account).
   const parsed = medevacRequestPublicSchema.safeParse(input);
   if (!parsed.success) {
+    await recordPublicActionAttempt(
+      'medevac_intake',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
     return {
       ok: false,
       error: 'validation_failed',
@@ -107,7 +131,14 @@ export async function submitMedevacRequestPublic(
 
   // 2. ip_required guard (Phase 9 convention #12)
   const ip = clientIp();
-  if (!ip) return { ok: false, error: 'ip_required' };
+  if (!ip) {
+    await recordPublicActionAttempt(
+      'medevac_intake',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
+    return { ok: false, error: 'ip_required' };
+  }
 
   // 3. Call §4.1 RPC. Length + required + severity gate run again
   //    on the DB side as defense-in-depth.
@@ -118,6 +149,11 @@ export async function submitMedevacRequestPublic(
   });
   if (error) {
     console.error('[medevac-public.submit] rpc error', error);
+    await recordPublicActionAttempt(
+      'medevac_intake',
+      rl.actorFingerprint,
+      'rpc_error'
+    );
     return { ok: false, error: 'server_error' };
   }
 
@@ -129,11 +165,23 @@ export async function submitMedevacRequestPublic(
       }
     | { ok: false; error: string };
 
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) {
+    await recordPublicActionAttempt(
+      'medevac_intake',
+      rl.actorFingerprint,
+      'rpc_error'
+    );
+    return { ok: false, error: result.error };
+  }
 
   // 4. Revalidate the admin queue so the new request appears
   //    without manual reload.
   revalidatePath('/admin/medevac');
+  await recordPublicActionAttempt(
+    'medevac_intake',
+    rl.actorFingerprint,
+    'success'
+  );
 
   return {
     ok: true,

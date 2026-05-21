@@ -5,6 +5,10 @@ import { headers } from 'next/headers';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { cargoRequestPublicSchema } from '@/lib/cargo/validators/cargo-request';
+import {
+  checkPublicActionRateLimit,
+  recordPublicActionAttempt,
+} from '@/lib/rate-limit/public-action';
 
 /**
  * Phase 11 PR 1 — public cargo intake Server Action.
@@ -95,10 +99,30 @@ export async function submitCargoRequestPublic(
 ): Promise<SubmitCargoRequestPublicResult> {
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
+  // 0. Rate-limit gate (per-IP, 3 failures/15min, 15 attempts/hr).
+  // Fail-closed on storage/secret errors so an availability gap
+  // can't open the throttle.
+  const rl = await checkPublicActionRateLimit('cargo_intake');
+  if (!rl.ok) {
+    if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
+      await recordPublicActionAttempt(
+        'cargo_intake',
+        rl.actorFingerprint,
+        'rate_limited'
+      );
+    }
+    return { ok: false, error: 'rate_limited' };
+  }
+
   // 1. Zod validation (per-category required fields, route presence,
   //    date order, length bounds — primary validation line).
   const parsed = cargoRequestPublicSchema.safeParse(input);
   if (!parsed.success) {
+    await recordPublicActionAttempt(
+      'cargo_intake',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
     return {
       ok: false,
       error: 'validation_failed',
@@ -108,7 +132,14 @@ export async function submitCargoRequestPublic(
 
   // 2. ip_required guard (Phase 9 convention #12)
   const ip = clientIp();
-  if (!ip) return { ok: false, error: 'ip_required' };
+  if (!ip) {
+    await recordPublicActionAttempt(
+      'cargo_intake',
+      rl.actorFingerprint,
+      'validation_failed'
+    );
+    return { ok: false, error: 'ip_required' };
+  }
 
   // 3. Call §4.1 RPC. The full Zod-validated object becomes the
   //    JSONB payload. The RPC re-validates length + required +
@@ -121,6 +152,11 @@ export async function submitCargoRequestPublic(
   });
   if (error) {
     console.error('[cargo-public.submit] rpc error', error);
+    await recordPublicActionAttempt(
+      'cargo_intake',
+      rl.actorFingerprint,
+      'rpc_error'
+    );
     return { ok: false, error: 'server_error' };
   }
 
@@ -133,11 +169,23 @@ export async function submitCargoRequestPublic(
       }
     | { ok: false; error: string };
 
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) {
+    await recordPublicActionAttempt(
+      'cargo_intake',
+      rl.actorFingerprint,
+      'rpc_error'
+    );
+    return { ok: false, error: result.error };
+  }
 
   // 4. Revalidate the admin queue so the new request appears
   //    without manual reload.
   revalidatePath('/admin/cargo');
+  await recordPublicActionAttempt(
+    'cargo_intake',
+    rl.actorFingerprint,
+    'success'
+  );
 
   return {
     ok: true,
