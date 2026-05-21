@@ -43,7 +43,7 @@ export async function forceTierChangeAction(input: {
   lock_until: string | null;
 }): Promise<ForceTierActionResult> {
   // Admin session guard. Throws/redirects if cookie invalid.
-  requireAdminSession();
+  await requireAdminSession();
 
   const parsed = ForceTierInputSchema.safeParse(input);
   if (!parsed.success) {

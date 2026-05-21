@@ -18,7 +18,7 @@ export type LeadActionResult =
 export async function updateLeadStatus(
   formData: FormData
 ): Promise<LeadActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
 
   const parsed = updateLeadStatusSchema.safeParse({
     id: formData.get('id'),
@@ -43,7 +43,7 @@ export async function updateLeadStatus(
 export async function appendInternalNote(
   formData: FormData
 ): Promise<LeadActionResult> {
-  requireAdminSession();
+  await requireAdminSession();
 
   const parsed = appendInternalNoteSchema.safeParse({
     id: formData.get('id'),
