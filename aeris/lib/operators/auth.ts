@@ -75,15 +75,19 @@ export function getOperatorCookieOptions(rememberMe: boolean) {
   };
 }
 
-export function setOperatorSessionCookie(
+export async function setOperatorSessionCookie(
   rawToken: string,
   rememberMe: boolean
-): void {
-  cookies().set(OPERATOR_COOKIE_NAME, rawToken, getOperatorCookieOptions(rememberMe));
+): Promise<void> {
+  (await cookies()).set(
+    OPERATOR_COOKIE_NAME,
+    rawToken,
+    getOperatorCookieOptions(rememberMe)
+  );
 }
 
-export function clearOperatorSessionCookie(): void {
-  cookies().set(OPERATOR_COOKIE_NAME, '', {
+export async function clearOperatorSessionCookie(): Promise<void> {
+  (await cookies()).set(OPERATOR_COOKIE_NAME, '', {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
@@ -92,8 +96,8 @@ export function clearOperatorSessionCookie(): void {
   });
 }
 
-export function getRawSessionTokenFromCookie(): string | null {
-  const v = cookies().get(OPERATOR_COOKIE_NAME)?.value;
+export async function getRawSessionTokenFromCookie(): Promise<string | null> {
+  const v = (await cookies()).get(OPERATOR_COOKIE_NAME)?.value;
   if (!v || v.length === 0) return null;
   return v;
 }
@@ -119,7 +123,7 @@ export type ValidateOperatorSessionResult =
  * not authed (e.g. /operator/welcome/[token]).
  */
 export async function validateOperatorSession(): Promise<ValidateOperatorSessionResult> {
-  const raw = getRawSessionTokenFromCookie();
+  const raw = await getRawSessionTokenFromCookie();
   if (!raw) return { ok: false, reason: 'no_cookie' };
 
   const tokenHash = hashSessionToken(raw);
@@ -162,7 +166,7 @@ export async function validateOperatorSession(): Promise<ValidateOperatorSession
 export async function requireOperatorSession(): Promise<OperatorSessionContext> {
   const result = await validateOperatorSession();
   if (!result.ok) {
-    if (result.reason !== 'no_cookie') clearOperatorSessionCookie();
+    if (result.reason !== 'no_cookie') await clearOperatorSessionCookie();
     redirect('/operator/login');
   }
   return result.session;

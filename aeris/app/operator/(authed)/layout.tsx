@@ -31,7 +31,7 @@ export default async function OperatorAuthedLayout({
   // browser is forced to the password page regardless of how
   // the URL was entered (typed, bookmarked, deep-linked).
   if (session.password_must_change) {
-    const pathname = headers().get('x-pathname') ?? '';
+    const pathname = (await headers()).get('x-pathname') ?? '';
     if (pathname !== PASSWORD_PAGE && pathname !== LOGOUT_ROUTE) {
       redirect(PASSWORD_PAGE);
     }

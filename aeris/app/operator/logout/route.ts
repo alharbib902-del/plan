@@ -19,7 +19,7 @@ import {
  * clears + redirects.
  */
 export async function POST() {
-  const raw = getRawSessionTokenFromCookie();
+  const raw = await getRawSessionTokenFromCookie();
   if (raw) {
     const tokenHash = hashSessionToken(raw);
     try {
@@ -29,6 +29,6 @@ export async function POST() {
       console.error('[operator/logout] rpc error', err);
     }
   }
-  clearOperatorSessionCookie();
+  await clearOperatorSessionCookie();
   return NextResponse.redirect(new URL('/operator/login', process.env.NEXT_PUBLIC_SITE_URL || 'https://aeris.sa'));
 }

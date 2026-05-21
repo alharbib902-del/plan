@@ -95,12 +95,12 @@ function siteUrl(): string {
   return process.env.NEXT_PUBLIC_SITE_URL || 'https://aeris.sa';
 }
 
-function clientIp(): string | null {
+async function clientIp(): Promise<string | null> {
   // Vercel forwards real IP via x-forwarded-for / x-real-ip.
   // Take the first IP in the comma-separated list (closest
   // client) and fall back to x-real-ip if the header is
   // missing.
-  const h = headers();
+  const h = await headers();
   const xff = h.get('x-forwarded-for');
   if (xff) {
     const first = xff.split(',')[0]?.trim();
@@ -109,8 +109,8 @@ function clientIp(): string | null {
   return h.get('x-real-ip');
 }
 
-function clientUserAgent(): string | null {
-  return headers().get('user-agent');
+async function clientUserAgent(): Promise<string | null> {
+  return (await headers()).get('user-agent');
 }
 
 /**
@@ -172,7 +172,7 @@ export async function operatorSignup(input: {
     };
   }
 
-  const ip = clientIp();
+  const ip = await clientIp();
   if (!ip) return { ok: false, error: 'ip_required' };
 
   let hash: string;
@@ -270,8 +270,8 @@ export async function operatorLogin(input: {
       p_operator_id: lookup.operator_id,
       p_session_token_hash: minted.token_hash,
       p_remember_me: parsed.data.remember_me ?? false,
-      p_ip: clientIp(),
-      p_user_agent: clientUserAgent(),
+      p_ip: await clientIp(),
+      p_user_agent: await clientUserAgent(),
     }
   );
   if (sessionErr) {
@@ -284,7 +284,10 @@ export async function operatorLogin(input: {
   if (!session.ok) return { ok: false, error: session.error ?? 'unknown' };
 
   // Set cookie
-  setOperatorSessionCookie(minted.raw_token, parsed.data.remember_me ?? false);
+  await setOperatorSessionCookie(
+    minted.raw_token,
+    parsed.data.remember_me ?? false
+  );
 
   return {
     ok: true,
@@ -301,10 +304,10 @@ export async function operatorLogin(input: {
 export type OperatorLogoutResult = { ok: true } | OperatorPublicActionFailure;
 
 export async function operatorLogout(): Promise<OperatorLogoutResult> {
-  const raw = getRawSessionTokenFromCookie();
+  const raw = await getRawSessionTokenFromCookie();
   if (!raw) {
     // Already logged out — clear cookie just in case + return ok.
-    clearOperatorSessionCookie();
+    await clearOperatorSessionCookie();
     return { ok: true };
   }
   const tokenHash = hashSessionToken(raw);
@@ -317,7 +320,7 @@ export async function operatorLogout(): Promise<OperatorLogoutResult> {
     console.error('[operators-public.operatorLogout] rpc error', error);
     // Still clear the cookie so the user is locally logged out.
   }
-  clearOperatorSessionCookie();
+  await clearOperatorSessionCookie();
   return { ok: true };
 }
 
@@ -385,7 +388,7 @@ export async function operatorRequestPasswordReset(input: {
     p_email: parsed.data.email,
     p_token_hash: minted.token_hash,
     p_expires_at: minted.expires_at.toISOString(),
-    p_ip: clientIp(),
+    p_ip: await clientIp(),
   });
   if (error) {
     console.error('[operators-public.operatorRequestPasswordReset] rpc error', error);
@@ -570,8 +573,8 @@ export async function operatorVerifyOtp(input: {
       p_operator_id: opRow.id,
       p_session_token_hash: minted.token_hash,
       p_remember_me: false,
-      p_ip: clientIp(),
-      p_user_agent: clientUserAgent(),
+      p_ip: await clientIp(),
+      p_user_agent: await clientUserAgent(),
     }
   );
   if (sessionErr) {
@@ -583,7 +586,7 @@ export async function operatorVerifyOtp(input: {
     | { ok: false; error: string };
   if (!session.ok) return { ok: false, error: session.error ?? 'unknown' };
 
-  setOperatorSessionCookie(minted.raw_token, false);
+  await setOperatorSessionCookie(minted.raw_token, false);
 
   return {
     ok: true,
@@ -631,8 +634,8 @@ export async function operatorConsumeWelcomeToken(input: {
     p_token_hash: tokenHash,
     p_session_token_hash: minted.token_hash,
     p_remember_me: parsed.data.remember_me ?? false,
-    p_ip: clientIp(),
-    p_user_agent: clientUserAgent(),
+    p_ip: await clientIp(),
+    p_user_agent: await clientUserAgent(),
   });
   if (error) {
     console.error('[operators-public.operatorConsumeWelcomeToken] rpc error', error);
@@ -653,7 +656,10 @@ export async function operatorConsumeWelcomeToken(input: {
     return { ok: false, error: result.error ?? 'unknown' };
   }
 
-  setOperatorSessionCookie(minted.raw_token, parsed.data.remember_me ?? false);
+  await setOperatorSessionCookie(
+    minted.raw_token,
+    parsed.data.remember_me ?? false
+  );
 
   return {
     ok: true,

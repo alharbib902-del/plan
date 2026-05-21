@@ -49,9 +49,9 @@ function adminLoginAttemptStore(): AdminLoginAttemptStore {
   return createAdminClient() as unknown as AdminLoginAttemptStore;
 }
 
-function currentActorFingerprint(): string {
+async function currentActorFingerprint(): Promise<string> {
   const env = requireAdminEnv();
-  const h = headers();
+  const h = await headers();
   const identity = actorIdentityFromHeaders({
     forwardedFor: h.get('x-forwarded-for'),
     realIp: h.get('x-real-ip'),
@@ -81,7 +81,7 @@ function normalizeRows(rows: unknown[] | null): AdminLoginAttemptRow[] {
 }
 
 export async function checkAdminLoginRateLimit(): Promise<AdminLoginRateLimitCheck> {
-  const actorFingerprint = currentActorFingerprint();
+  const actorFingerprint = await currentActorFingerprint();
   const since = new Date(
     Date.now() - ADMIN_LOGIN_RATE_LIMIT.attemptWindowMs
   ).toISOString();

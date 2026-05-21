@@ -119,7 +119,7 @@ export async function readAdminMedevacRequestDetail(
   // requireAdminSession() re-reads + verifies the same cookie
   // via verifyAdminCookieValue() internally and redirects to
   // /admin/login on failure, so `session` is guaranteed valid.
-  const rawCookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
+  const rawCookie = (await cookies()).get(ADMIN_COOKIE_NAME)?.value;
   const session = await requireAdminSession();
   if (!rawCookie) {
     // requireAdminSession would already have redirected; this

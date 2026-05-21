@@ -67,9 +67,9 @@ function fieldErrorsFromZod(
   return out;
 }
 
-function clientIp(): string | null {
+async function clientIp(): Promise<string | null> {
   try {
-    const h = headers();
+    const h = await headers();
     const xf = h.get('x-forwarded-for');
     if (xf) return xf.split(',')[0]!.trim();
     const xr = h.get('x-real-ip');
@@ -223,7 +223,7 @@ export async function submitMedevacRequestAuthed(
     };
   }
 
-  const ip = clientIp();
+  const ip = await clientIp();
   if (!ip) return { ok: false, error: 'ip_required' };
 
   const rpc = looseClient();

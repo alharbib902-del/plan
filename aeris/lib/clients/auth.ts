@@ -57,15 +57,19 @@ export function getClientCookieOptions(rememberMe: boolean) {
   };
 }
 
-export function setClientSessionCookie(
+export async function setClientSessionCookie(
   rawToken: string,
   rememberMe: boolean
-): void {
-  cookies().set(CLIENT_COOKIE_NAME, rawToken, getClientCookieOptions(rememberMe));
+): Promise<void> {
+  (await cookies()).set(
+    CLIENT_COOKIE_NAME,
+    rawToken,
+    getClientCookieOptions(rememberMe)
+  );
 }
 
-export function clearClientSessionCookie(): void {
-  cookies().set(CLIENT_COOKIE_NAME, '', {
+export async function clearClientSessionCookie(): Promise<void> {
+  (await cookies()).set(CLIENT_COOKIE_NAME, '', {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
@@ -74,8 +78,8 @@ export function clearClientSessionCookie(): void {
   });
 }
 
-export function getRawSessionTokenFromCookie(): string | null {
-  const v = cookies().get(CLIENT_COOKIE_NAME)?.value;
+export async function getRawSessionTokenFromCookie(): Promise<string | null> {
+  const v = (await cookies()).get(CLIENT_COOKIE_NAME)?.value;
   if (!v || v.length === 0) return null;
   return v;
 }
@@ -106,7 +110,7 @@ export type ValidateClientSessionResult =
     };
 
 export async function validateClientSession(): Promise<ValidateClientSessionResult> {
-  const raw = getRawSessionTokenFromCookie();
+  const raw = await getRawSessionTokenFromCookie();
   if (!raw) return { ok: false, reason: 'no_cookie' };
 
   const tokenHash = hashSessionToken(raw);
@@ -176,7 +180,7 @@ export async function validateClientSession(): Promise<ValidateClientSessionResu
 export async function requireClientSession(): Promise<ClientSessionContext> {
   const result = await validateClientSession();
   if (!result.ok) {
-    if (result.reason !== 'no_cookie') clearClientSessionCookie();
+    if (result.reason !== 'no_cookie') await clearClientSessionCookie();
     redirect('/login');
   }
   return result.session;
