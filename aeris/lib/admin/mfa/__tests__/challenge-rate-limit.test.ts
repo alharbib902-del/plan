@@ -8,8 +8,10 @@
 import { strict as assert } from 'node:assert';
 
 import {
+  ADMIN_MFA_CHALLENGE_ADMIN_LIMIT,
   ADMIN_MFA_CHALLENGE_RATE_LIMIT,
   evaluateAdminMfaChallengeRateLimit,
+  evaluateAdminMfaChallengeRateLimitAdminScope,
   fingerprintMfaChallengeActor,
 } from '@/lib/admin/mfa/challenge-rate-limit-core';
 
@@ -248,6 +250,113 @@ test('failureWindow < attemptWindow', () => {
     ADMIN_MFA_CHALLENGE_RATE_LIMIT.failureWindowMs <
       ADMIN_MFA_CHALLENGE_RATE_LIMIT.attemptWindowMs
   );
+});
+
+// ============================================================
+// Admin-scope evaluator (round-2 hardening on PR #92)
+// ============================================================
+
+test('admin-scope cap is STRICTLY LARGER than per-actor cap', () => {
+  // The admin-scope check legitimately includes attempts from
+  // multiple devices for the same admin (laptop + phone). If
+  // its limits were <= per-actor, a single-IP burst would
+  // trip admin scope BEFORE actor scope — defeating the
+  // intended layering.
+  assert.ok(
+    ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.maxFailures >
+      ADMIN_MFA_CHALLENGE_RATE_LIMIT.maxFailures
+  );
+  assert.ok(
+    ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.maxAttempts >
+      ADMIN_MFA_CHALLENGE_RATE_LIMIT.maxAttempts
+  );
+});
+
+test('admin-scope failureWindow >= per-actor failureWindow', () => {
+  // Wider window = more historical attempts considered =
+  // stricter throttle for the same cap number.
+  assert.ok(
+    ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.failureWindowMs >=
+      ADMIN_MFA_CHALLENGE_RATE_LIMIT.failureWindowMs
+  );
+});
+
+test('admin-scope: empty attempts → ok', () => {
+  const v = evaluateAdminMfaChallengeRateLimitAdminScope([], NOW);
+  assert.equal(v.ok, true);
+});
+
+test('admin-scope: hits at admin maxFailures → too_many_failures', () => {
+  const attempts = Array.from(
+    { length: ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.maxFailures },
+    (_, i) => ({
+      outcome: 'invalid_otp' as const,
+      attempted_at: minutesAgo(i + 1),
+    })
+  );
+  const v = evaluateAdminMfaChallengeRateLimitAdminScope(attempts, NOW);
+  assert.equal(v.ok, false);
+  if (!v.ok) {
+    assert.equal(v.reason, 'too_many_failures');
+  }
+});
+
+test('admin-scope: one below admin maxFailures → still ok', () => {
+  const attempts = Array.from(
+    { length: ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.maxFailures - 1 },
+    (_, i) => ({
+      outcome: 'invalid_otp' as const,
+      attempted_at: minutesAgo(i + 1),
+    })
+  );
+  const v = evaluateAdminMfaChallengeRateLimitAdminScope(attempts, NOW);
+  assert.equal(v.ok, true);
+});
+
+test('admin-scope: distributed scenario simulation', () => {
+  // 6 different IPs × 4 failures each = 24 admin-scope
+  // failures. Per-actor would never trip (each ≤ 4 < 5).
+  // Admin scope WILL trip if maxFailures < 24.
+  const attempts: Array<{
+    outcome: 'invalid_otp';
+    attempted_at: string;
+  }> = [];
+  for (let ip = 0; ip < 6; ip++) {
+    for (let n = 0; n < 4; n++) {
+      attempts.push({
+        outcome: 'invalid_otp' as const,
+        attempted_at: minutesAgo(ip * 4 + n + 1),
+      });
+    }
+  }
+  const v = evaluateAdminMfaChallengeRateLimitAdminScope(attempts, NOW);
+  // We have 24 failures; admin-scope cap is 15 → must trip.
+  assert.equal(v.ok, false);
+  if (!v.ok) assert.equal(v.reason, 'too_many_failures');
+});
+
+test('admin-scope: success-only never trips failure cap', () => {
+  const attempts = Array.from({ length: 30 }, (_, i) => ({
+    outcome: 'success' as const,
+    attempted_at: minutesAgo(i + 1),
+  }));
+  const v = evaluateAdminMfaChallengeRateLimitAdminScope(attempts, NOW);
+  // Still trips attempt cap (30 > 50? no — 30 < 50). Should pass.
+  assert.equal(v.ok, true);
+});
+
+test('admin-scope: attempt cap (any outcome)', () => {
+  const attempts = Array.from(
+    { length: ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.maxAttempts },
+    (_, i) => ({
+      outcome:
+        i % 2 === 0 ? ('success' as const) : ('invalid_otp' as const),
+      attempted_at: minutesAgo(i + 1),
+    })
+  );
+  const v = evaluateAdminMfaChallengeRateLimitAdminScope(attempts, NOW);
+  assert.equal(v.ok, false);
+  if (!v.ok) assert.equal(v.reason, 'too_many_attempts');
 });
 
 // ============================================================

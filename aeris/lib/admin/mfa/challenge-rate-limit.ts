@@ -9,8 +9,10 @@ import { headers } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminEnv } from '@/lib/admin/auth';
 import {
+  ADMIN_MFA_CHALLENGE_ADMIN_LIMIT,
   ADMIN_MFA_CHALLENGE_RATE_LIMIT,
   evaluateAdminMfaChallengeRateLimit,
+  evaluateAdminMfaChallengeRateLimitAdminScope,
   fingerprintMfaChallengeActor,
   type AdminMfaChallengeAttemptRow,
   type AdminMfaChallengeOutcome,
@@ -34,6 +36,7 @@ type AdminMfaChallengeAttemptStore = {
   from: (table: string) => {
     select: (columns: string) => {
       eq: (column: string, value: string) => {
+        // Per-actor scope: filters on (actor_fingerprint, admin_user_id).
         eq: (column: string, value: string) => {
           gte: (
             column: string,
@@ -43,6 +46,14 @@ type AdminMfaChallengeAttemptStore = {
             error: { message?: string } | null;
           }>;
         };
+        // Admin scope: filters on admin_user_id alone.
+        gte: (
+          column: string,
+          value: string
+        ) => Promise<{
+          data: unknown[] | null;
+          error: { message?: string } | null;
+        }>;
       };
     };
     insert: (
@@ -102,23 +113,44 @@ function normalizeRows(
   });
 }
 
+/**
+ * Two-scope rate-limit check:
+ *   1. Per-(actor_fingerprint, admin_user_id) — the dominant
+ *      throttle for the common single-IP case.
+ *   2. Per-admin (any actor) — round-2 hardening against
+ *      distributed guessing across many IPs.
+ *
+ * Either scope rejecting trips the gate. We use the LARGER of
+ * the two windows to size the SELECT cutoff so a single
+ * indexed read serves both evaluators (the admin scope's
+ * windows are >= the actor scope's by design).
+ *
+ * Storage errors on either query fail-closed.
+ */
 export async function checkAdminMfaChallengeRateLimit(
   adminUserId: string
 ): Promise<AdminMfaChallengeRateLimitCheck> {
   const actorFingerprint = currentActorFingerprint(adminUserId);
-  const since = new Date(
-    Date.now() - ADMIN_MFA_CHALLENGE_RATE_LIMIT.attemptWindowMs
-  ).toISOString();
+  const cutoffMs = Math.max(
+    ADMIN_MFA_CHALLENGE_RATE_LIMIT.attemptWindowMs,
+    ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.attemptWindowMs
+  );
+  const since = new Date(Date.now() - cutoffMs).toISOString();
+  const store = attemptStore();
 
-  const { data, error } = await attemptStore()
+  // Per-actor scope query.
+  const actorResult = await store
     .from(TABLE)
     .select('outcome, attempted_at')
     .eq('actor_fingerprint', actorFingerprint)
     .eq('admin_user_id', adminUserId)
     .gte('attempted_at', since);
 
-  if (error) {
-    console.error('[admin-mfa-challenge-rate-limit] check failed', error);
+  if (actorResult.error) {
+    console.error(
+      '[admin-mfa-challenge-rate-limit] actor-scope check failed',
+      actorResult.error
+    );
     return {
       ok: false,
       actorFingerprint,
@@ -127,10 +159,43 @@ export async function checkAdminMfaChallengeRateLimit(
     };
   }
 
-  const verdict = evaluateAdminMfaChallengeRateLimit(normalizeRows(data));
-  return verdict.ok
-    ? { ok: true, actorFingerprint }
-    : { ...verdict, ok: false, actorFingerprint };
+  const actorVerdict = evaluateAdminMfaChallengeRateLimit(
+    normalizeRows(actorResult.data)
+  );
+  if (!actorVerdict.ok) {
+    return { ...actorVerdict, ok: false, actorFingerprint };
+  }
+
+  // Per-admin scope query (any actor against this admin).
+  // PR #92 round-2 hardening: closes the distributed-guessing
+  // path that the per-actor evaluator alone cannot.
+  const adminResult = await store
+    .from(TABLE)
+    .select('outcome, attempted_at')
+    .eq('admin_user_id', adminUserId)
+    .gte('attempted_at', since);
+
+  if (adminResult.error) {
+    console.error(
+      '[admin-mfa-challenge-rate-limit] admin-scope check failed',
+      adminResult.error
+    );
+    return {
+      ok: false,
+      actorFingerprint,
+      reason: 'storage_error',
+      retryAfterSeconds: 60,
+    };
+  }
+
+  const adminVerdict = evaluateAdminMfaChallengeRateLimitAdminScope(
+    normalizeRows(adminResult.data)
+  );
+  if (!adminVerdict.ok) {
+    return { ...adminVerdict, ok: false, actorFingerprint };
+  }
+
+  return { ok: true, actorFingerprint };
 }
 
 export async function recordAdminMfaChallengeAttempt(
