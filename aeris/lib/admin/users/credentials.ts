@@ -118,6 +118,58 @@ export function sessionTokenHash(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
+// --------------------------------------------------------------
+// Combined create-input pre-validation (used by queries.ts to
+// enforce email + password + full_name strength BEFORE bcrypt).
+// PR #88 round-1 P2 fix: createAdminUserWithPassword previously
+// hashed any string a caller handed in; now the pure validator
+// gates the whole helper.
+// --------------------------------------------------------------
+
+const FULL_NAME_MIN = 2;
+const FULL_NAME_MAX = 120;
+
+export type CreateInputValidation =
+  | {
+      ok: true;
+      email: string;
+      full_name: string;
+    }
+  | {
+      ok: false;
+      error:
+        | 'email_empty'
+        | 'email_format'
+        | 'email_too_long'
+        | 'password_too_short'
+        | 'password_too_long'
+        | 'password_weak'
+        | 'full_name_too_short'
+        | 'full_name_too_long';
+    };
+
+export function validateAdminUserCreateInput(input: {
+  email: string;
+  password: string;
+  full_name: string;
+}): CreateInputValidation {
+  const emailV = validateAdminEmail(input.email);
+  if (!emailV.ok) return { ok: false, error: emailV.error };
+
+  const passwordV = validateAdminPassword(input.password);
+  if (!passwordV.ok) return { ok: false, error: passwordV.error };
+
+  const trimmed = (input.full_name ?? '').trim();
+  if (trimmed.length < FULL_NAME_MIN) {
+    return { ok: false, error: 'full_name_too_short' };
+  }
+  if (trimmed.length > FULL_NAME_MAX) {
+    return { ok: false, error: 'full_name_too_long' };
+  }
+
+  return { ok: true, email: emailV.email, full_name: trimmed };
+}
+
 const HEX_RE = /^[0-9a-fA-F]+$/;
 
 export function constantTimeEqualHex(a: string, b: string): boolean {

@@ -20,6 +20,7 @@ import {
   sessionTokenHash,
   validateAdminEmail,
   validateAdminPassword,
+  validateAdminUserCreateInput,
   verifyAdminPassword,
 } from '@/lib/admin/users/credentials';
 
@@ -239,6 +240,73 @@ async function run() {
 
   test('non-hex strings → false (Buffer.from fails silently)', () => {
     assert.equal(constantTimeEqualHex('zzzz', 'zzzz'), false);
+  });
+
+  // --------------------------------------------------------
+  // validateAdminUserCreateInput (PR #88 round-1 P2 fix)
+  // --------------------------------------------------------
+
+  test('valid create input passes + normalizes email + trims name', () => {
+    const v = validateAdminUserCreateInput({
+      email: '  Founder@Aeris.SA  ',
+      password: 'CorrectHorseBattery42!',
+      full_name: '  Basem Alharbi  ',
+    });
+    assert.equal(v.ok, true);
+    if (v.ok) {
+      assert.equal(v.email, 'founder@aeris.sa');
+      assert.equal(v.full_name, 'Basem Alharbi');
+    }
+  });
+
+  test('create rejects bad email FIRST', () => {
+    const v = validateAdminUserCreateInput({
+      email: 'not-an-email',
+      password: 'StrongPass99X!',
+      full_name: 'Valid Name',
+    });
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.error, 'email_format');
+  });
+
+  test('create rejects weak password', () => {
+    const v = validateAdminUserCreateInput({
+      email: 'ok@aeris.sa',
+      password: 'alllower12345678',
+      full_name: 'Valid Name',
+    });
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.error, 'password_weak');
+  });
+
+  test('create rejects too-short full_name (after trim)', () => {
+    const v = validateAdminUserCreateInput({
+      email: 'ok@aeris.sa',
+      password: 'StrongPass99X!',
+      full_name: ' a ',
+    });
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.error, 'full_name_too_short');
+  });
+
+  test('create rejects too-long full_name', () => {
+    const v = validateAdminUserCreateInput({
+      email: 'ok@aeris.sa',
+      password: 'StrongPass99X!',
+      full_name: 'x'.repeat(121),
+    });
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.error, 'full_name_too_long');
+  });
+
+  test('create rejects empty full_name', () => {
+    const v = validateAdminUserCreateInput({
+      email: 'ok@aeris.sa',
+      password: 'StrongPass99X!',
+      full_name: '',
+    });
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.error, 'full_name_too_short');
   });
 
   await Promise.resolve();

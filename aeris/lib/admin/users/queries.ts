@@ -4,7 +4,9 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import {
   hashAdminPassword,
   normalizeAdminEmail,
+  validateAdminUserCreateInput,
   verifyAdminPassword,
+  type CreateInputValidation,
 } from '@/lib/admin/users/credentials';
 
 /**
@@ -119,21 +121,39 @@ export async function lookupAdminUserByEmail(
 // 2. credential verification (called from login Server Action)
 // --------------------------------------------------------------
 
+/**
+ * Single failure reason exposed to callers — the granular
+ * not_found / bad_password / disabled state stays in the
+ * server logs only. PR #88 round-1 P2 fix: previously the
+ * helper returned distinct reasons, which the login action
+ * could (and would) plumb to the UI, letting an attacker
+ * enumerate which emails exist + which are disabled.
+ *
+ * Strict contract: any failure → `invalid_credentials`.
+ * The caller is REQUIRED to surface a single uniform message
+ * to the user.
+ */
 export type VerifyCredentialsResult =
   | { ok: true; user: AdminUserRow }
-  | {
-      ok: false;
-      reason: 'not_found' | 'disabled' | 'bad_password';
-    };
+  | { ok: false; reason: 'invalid_credentials' };
 
-/**
- * Server-side credential check. Always runs the bcrypt compare
- * even when the user doesn't exist (against a dummy hash) so
- * the response time can't leak whether an email exists in the
- * table — primary defense against user enumeration.
- */
 const DUMMY_BCRYPT_HASH =
   '$2a$12$nuq.j1jVtL/MfsKMqHkOLeAhwoXMa1OZW8E0v8/Q3rJzlrkRyVS9.'; // bcrypt('does-not-match', 12)
+
+/** Internal granular reason — written to server logs only,
+ *  never returned to callers. */
+type InternalVerifyReason =
+  | 'not_found'
+  | 'bad_password'
+  | 'disabled_with_bad_password'
+  | 'disabled_with_good_password';
+
+function logInternalVerifyFailure(
+  reason: InternalVerifyReason,
+  email: string
+): void {
+  console.warn('[admin-users.verifyCredentials] denied', { reason, email });
+}
 
 export async function verifyAdminCredentials(
   rawEmail: string,
@@ -145,19 +165,29 @@ export async function verifyAdminCredentials(
     // Run bcrypt against a dummy hash so timing matches the
     // real path. Discard the result.
     await verifyAdminPassword(password, DUMMY_BCRYPT_HASH);
-    return { ok: false, reason: 'not_found' };
+    logInternalVerifyFailure('not_found', normalizeAdminEmail(rawEmail));
+    return { ok: false, reason: 'invalid_credentials' };
   }
 
-  const ok = await verifyAdminPassword(password, candidate.password_hash);
-  if (!ok) {
-    if (candidate.status === 'disabled') {
-      return { ok: false, reason: 'disabled' };
-    }
-    return { ok: false, reason: 'bad_password' };
-  }
+  const passwordOk = await verifyAdminPassword(
+    password,
+    candidate.password_hash
+  );
 
+  // Collapse all three failure modes to a single uniform reason
+  // so the login Server Action can't accidentally surface
+  // account-state differentiation to the UI.
+  if (!passwordOk && candidate.status === 'disabled') {
+    logInternalVerifyFailure('disabled_with_bad_password', candidate.email);
+    return { ok: false, reason: 'invalid_credentials' };
+  }
+  if (!passwordOk) {
+    logInternalVerifyFailure('bad_password', candidate.email);
+    return { ok: false, reason: 'invalid_credentials' };
+  }
   if (candidate.status === 'disabled') {
-    return { ok: false, reason: 'disabled' };
+    logInternalVerifyFailure('disabled_with_good_password', candidate.email);
+    return { ok: false, reason: 'invalid_credentials' };
   }
 
   return { ok: true, user: stripHash(candidate) };
@@ -208,17 +238,40 @@ export async function insertAdminUser(
 }
 
 // --------------------------------------------------------------
-// 4. helper: hash + insert in one call (founder seed convenience)
+// 4. helper: validate + hash + insert in one call
+//
+// PR #88 round-1 P2 fix: previously the helper hashed any string
+// the caller handed in, so a future code path could create an
+// admin with a weak password. Now the email + password + name
+// MUST pass validateAdminUserCreateInput before bcrypt runs;
+// validation failures short-circuit before any DB or crypto work.
 // --------------------------------------------------------------
+
+export type CreateAdminUserWithPasswordResult =
+  | InsertAdminUserResult
+  | {
+      ok: false;
+      reason: 'invalid_input';
+      validation_error: Extract<CreateInputValidation, { ok: false }>['error'];
+    };
 
 export async function createAdminUserWithPassword(
   input: Omit<InsertAdminUserInput, 'password_hash'> & { password: string }
-): Promise<InsertAdminUserResult> {
+): Promise<CreateAdminUserWithPasswordResult> {
+  const v = validateAdminUserCreateInput({
+    email: input.email,
+    password: input.password,
+    full_name: input.full_name,
+  });
+  if (!v.ok) {
+    return { ok: false, reason: 'invalid_input', validation_error: v.error };
+  }
+
   const hash = await hashAdminPassword(input.password);
   return insertAdminUser({
-    email: input.email,
+    email: v.email,
     password_hash: hash,
-    full_name: input.full_name,
+    full_name: v.full_name,
     role: input.role,
     must_change_password: input.must_change_password,
     created_by_admin_user_id: input.created_by_admin_user_id,

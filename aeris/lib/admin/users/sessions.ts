@@ -39,6 +39,10 @@ type LooseSessionStore = {
             }>;
           };
         };
+        maybeSingle: () => Promise<{
+          data: unknown;
+          error: { code?: string; message?: string } | null;
+        }>;
       };
     };
     insert: (row: Record<string, unknown>) => {
@@ -116,8 +120,27 @@ export async function createAdminUserSession(
 
 export type ValidateAdminUserSessionResult =
   | { ok: true; session: AdminUserSessionRow }
-  | { ok: false; reason: 'not_found' | 'expired' | 'revoked' };
+  | {
+      ok: false;
+      reason: 'not_found' | 'expired' | 'revoked' | 'user_disabled';
+    };
 
+/**
+ * Validates that:
+ *   1. The token hash matches an existing session row.
+ *   2. The session is not revoked and not expired.
+ *   3. The OWNER admin_users row is still status='active'.
+ *
+ * PR #88 round-1 P1 fix: step 3 was missing. A disabled admin
+ * whose sessions weren't explicitly revoked would keep their
+ * cookie working until natural expiry. Now the second lookup
+ * gates on status and returns `user_disabled` so the caller
+ * can clear the cookie + redirect to /admin/login.
+ *
+ * Two reads instead of a PostgREST embed/join to keep the loose
+ * type surface flat. Both reads hit unique/partial indexes; cost
+ * is negligible compared to the bcrypt path on login.
+ */
 export async function validateAdminUserSessionToken(
   rawToken: string
 ): Promise<ValidateAdminUserSessionResult> {
@@ -127,7 +150,8 @@ export async function validateAdminUserSessionToken(
   const hash = sessionTokenHash(rawToken);
   const now = new Date().toISOString();
 
-  const { data, error } = await store()
+  const sessionStore = store();
+  const { data, error } = await sessionStore
     .from(TABLE)
     .select('id, admin_user_id, created_at, expires_at, last_seen_at, revoked_at')
     .eq('token_hash', hash)
@@ -137,7 +161,7 @@ export async function validateAdminUserSessionToken(
 
   if (error) {
     if (error.code === 'PGRST116') return { ok: false, reason: 'not_found' };
-    console.error('[admin-user-sessions.validate] failed', error);
+    console.error('[admin-user-sessions.validate] session read failed', error);
     return { ok: false, reason: 'not_found' };
   }
   if (!data) {
@@ -145,6 +169,35 @@ export async function validateAdminUserSessionToken(
   }
 
   const row = data as AdminUserSessionRow;
+
+  // PR #88 round-1 P1 — verify the owning admin is still active.
+  const { data: userData, error: userError } = await sessionStore
+    .from('admin_users')
+    .select('status')
+    .eq('id', row.admin_user_id)
+    .maybeSingle();
+
+  if (userError) {
+    if (userError.code !== 'PGRST116') {
+      console.error(
+        '[admin-user-sessions.validate] user read failed',
+        userError
+      );
+    }
+    return { ok: false, reason: 'not_found' };
+  }
+  if (!userData) {
+    // Session pointed at a now-deleted admin row. Treat the
+    // session as invalid; FK ON DELETE CASCADE means we
+    // shouldn't normally see this, but fail-closed.
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const userStatus = (userData as { status: string }).status;
+  if (userStatus !== 'active') {
+    return { ok: false, reason: 'user_disabled' };
+  }
+
   return { ok: true, session: row };
 }
 
