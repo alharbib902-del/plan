@@ -80,9 +80,11 @@ function attemptStore(): AdminMfaChallengeAttemptStore {
   return createAdminClient() as unknown as AdminMfaChallengeAttemptStore;
 }
 
-function currentActorFingerprint(adminUserId: string): string {
+async function currentActorFingerprint(
+  adminUserId: string
+): Promise<string> {
   const env = requireAdminEnv();
-  const h = headers();
+  const h = await headers();
   const identity = actorIdentityFromHeaders({
     forwardedFor: h.get('x-forwarded-for'),
     realIp: h.get('x-real-ip'),
@@ -134,7 +136,7 @@ function normalizeRows(
 export async function checkAdminMfaChallengeRateLimit(
   adminUserId: string
 ): Promise<AdminMfaChallengeRateLimitCheck> {
-  const actorFingerprint = currentActorFingerprint(adminUserId);
+  const actorFingerprint = await currentActorFingerprint(adminUserId);
   const cutoffMs = Math.max(
     ADMIN_MFA_CHALLENGE_RATE_LIMIT.attemptWindowMs,
     ADMIN_MFA_CHALLENGE_ADMIN_LIMIT.attemptWindowMs

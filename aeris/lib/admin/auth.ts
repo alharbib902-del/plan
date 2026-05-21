@@ -97,8 +97,8 @@ export function getAdminCookieOptions(
 }
 
 /** Set the admin cookie with the freshly minted raw token. */
-export function setAdminCookie(rawToken: string): void {
-  cookies().set(
+export async function setAdminCookie(rawToken: string): Promise<void> {
+  (await cookies()).set(
     ADMIN_COOKIE_NAME,
     rawToken,
     getAdminCookieOptions(SEVEN_DAYS_SECONDS)
@@ -107,7 +107,7 @@ export function setAdminCookie(rawToken: string): void {
 
 /** Clear the cookie + revoke the underlying session row. */
 export async function clearAdminCookieAndSession(): Promise<void> {
-  const cookieJar = cookies();
+  const cookieJar = await cookies();
   const raw = cookieJar.get(ADMIN_COOKIE_NAME)?.value;
   cookieJar.delete({ name: ADMIN_COOKIE_NAME, path: '/admin' });
 
@@ -183,7 +183,7 @@ export async function requireAdminSession(opts: {
 } = {}): Promise<AdminSessionInfo> {
   requireAdminEnv();
 
-  const cookieJar = cookies();
+  const cookieJar = await cookies();
   const raw = cookieJar.get(ADMIN_COOKIE_NAME)?.value;
   if (!raw || raw.length === 0) {
     redirect('/admin/login');
@@ -260,7 +260,7 @@ export async function hasAdminSession(): Promise<boolean> {
   } catch {
     return false;
   }
-  const raw = cookies().get(ADMIN_COOKIE_NAME)?.value;
+  const raw = (await cookies()).get(ADMIN_COOKIE_NAME)?.value;
   if (!raw || raw.length === 0) return false;
   const verdict = await validateAdminUserSessionToken(raw);
   return verdict.ok;
@@ -295,7 +295,7 @@ export async function issueAdminSession(input: {
     mfa_pending: input.mfaPending === true,
   });
   if (!created) return null;
-  setAdminCookie(created.raw_token);
+  await setAdminCookie(created.raw_token);
   return {
     raw_token: created.raw_token,
     sessionId: created.session.id,

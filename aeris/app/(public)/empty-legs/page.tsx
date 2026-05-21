@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { PublicLegCard } from '@/components/public/empty-legs/leg-card';
@@ -124,12 +125,12 @@ export default async function PublicEmptyLegsListPage({
           />
         </div>
         <div className="flex flex-wrap items-end justify-end gap-2 sm:col-span-3">
-          <a
+          <Link
             href="/empty-legs"
             className="font-ar inline-flex items-center gap-2 rounded-md border border-border bg-navy-secondary/60 px-4 py-2 text-sm text-ink-secondary transition-colors hover:border-gold/40 hover:text-gold-light"
           >
             {emptyLegsAr.publicListFilterClear}
-          </a>
+          </Link>
           <button
             type="submit"
             className="font-ar inline-flex items-center gap-2 rounded-md border border-gold bg-gold/10 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/15"

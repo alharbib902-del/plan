@@ -92,9 +92,9 @@ function fieldErrorsFromZod(
   return out;
 }
 
-function clientIp(): string | null {
+async function clientIp(): Promise<string | null> {
   try {
-    const h = headers();
+    const h = await headers();
     const xf = h.get('x-forwarded-for');
     if (xf) return xf.split(',')[0]!.trim();
     const xr = h.get('x-real-ip');
@@ -105,9 +105,9 @@ function clientIp(): string | null {
   }
 }
 
-function userAgent(): string | null {
+async function userAgent(): Promise<string | null> {
   try {
-    return headers().get('user-agent');
+    return (await headers()).get('user-agent');
   } catch {
     return null;
   }
@@ -169,7 +169,7 @@ export async function clientSignup(input: {
   // line 175): IP check sits between Zod parse and bcrypt so
   // we don't burn a 12-cost hash on a request we can't
   // attribute.
-  const ip = clientIp();
+  const ip = await clientIp();
   if (!ip) return { ok: false, error: 'ip_required' };
 
   let passwordHash: string;
@@ -272,8 +272,8 @@ export async function clientLogin(input: {
       p_client_id: lookup.client_id,
       p_session_token_hash: minted.token_hash,
       p_remember_me: parsed.data.remember_me,
-      p_ip: clientIp(),
-      p_user_agent: userAgent(),
+      p_ip: await clientIp(),
+      p_user_agent: await userAgent(),
     }
   );
   if (sessionErr) {
@@ -290,7 +290,7 @@ export async function clientLogin(input: {
     return { ok: false, error: session.error };
   }
 
-  setClientSessionCookie(minted.raw_token, parsed.data.remember_me);
+  await setClientSessionCookie(minted.raw_token, parsed.data.remember_me);
   return { ok: true, client_id: lookup.client_id };
 }
 
@@ -303,9 +303,9 @@ export type ClientLogoutResult = { ok: true } | ClientPublicActionFailure;
 export async function clientLogout(): Promise<ClientLogoutResult> {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
-  const raw = getRawSessionTokenFromCookie();
+  const raw = await getRawSessionTokenFromCookie();
   if (!raw) {
-    clearClientSessionCookie();
+    await clearClientSessionCookie();
     return { ok: true };
   }
 
@@ -319,7 +319,7 @@ export async function clientLogout(): Promise<ClientLogoutResult> {
     // Always clear cookie regardless of RPC outcome
   }
 
-  clearClientSessionCookie();
+  await clearClientSessionCookie();
   return { ok: true };
 }
 
@@ -393,7 +393,7 @@ export async function clientRequestPasswordReset(input: {
       p_email: parsed.data.email,
       p_token_hash: minted.token_hash,
       p_expires_at: minted.expires_at.toISOString(),
-      p_ip: clientIp(),
+      p_ip: await clientIp(),
     }
   );
   if (error) {

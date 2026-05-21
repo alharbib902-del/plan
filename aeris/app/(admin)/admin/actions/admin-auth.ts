@@ -67,8 +67,8 @@ export type SignInResult =
         | 'rate_limited';
     };
 
-function ipFingerprintFromHeaders(secret: string): string {
-  const h = headers();
+async function ipFingerprintFromHeaders(secret: string): Promise<string> {
+  const h = await headers();
   const identity = actorIdentityFromHeaders({
     forwardedFor: h.get('x-forwarded-for'),
     realIp: h.get('x-real-ip'),
@@ -127,8 +127,8 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
     return { ok: false, error: 'invalid_credentials' };
   }
 
-  const userAgent = headers().get('user-agent');
-  const ipFingerprint = ipFingerprintFromHeaders(env.secret);
+  const userAgent = (await headers()).get('user-agent');
+  const ipFingerprint = await ipFingerprintFromHeaders(env.secret);
 
   // PR-3b — if the admin has active MFA enrollment, issue the
   // session in mfa_pending state. requireAdminSession() then

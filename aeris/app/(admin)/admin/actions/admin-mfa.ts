@@ -166,9 +166,9 @@ export type VerifyMfaChallengeResult =
         | 'storage_error';
     };
 
-function loginAttemptFingerprint(): string {
+async function loginAttemptFingerprint(): Promise<string> {
   const env = requireAdminEnv();
-  const h = headers();
+  const h = await headers();
   const identity = actorIdentityFromHeaders({
     forwardedFor: h.get('x-forwarded-for'),
     realIp: h.get('x-real-ip'),
@@ -311,7 +311,7 @@ export async function verifyMfaChallenge(input: {
     session.adminUserId,
     'success'
   );
-  await recordAdminLoginAttempt(loginAttemptFingerprint(), 'success');
+  await recordAdminLoginAttempt(await loginAttemptFingerprint(), 'success');
   await stampAdminUserLogin(session.adminUserId);
 
   if (!cleared) {

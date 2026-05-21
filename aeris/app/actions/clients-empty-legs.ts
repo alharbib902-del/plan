@@ -56,9 +56,9 @@ function fieldErrorsFromZod(
   return out;
 }
 
-function clientIp(): string | null {
+async function clientIp(): Promise<string | null> {
   try {
-    const h = headers();
+    const h = await headers();
     const xf = h.get('x-forwarded-for');
     if (xf) return xf.split(',')[0]!.trim();
     const xr = h.get('x-real-ip');
@@ -125,7 +125,7 @@ export async function reserveAuthenticatedEmptyLeg(input: {
   }
 
   // 3. ip_required guard (Phase 9 convention #12 + spec §4.1)
-  const ip = clientIp();
+  const ip = await clientIp();
   if (!ip) return { ok: false, error: 'ip_required' };
 
   // 4. Call §4.1 RPC

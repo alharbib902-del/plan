@@ -75,10 +75,12 @@ function publicActionStore(): PublicActionAttemptStore {
   return createAdminClient() as unknown as PublicActionAttemptStore;
 }
 
-function currentActorFingerprint(action: PublicAction): string | null {
+async function currentActorFingerprint(
+  action: PublicAction
+): Promise<string | null> {
   const secret = fingerprintSecret();
   if (!secret) return null;
-  const h = headers();
+  const h = await headers();
   const identity = actorIdentityFromHeaders({
     forwardedFor: h.get('x-forwarded-for'),
     realIp: h.get('x-real-ip'),
@@ -111,7 +113,7 @@ export async function checkPublicActionRateLimit(
   action: PublicAction
 ): Promise<PublicActionRateLimitCheck> {
   const config = PUBLIC_ACTION_LIMITS[action];
-  const actorFingerprint = currentActorFingerprint(action);
+  const actorFingerprint = await currentActorFingerprint(action);
   if (!actorFingerprint) {
     console.error(
       '[public-action-rate-limit] fingerprint secret missing — denying',

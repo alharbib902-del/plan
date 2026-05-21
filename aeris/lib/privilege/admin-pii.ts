@@ -122,7 +122,7 @@ export async function readAdminClientPrivilegeDetail(
   const secret = readFingerprintSecret();
   if (!isUuid(clientId)) return null;
 
-  const rawCookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
+  const rawCookie = (await cookies()).get(ADMIN_COOKIE_NAME)?.value;
   const session = await requireAdminSession();
   if (!rawCookie) {
     redirect('/admin/login');
@@ -252,7 +252,7 @@ export async function forceAdminClientPrivilegeTier(args: {
     return { ok: false, error: 'client_not_found' };
   }
 
-  const rawCookie = cookies().get(ADMIN_COOKIE_NAME)?.value;
+  const rawCookie = (await cookies()).get(ADMIN_COOKIE_NAME)?.value;
   const session = await requireAdminSession();
   if (!rawCookie) {
     redirect('/admin/login');
