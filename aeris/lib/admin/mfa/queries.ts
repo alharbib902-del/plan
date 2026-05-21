@@ -1,5 +1,9 @@
-import 'server-only';
-
+// Server-side ONLY — same rationale as lib/empty-legs/matching.ts:
+// the structural test runs under tsx outside Next.js where the
+// `'server-only'` shim is not resolvable. The createAdminClient
+// import enforces the server boundary in practice (client-side
+// imports of supabase/admin throw at runtime). This module is
+// only imported from Server Actions + route handlers.
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   base32Decode,
@@ -70,7 +74,27 @@ type LooseStore = {
   };
 };
 
+/**
+ * Returns the admin Supabase client cast to the loose chain
+ * shape this module uses.
+ *
+ * Test-only escape hatch: when
+ * `globalThis.__aerisAdminClientOverride` is set (only the
+ * structural-test harness does this), use it instead of the
+ * real createAdminClient. Production code never touches the
+ * hatch — it's checked via a `unknown` cast so accidental
+ * collision with a global is type-safe.
+ */
+interface GlobalWithMfaHatch {
+  __aerisAdminClientOverride?: unknown;
+}
+
 function store(): LooseStore {
+  const hatch = (globalThis as GlobalWithMfaHatch)
+    .__aerisAdminClientOverride;
+  if (hatch !== undefined) {
+    return hatch as LooseStore;
+  }
   return createAdminClient() as unknown as LooseStore;
 }
 
@@ -238,6 +262,18 @@ export async function confirmAdminMfaEnrollment(args: {
 
 // --------------------------------------------------------------
 // 4. Challenge — verify an OTP from an already-enrolled admin
+//
+// PR #90 round-1 P2 fix: previously the function read
+// last_used_at, decided in JS whether the step had been used,
+// then wrote last_used_at unconditionally. Two concurrent
+// requests submitting the SAME live OTP could both pass the
+// JS check and both succeed (TOCTOU race).
+//
+// The fix is an ATOMIC conditional UPDATE: write last_used_at
+// only when the existing value is NULL or strictly less than
+// the start-of-step boundary for the candidate's matched step.
+// RETURNING the row tells us if the UPDATE applied; zero rows
+// means another request already won the race for this step.
 // --------------------------------------------------------------
 
 export type ChallengeOtpResult =
@@ -250,6 +286,23 @@ export type ChallengeOtpResult =
         | 'replay_same_step'
         | 'storage_error';
     };
+
+type ChallengeUpdateChain = {
+  from: (table: string) => {
+    update: (patch: Record<string, unknown>) => {
+      eq: (col: string, val: unknown) => {
+        or: (clause: string) => {
+          select: (cols: string) => {
+            maybeSingle: () => Promise<{
+              data: unknown;
+              error: { code?: string; message?: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+};
 
 export async function verifyAdminMfaOtpChallenge(args: {
   admin_user_id: string;
@@ -268,25 +321,32 @@ export async function verifyAdminMfaOtpChallenge(args: {
     return { ok: false, reason: 'invalid_otp' };
   }
 
-  // Same-step replay defense: reject if last_used_at falls into
-  // the SAME step we just matched.
-  if (secret.last_used_at) {
-    const lastUsedSeconds = Math.floor(
-      new Date(secret.last_used_at).getTime() / 1000
-    );
-    const lastUsedStep = Math.floor(lastUsedSeconds / 30);
-    if (lastUsedStep >= verdict.matched_step) {
-      return { ok: false, reason: 'replay_same_step' };
-    }
-  }
+  // Compute the start-of-step boundary in ISO so the DB can
+  // compare last_used_at against it directly.
+  const stepStartSeconds = verdict.matched_step * 30;
+  const stepStartIso = new Date(stepStartSeconds * 1000).toISOString();
 
-  const { error } = await store()
+  const updateStore = store() as unknown as ChallengeUpdateChain;
+  const { data, error } = await updateStore
     .from(SECRETS_TABLE)
     .update({ last_used_at: new Date().toISOString() })
-    .eq('admin_user_id', args.admin_user_id);
+    .eq('admin_user_id', args.admin_user_id)
+    .or(`last_used_at.is.null,last_used_at.lt.${stepStartIso}`)
+    .select('admin_user_id')
+    .maybeSingle();
+
   if (error) {
-    console.error('[admin-mfa.challenge] last_used_at update failed', error);
+    console.error('[admin-mfa.challenge] atomic update failed', error);
     return { ok: false, reason: 'storage_error' };
+  }
+  if (!data) {
+    // Zero rows updated → either the secret row vanished
+    // (extremely unlikely after the initial load above) OR a
+    // concurrent request already advanced last_used_at past
+    // the start of this matched step. Both surface as the same
+    // replay verdict — the attacker (or accidental double-tap)
+    // doesn't learn which.
+    return { ok: false, reason: 'replay_same_step' };
   }
 
   return { ok: true, matched_step: verdict.matched_step };
@@ -294,6 +354,21 @@ export async function verifyAdminMfaOtpChallenge(args: {
 
 // --------------------------------------------------------------
 // 5. Recovery code consume — one-time use
+//
+// PR #90 round-1 P1 fix: the previous implementation issued an
+// UPDATE filtered ONLY on (code_hash, consumed_at IS NULL) and
+// then post-validated admin_user_id ownership via a follow-up
+// SELECT. Two real bugs:
+//   1. The UPDATE could flip another admin's code if its hash
+//      happened to match — denial-of-service against the real
+//      owner (their valid code becomes unusable).
+//   2. The post-UPDATE SELECT couldn't undo the damage; the row
+//      stayed consumed even when the caller didn't own it.
+//
+// The fix is a single ATOMIC UPDATE scoped to all three
+// predicates (code_hash + admin_user_id + consumed_at IS NULL)
+// with `.select().maybeSingle()` so the DB tells us atomically
+// whether exactly one row was flipped. No follow-up SELECT.
 // --------------------------------------------------------------
 
 export type ConsumeRecoveryCodeResult =
@@ -302,6 +377,25 @@ export type ConsumeRecoveryCodeResult =
       ok: false;
       reason: 'no_active_mfa' | 'invalid_or_consumed' | 'storage_error';
     };
+
+type ConsumeUpdateChain = {
+  from: (table: string) => {
+    update: (patch: Record<string, unknown>) => {
+      eq: (col: string, val: unknown) => {
+        eq: (col: string, val: unknown) => {
+          is: (col: string, val: null) => {
+            select: (cols: string) => {
+              maybeSingle: () => Promise<{
+                data: unknown;
+                error: { code?: string; message?: string } | null;
+              }>;
+            };
+          };
+        };
+      };
+    };
+  };
+};
 
 type LooseCountStore = {
   from: (table: string) => {
@@ -319,20 +413,6 @@ type LooseCountStore = {
   };
 };
 
-type LooseConsumeStore = {
-  from: (table: string) => {
-    update: (patch: Record<string, unknown>) => {
-      eq: (col: string, val: unknown) => {
-        is: (col: string, val: null) => Promise<{
-          count: number | null;
-          error: { message?: string } | null;
-          data: unknown;
-        }>;
-      };
-    };
-  };
-};
-
 export async function consumeAdminMfaRecoveryCode(args: {
   admin_user_id: string;
   raw_code: string;
@@ -343,48 +423,34 @@ export async function consumeAdminMfaRecoveryCode(args: {
 
   const codeHash = hashRecoveryCode(args.raw_code);
 
-  // Conditional UPDATE — flip consumed_at only if the row is
-  // still unconsumed AND belongs to this admin. Zero rows
-  // updated = either wrong hash, wrong owner, or already
-  // consumed; all surface as `invalid_or_consumed` so the
-  // attacker doesn't learn which.
-  const consume = store() as unknown as LooseConsumeStore;
-  const { error: updateError } = await consume
+  // Atomic conditional UPDATE: code_hash AND admin_user_id AND
+  // consumed_at IS NULL. RETURNING tells us if a row was
+  // flipped. Zero rows = wrong hash OR wrong owner OR already
+  // consumed; all three surface as `invalid_or_consumed` so the
+  // attacker learns nothing.
+  const consume = store() as unknown as ConsumeUpdateChain;
+  const { data, error } = await consume
     .from(CODES_TABLE)
     .update({
       consumed_at: new Date().toISOString(),
       consumed_session_id: args.consumed_session_id,
     })
     .eq('code_hash', codeHash)
-    .is('consumed_at', null);
-  if (updateError) {
-    console.error('[admin-mfa.recovery.consume] failed', updateError);
+    .eq('admin_user_id', args.admin_user_id)
+    .is('consumed_at', null)
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[admin-mfa.recovery.consume] atomic update failed', error);
     return { ok: false, reason: 'storage_error' };
   }
-
-  // Verify the update actually flipped a row OWNED by this admin
-  // (the UPDATE above can match a code that belongs to a
-  // different admin too — defense-in-depth check):
-  const owned = await store()
-    .from(CODES_TABLE)
-    .select('admin_user_id, consumed_at')
-    .eq('code_hash', codeHash)
-    .maybeSingle();
-  if (owned.error || !owned.data) {
-    return { ok: false, reason: 'invalid_or_consumed' };
-  }
-  const ownedRow = owned.data as {
-    admin_user_id: string;
-    consumed_at: string | null;
-  };
-  if (ownedRow.admin_user_id !== args.admin_user_id) {
-    return { ok: false, reason: 'invalid_or_consumed' };
-  }
-  if (ownedRow.consumed_at === null) {
+  if (!data) {
     return { ok: false, reason: 'invalid_or_consumed' };
   }
 
-  // Count remaining codes for the UI.
+  // Count remaining codes for the UI (informational only;
+  // not security-critical, so a count failure is non-fatal).
   const counter = store() as unknown as LooseCountStore;
   const { count } = await counter
     .from(CODES_TABLE)
@@ -394,7 +460,8 @@ export async function consumeAdminMfaRecoveryCode(args: {
 
   return {
     ok: true,
-    recovery_codes_remaining: typeof count === 'number' && count >= 0 ? count : 0,
+    recovery_codes_remaining:
+      typeof count === 'number' && count >= 0 ? count : 0,
   };
 }
 

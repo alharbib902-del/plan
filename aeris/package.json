@@ -58,6 +58,7 @@
     "test:admin-user-credentials": "tsx lib/admin/users/__tests__/credentials.test.ts",
     "test:admin-mfa-totp": "tsx lib/admin/mfa/__tests__/totp.test.ts",
     "test:admin-mfa-recovery-codes": "tsx lib/admin/mfa/__tests__/recovery-codes.test.ts",
+    "test:admin-mfa-queries-structural": "tsx lib/admin/mfa/__tests__/queries-structural.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"
