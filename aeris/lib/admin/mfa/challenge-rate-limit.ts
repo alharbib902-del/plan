@@ -121,9 +121,13 @@ function normalizeRows(
  *      distributed guessing across many IPs.
  *
  * Either scope rejecting trips the gate. We use the LARGER of
- * the two windows to size the SELECT cutoff so a single
- * indexed read serves both evaluators (the admin scope's
- * windows are >= the actor scope's by design).
+ * the two windows to size a SHARED cutoff ISO timestamp so
+ * both queries scan the same time range — but the queries
+ * themselves run as TWO indexed reads (one filtered by
+ * `(actor_fingerprint, admin_user_id)`, one by `admin_user_id`
+ * alone). The admin scope's windows are >= the actor scope's
+ * by design, so the shared cutoff is wide enough for both
+ * evaluators to operate on the rows their config expects.
  *
  * Storage errors on either query fail-closed.
  */

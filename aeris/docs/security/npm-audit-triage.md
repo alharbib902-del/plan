@@ -93,44 +93,44 @@ re-opened.
 | Rationale | Every offered fix is a major upgrade (Next.js 14 → 16). A coordinated migration spans config (`experimental.serverActions` shape changes), the App Router runtime, and Vercel build settings — well outside Phase 3.5. The Image Optimizer DoS (GHSA-9g9p) primarily affects self-hosted deployments; Vercel's managed runtime caps and per-domain `remotePatterns` reduce real exposure. The smuggling-in-rewrites advisory (GHSA-ggv3) does not apply because `next.config.js` defines no `rewrites`. RSC DoS advisories require an attacker to drive specific request shapes against Server Components; the current public surface is one Zod-validated Server Action. |
 | Follow-up trigger | (a) Next.js 14.x backport patch lands for any of the listed advisories — apply minor immediately. (b) Phase 4+ schedules a coordinated upgrade to Next.js 15 LTS; this row is closed by that upgrade. (c) New Server Components are added to a public route — re-evaluate. |
 
-### 2. `@sentry/nextjs` — direct, **high**
+### 2. `@sentry/nextjs` — **CLOSED 2026-05-21 (removed)**
 
 | Field | Value |
 |---|---|
-| Severity | high |
-| Direct? | Yes (`dependencies.@sentry/nextjs: "^7.114.0"`) |
-| Path | `aeris > @sentry/nextjs > {next, rollup}` |
-| Advisories | inherited from `next` (above) and `rollup` (below) |
-| Fix available | `@sentry/nextjs@10.51.0` (`isSemVerMajor: true`) |
-| **Decision** | **wait for vendor** |
-| Rationale | Sentry 7 → 10 is a major upgrade with breaking config changes. The package is currently installed but **not wired into any active code path** (no Sentry init in `app/`, no DSN configured, no `sentry.client.config.ts`). Today the runtime exposure is effectively zero; the entry only inflates the audit count. Two cleaner moves are available, both deferred: (i) wire Sentry properly in Phase 4 alongside the operator portal observability story and upgrade to v10 then; (ii) remove the dependency entirely if a different observability vendor is chosen. |
-| Follow-up trigger | (a) Sentry observability is wired into a real Aeris code path — trigger the v10 upgrade in the same PR. (b) A different observability vendor is selected — drop the dep instead. (c) Sentry releases a v7.x backport patch for the listed advisories — apply it immediately. |
+| Severity | (formerly high) |
+| Direct? | No longer in `dependencies` — removed by PR #93 |
+| Path | (no longer in tree) |
+| Advisories | (closed by removal) |
+| Fix available | n/a |
+| **Decision** | **CLOSED — dependency removed** |
+| Rationale | Phase 3.5 marked Sentry as installed-but-unused. PR #93 confirmed via grep that there was no `Sentry.init(...)` call, no `sentry.*.config.{ts,js}` file, no DSN env var, and no SDK import outside `package.json` itself. Removing the dep dropped the entire `@sentry/nextjs > rollup` and `@sentry/nextjs > next` vulnerable transitive subtrees in one step. |
+| Re-evaluation trigger | A different observability vendor is selected → add it with a current major version. If Sentry is reinstated, install at v10+ directly (do NOT re-add v7). |
 
-### 3. `@supabase/ssr` — direct, **low**
-
-| Field | Value |
-|---|---|
-| Severity | low |
-| Direct? | Yes (`dependencies.@supabase/ssr: "^0.3.0"`) |
-| Path | `aeris > @supabase/ssr > cookie` |
-| Advisories | inherited from `cookie` (below) |
-| Fix available | `@supabase/ssr@0.10.2` (`isSemVerMajor: true`) |
-| **Decision** | **wait for vendor** |
-| Rationale | The bundled `cookie` advisory (GHSA-pxg6-pf52-xh8x) is rated low (CVSS 0) and triggers only when out-of-bounds characters are passed as a cookie *name*, *path*, or *domain*. Aeris does not pass any user-controlled value into those fields — the only cookie set with non-default name is `aeris_admin`, whose value is a server-side-signed token; its name, path, and domain are all hard-coded. A 0.3 → 0.10 jump for `@supabase/ssr` is a major upgrade with API surface changes; deferring it costs nothing here. |
-| Follow-up trigger | (a) `@supabase/ssr` ships a 0.3.x patch with the cookie fix backported — apply minor. (b) A future feature introduces user-controlled cookie names/paths/domains — upgrade immediately. (c) `@supabase/ssr` 0.10.x is required for an unrelated Phase 4 feature — bundle the upgrade with that work. |
-
-### 4. `cookie` — transitive, **low**
+### 3. `@supabase/ssr` — **CLOSED 2026-05-21 (removed)**
 
 | Field | Value |
 |---|---|
-| Severity | low |
-| Direct? | No (transitive via `@supabase/ssr`) |
-| Path | `aeris > @supabase/ssr > cookie` |
+| Severity | (formerly low) |
+| Direct? | No longer in `dependencies` — removed by PR #93 |
+| Path | (no longer in tree) |
+| Advisories | (closed by removal) |
+| Fix available | n/a |
+| **Decision** | **CLOSED — dependency removed** |
+| Rationale | `@supabase/ssr` was used only by `lib/supabase/{server,client}.ts`, both files dead code (never imported anywhere; superseded by Phase 9 cookie-based auth). PR #93 deleted both files alongside the dep. |
+| Re-evaluation trigger | A future feature reintroduces Supabase Auth JWT cookies (so far Aeris uses custom cookie+bcrypt sessions and bypasses `@supabase/ssr` entirely). When re-adding, install at v0.10+ directly. |
+
+### 4. `cookie` — **CLOSED 2026-05-21 (closes with #3)**
+
+| Field | Value |
+|---|---|
+| Severity | (formerly low) |
+| Direct? | No (was transitive via `@supabase/ssr`) |
+| Path | (no longer in tree — `@supabase/ssr` removed by PR #93) |
 | Advisories | GHSA-pxg6-pf52-xh8x (out-of-bounds chars in name/path/domain) |
-| Fix available | `@supabase/ssr@0.10.2` (`isSemVerMajor: true`) |
-| **Decision** | **wait for vendor** |
-| Rationale | Same as advisory #3 — the only fix path is a major bump of `@supabase/ssr`. The runtime exposure is zero given the Aeris cookie surface. |
-| Follow-up trigger | Same as advisory #3. |
+| Fix available | n/a |
+| **Decision** | **CLOSED — transitive parent removed** |
+| Rationale | Closed automatically when `@supabase/ssr` was removed. The original Phase 3.5 risk analysis stands as historical context: the only cookie set with a non-default name was `aeris_admin`, whose name, path, and domain were all hard-coded, so the runtime exposure was always zero. |
+| Re-evaluation trigger | Same as advisory #3 — if `@supabase/ssr` is reintroduced, a `cookie` version with the GHSA-pxg6 fix needs to come with it. |
 
 ### 5. `eslint-config-next` — direct, **high**
 
@@ -184,18 +184,18 @@ re-opened.
 | Rationale | The advisory requires PostCSS to stringify *attacker-controlled CSS* into HTML — there is no such surface in Aeris. All Tailwind/PostCSS input is authored at build time from files in the repo; nothing user-supplied flows through PostCSS at runtime. The advisory therefore has no exploit path against Aeris today. The fix is gated behind the same Next.js 14 → 16 major upgrade as advisory #1. |
 | Follow-up trigger | (a) The Next.js coordinated upgrade in #1 lands — closes this row. (b) A new feature introduces a runtime path that turns user input into PostCSS input — upgrade immediately and re-evaluate. |
 
-### 9. `rollup` — transitive, **high**
+### 9. `rollup` — **CLOSED 2026-05-21 (closes with #2)**
 
 | Field | Value |
 |---|---|
-| Severity | high |
-| Direct? | No (transitive via `@sentry/nextjs`) |
-| Path | `aeris > @sentry/nextjs > rollup` |
+| Severity | (formerly high) |
+| Direct? | No (was transitive via `@sentry/nextjs`) |
+| Path | (no longer in tree — `@sentry/nextjs` removed by PR #93) |
 | Advisories | GHSA-mw96-cpmx-2vgc (arbitrary file write via path traversal) |
-| Fix available | `@sentry/nextjs@10.51.0` (`isSemVerMajor: true`) |
-| **Decision** | **wait for vendor** |
-| Rationale | The advisory affects `rollup` during a **build**, not at runtime. Aeris does not invoke rollup directly; the dependency exists only because `@sentry/nextjs` 7.x ships it for its bundling step. CI runs in a sandboxed GitHub Actions runner; Vercel build runs in Vercel's own sandbox. Both runners are short-lived and isolated; an arbitrary file write inside a CI job does not reach prod. The fix path is the same major Sentry upgrade as advisory #2 and is coupled to it. |
-| Follow-up trigger | Same as advisory #2. |
+| Fix available | n/a |
+| **Decision** | **CLOSED — transitive parent removed** |
+| Rationale | Closed automatically when `@sentry/nextjs` was removed by PR #93. The original Phase 3.5 risk analysis stands as historical context: the advisory affects `rollup` during a build, never at runtime, and both CI + Vercel build sandboxes are short-lived. |
+| Re-evaluation trigger | Same as advisory #2 — if Sentry is reinstated, pin to a v10+ release that ships a rollup with the GHSA-mw96 fix. |
 
 ## Summary table
 
