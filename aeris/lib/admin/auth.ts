@@ -142,12 +142,31 @@ export interface AdminSessionInfo {
  * triggering DB lookups on every request) and the caller is
  * redirected to /admin/login.
  *
- * `touchSession=true` (default) updates last_seen_at — small
- * extra write per request but worth it for session hygiene.
- * Pass false from very-hot read endpoints if needed.
+ * Options:
+ *   - `touchSession` (default true) — update last_seen_at on
+ *     this read. Small extra write per request; worth it for
+ *     session hygiene. Pass false from very-hot read endpoints.
+ *
+ *   - `allowMustChangePassword` (default false) — by DEFAULT,
+ *     a session whose owner has `must_change_password=true` is
+ *     redirected to `/admin/account/password`. This is the
+ *     single source of truth for the rotation gate so every
+ *     admin Server Action + page inherits it without needing
+ *     its own check. Round-1 fix for PR #89 P1: previously
+ *     only the (protected) layout gated mustChangePassword,
+ *     which left every admin mutation Server Action open to
+ *     the un-rotated session.
+ *
+ *     Exactly THREE callers opt in:
+ *       1. `/admin/account/password` page (the rotation form
+ *          itself must render).
+ *       2. `changePassword` Server Action (it does the rotation).
+ *       3. `signOut` Server Action (allow logging out even when
+ *          rotation is pending).
  */
 export async function requireAdminSession(opts: {
   touchSession?: boolean;
+  allowMustChangePassword?: boolean;
 } = {}): Promise<AdminSessionInfo> {
   requireAdminEnv();
 
@@ -175,6 +194,17 @@ export async function requireAdminSession(opts: {
     // FK CASCADE should make this unreachable, but fail-closed.
     cookieJar.delete({ name: ADMIN_COOKIE_NAME, path: '/admin' });
     redirect('/admin/login');
+  }
+
+  // Round-1 fix for PR #89 P1: deny by default when the admin
+  // has not rotated their seed password yet. Redirect to the
+  // rotation page; do NOT clear the cookie (the session itself
+  // is valid).
+  if (
+    userInfo.must_change_password &&
+    opts.allowMustChangePassword !== true
+  ) {
+    redirect('/admin/account/password');
   }
 
   if (opts.touchSession !== false) {

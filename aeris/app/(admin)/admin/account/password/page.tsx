@@ -26,7 +26,12 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminChangePasswordPage() {
-  const session = await requireAdminSession();
+  // Opt-in to the must_change_password bypass — this is the
+  // rotation page itself; without the flag the gate inside
+  // requireAdminSession would redirect us in a loop.
+  const session = await requireAdminSession({
+    allowMustChangePassword: true,
+  });
 
   return (
     <div className="relative min-h-screen bg-navy">

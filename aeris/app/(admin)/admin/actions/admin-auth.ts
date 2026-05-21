@@ -145,7 +145,13 @@ export async function signOut(): Promise<void> {
   // unauthenticated request can spam this endpoint. The
   // requireAdminSession call also fail-closes on revoked /
   // disabled users so a stale cookie can't trigger revoke loops.
-  await requireAdminSession();
+  //
+  // Opt-in to the must_change_password bypass — letting a user
+  // log out without rotating is the right UX. Without this
+  // flag, an admin seeded with must_change_password=true who
+  // wants to walk away would get the logout request redirected
+  // to the rotation page instead.
+  await requireAdminSession({ allowMustChangePassword: true });
   await clearAdminCookieAndSession();
   redirect('/admin/login');
 }

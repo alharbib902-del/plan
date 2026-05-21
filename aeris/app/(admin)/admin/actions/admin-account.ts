@@ -73,7 +73,12 @@ export type ChangePasswordResult =
 export async function changePassword(
   input: unknown
 ): Promise<ChangePasswordResult> {
-  const session = await requireAdminSession();
+  // Opt-in to the must_change_password bypass — this action IS
+  // the rotation, so the gate must not redirect us back to
+  // /admin/account/password infinitely.
+  const session = await requireAdminSession({
+    allowMustChangePassword: true,
+  });
 
   const parsed = changePasswordSchema.safeParse(input);
   if (!parsed.success) {
