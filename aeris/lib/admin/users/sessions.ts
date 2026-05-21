@@ -228,3 +228,46 @@ export async function revokeAdminUserSession(
     console.error('[admin-user-sessions.revoke] failed', error);
   }
 }
+
+/**
+ * Revoke every active session for an admin EXCEPT `keepSessionId`
+ * (the caller's current session). Used after password rotation
+ * so a leaked-then-rotated credential cannot keep impersonating
+ * via lingering cookies on other devices.
+ */
+type LooseBulkRevokeStore = {
+  from: (table: string) => {
+    update: (patch: Record<string, unknown>) => {
+      eq: (col: string, val: unknown) => {
+        neq: (col: string, val: unknown) => {
+          is: (col: string, val: null) => Promise<{
+            error: { message?: string } | null;
+          }>;
+        };
+      };
+    };
+  };
+};
+
+export async function revokeOtherActiveAdminUserSessions(input: {
+  admin_user_id: string;
+  keep_session_id: string;
+  revoked_by_admin_user_id: string;
+}): Promise<void> {
+  const bulkStore = store() as unknown as LooseBulkRevokeStore;
+  const { error } = await bulkStore
+    .from(TABLE)
+    .update({
+      revoked_at: new Date().toISOString(),
+      revoked_by_admin_user_id: input.revoked_by_admin_user_id,
+    })
+    .eq('admin_user_id', input.admin_user_id)
+    .neq('id', input.keep_session_id)
+    .is('revoked_at', null);
+  if (error) {
+    console.error(
+      '[admin-user-sessions.revokeOtherActive] failed',
+      error
+    );
+  }
+}

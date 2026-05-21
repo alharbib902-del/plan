@@ -291,3 +291,71 @@ export async function stampAdminUserLogin(adminUserId: string): Promise<void> {
     console.error('[admin-users.stampLogin] failed', error);
   }
 }
+
+// --------------------------------------------------------------
+// 6. password rotation
+// --------------------------------------------------------------
+//
+// Updates password_hash + clears must_change_password atomically.
+// Caller (the changePassword Server Action) is responsible for
+// the current-password verification + new-password strength
+// validation BEFORE calling this.
+//
+// Returns ok:false on storage error so the caller surfaces a
+// retryable error to the user without leaking DB internals.
+// --------------------------------------------------------------
+
+export type RotateAdminUserPasswordResult =
+  | { ok: true }
+  | { ok: false; reason: 'storage_error' };
+
+export async function rotateAdminUserPassword(input: {
+  admin_user_id: string;
+  new_password_hash: string;
+}): Promise<RotateAdminUserPasswordResult> {
+  const { error } = await store()
+    .from(TABLE)
+    .update({
+      password_hash: input.new_password_hash,
+      must_change_password: false,
+    })
+    .eq('id', input.admin_user_id);
+  if (error) {
+    console.error('[admin-users.rotatePassword] failed', error);
+    return { ok: false, reason: 'storage_error' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Verify the current password (re-uses verifyAdminCredentials'
+ * dummy-hash uniform-timing guard implicitly because the row
+ * MUST exist — caller already has the session). Returns
+ * `current_invalid` on mismatch without further differentiation.
+ */
+export type VerifyAdminCurrentPasswordResult =
+  | { ok: true }
+  | { ok: false; reason: 'current_invalid' | 'not_found' };
+
+export async function verifyAdminCurrentPassword(input: {
+  admin_user_id: string;
+  current_password: string;
+}): Promise<VerifyAdminCurrentPasswordResult> {
+  const { data, error } = await store()
+    .from(TABLE)
+    .select(LOOKUP_COLS)
+    .eq('id', input.admin_user_id)
+    .maybeSingle();
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      console.error('[admin-users.verifyCurrent] read error', error);
+    }
+    return { ok: false, reason: 'not_found' };
+  }
+  const row = data as RawAdminUserRow | null;
+  if (!row) return { ok: false, reason: 'not_found' };
+
+  const ok = await verifyAdminPassword(input.current_password, row.password_hash);
+  if (!ok) return { ok: false, reason: 'current_invalid' };
+  return { ok: true };
+}

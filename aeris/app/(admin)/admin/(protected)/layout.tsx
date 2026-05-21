@@ -1,4 +1,6 @@
 import { ShieldAlert } from 'lucide-react';
+import { redirect } from 'next/navigation';
+
 import { AdminEnvError, requireAdminSession } from '@/lib/admin/auth';
 import { AdminShell } from '@/components/admin/admin-shell';
 
@@ -11,7 +13,15 @@ export default async function ProtectedAdminLayout({
   children: React.ReactNode;
 }) {
   try {
-    await requireAdminSession();
+    const session = await requireAdminSession();
+    // PR #89 round 1 P1 fix — server-side gate. An admin with
+    // must_change_password=true (founder seed or owner-driven
+    // reset) cannot reach ANY protected page until they rotate.
+    // The rotation page lives at /admin/account/password OUTSIDE
+    // this (protected) group, so it doesn't loop on this gate.
+    if (session.mustChangePassword) {
+      redirect('/admin/account/password');
+    }
   } catch (err) {
     if (err instanceof AdminEnvError) {
       // Log full detail server-side so the operator can act on it,
