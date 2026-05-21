@@ -56,6 +56,17 @@ test('client /me/* redirects to /login when unauthenticated', async ({
   // redirect to /login. Same logic as the admin protected
   // layout but for the client surface — covers a different
   // async-headers/cookies codepath.
-  await page.goto('/me/bookings');
-  expect(page.url()).toMatch(/\/login|\/me\/bookings/);
+  //
+  // Round-1 PR #97 P1 fix: the assertion must catch the case
+  // where the redirect FAILS and /me/bookings renders a 500
+  // (the exact symptom of a missing `await` on cookies() /
+  // headers() during the Next 14 → 16 migration). Two
+  // separate checks:
+  //   1. Final landed page is 200 (rules out 500 / 404)
+  //   2. URL ended up at /login (rules out "stayed on
+  //      /me/bookings with an error" — the predicate that
+  //      the old single-regex would have silently passed)
+  const response = await page.goto('/me/bookings');
+  expect(response?.status()).toBe(200);
+  expect(page.url()).toMatch(/\/login(\?|$)/);
 });
