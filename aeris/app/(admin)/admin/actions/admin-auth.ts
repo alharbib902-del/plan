@@ -152,19 +152,25 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
     return { ok: false, error: 'invalid_credentials' };
   }
 
-  // Only stamp last_login_at + record the success attempt once
-  // the FULL login completes (post-MFA). For mfa_pending=true
-  // sessions, those happen in the challenge verify action.
+  // PR #92 round-1 P1 fix: only stamp last_login_at + record
+  // the final 'success' attempt once the FULL login completes
+  // (post-MFA). For mfa_pending=true sessions, record a
+  // dedicated 'password_ok_pending_mfa' outcome so the
+  // admin_login_attempts ledger truthfully reflects "first
+  // factor passed, second factor pending" instead of
+  // misleadingly marking the whole flow successful.
+  //
+  // The MFA challenge action records its own outcomes to the
+  // admin_mfa_challenge_attempts ledger; the final 'success'
+  // for the full login is written there when MFA verifies.
   if (!issued.mfaPending) {
     await stampAdminUserLogin(verdict.user.id);
     await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'success');
   } else {
-    // Half-successful login — the password verified but MFA is
-    // still pending. Record as success at this layer so the
-    // rate-limit ledger doesn't penalize the legit user; the
-    // mfa_pending session itself is the canonical record of
-    // "auth in progress".
-    await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'success');
+    await recordAdminLoginAttempt(
+      rateLimit.actorFingerprint,
+      'password_ok_pending_mfa'
+    );
   }
 
   return {

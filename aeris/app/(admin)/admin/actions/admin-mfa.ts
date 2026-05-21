@@ -15,6 +15,18 @@ import {
 import { clearAdminUserSessionMfaPending } from '@/lib/admin/users/sessions';
 import { verifyAdminCurrentPassword } from '@/lib/admin/users/queries';
 import { isWellFormedRawRecoveryCode } from '@/lib/admin/mfa/recovery-codes';
+import {
+  checkAdminMfaChallengeRateLimit,
+  recordAdminMfaChallengeAttempt,
+} from '@/lib/admin/mfa/challenge-rate-limit';
+import {
+  recordAdminLoginAttempt,
+} from '@/lib/admin/login-rate-limit';
+import { stampAdminUserLogin } from '@/lib/admin/users/queries';
+import { actorIdentityFromHeaders } from '@/lib/admin/login-rate-limit-core';
+import { fingerprintAdminLoginActor } from '@/lib/admin/login-rate-limit-core';
+import { requireAdminEnv } from '@/lib/admin/auth';
+import { headers } from 'next/headers';
 
 /**
  * Admin MFA Server Actions — PR-3b cutover.
@@ -150,8 +162,21 @@ export type VerifyMfaChallengeResult =
         | 'no_active_mfa'
         | 'invalid_code'
         | 'replay_same_step'
+        | 'rate_limited'
         | 'storage_error';
     };
+
+function loginAttemptFingerprint(): string {
+  const env = requireAdminEnv();
+  const h = headers();
+  const identity = actorIdentityFromHeaders({
+    forwardedFor: h.get('x-forwarded-for'),
+    realIp: h.get('x-real-ip'),
+    cfConnectingIp: h.get('cf-connecting-ip'),
+    userAgent: h.get('user-agent'),
+  });
+  return fingerprintAdminLoginActor(identity, env.secret);
+}
 
 export async function verifyMfaChallenge(input: {
   kind: 'otp' | 'recovery';
@@ -175,8 +200,36 @@ export async function verifyMfaChallenge(input: {
     };
   }
 
+  // PR #92 round-1 P1 fix: rate-limit BEFORE the TOTP/recovery
+  // verification. Without this gate, the 7-day pending session
+  // gave an attacker who phished the password unlimited
+  // 6-digit brute-force attempts. Throttle is keyed by
+  // (actor_fingerprint, admin_user_id) so per-admin abuse from
+  // any IP hits the cap.
+  const rateLimit = await checkAdminMfaChallengeRateLimit(
+    session.adminUserId
+  );
+  if (!rateLimit.ok) {
+    // Don't double-record on storage_error to avoid polluting
+    // the ledger with synthetic rate_limited rows; the
+    // underlying storage failure is what caused fail-closed.
+    if (rateLimit.reason !== 'storage_error') {
+      await recordAdminMfaChallengeAttempt(
+        rateLimit.actorFingerprint,
+        session.adminUserId,
+        'rate_limited'
+      );
+    }
+    return { ok: false, error: 'rate_limited' };
+  }
+
   const parsed = challengeSchema.safeParse(input);
   if (!parsed.success) {
+    await recordAdminMfaChallengeAttempt(
+      rateLimit.actorFingerprint,
+      session.adminUserId,
+      'invalid_input'
+    );
     return { ok: false, error: 'invalid_input' };
   }
 
@@ -188,16 +241,29 @@ export async function verifyMfaChallenge(input: {
       otp_candidate: parsed.data.code,
     });
     if (!verdict.ok) {
+      const outcome =
+        verdict.reason === 'no_active_mfa'
+          ? 'no_active_mfa'
+          : verdict.reason === 'replay_same_step'
+            ? 'replay_same_step'
+            : verdict.reason === 'storage_error'
+              ? 'storage_error'
+              : 'invalid_otp';
+      await recordAdminMfaChallengeAttempt(
+        rateLimit.actorFingerprint,
+        session.adminUserId,
+        outcome
+      );
       return {
         ok: false,
         error:
-          verdict.reason === 'no_active_mfa'
-            ? 'no_active_mfa'
-            : verdict.reason === 'replay_same_step'
-              ? 'replay_same_step'
-              : verdict.reason === 'storage_error'
-                ? 'storage_error'
-                : 'invalid_code',
+          outcome === 'invalid_otp'
+            ? 'invalid_code'
+            : outcome === 'no_active_mfa'
+              ? 'no_active_mfa'
+              : outcome === 'replay_same_step'
+                ? 'replay_same_step'
+                : 'storage_error',
       };
     }
   } else {
@@ -207,14 +273,25 @@ export async function verifyMfaChallenge(input: {
       consumed_session_id: session.sessionId,
     });
     if (!verdict.ok) {
+      const outcome =
+        verdict.reason === 'no_active_mfa'
+          ? 'no_active_mfa'
+          : verdict.reason === 'storage_error'
+            ? 'storage_error'
+            : 'invalid_recovery';
+      await recordAdminMfaChallengeAttempt(
+        rateLimit.actorFingerprint,
+        session.adminUserId,
+        outcome
+      );
       return {
         ok: false,
         error:
-          verdict.reason === 'no_active_mfa'
-            ? 'no_active_mfa'
-            : verdict.reason === 'storage_error'
-              ? 'storage_error'
-              : 'invalid_code',
+          outcome === 'invalid_recovery'
+            ? 'invalid_code'
+            : outcome === 'no_active_mfa'
+              ? 'no_active_mfa'
+              : 'storage_error',
       };
     }
     remaining = verdict.recovery_codes_remaining;
@@ -224,6 +301,19 @@ export async function verifyMfaChallenge(input: {
   // scoped to mfa_pending=true so a race with another browser
   // tab can't bring it back.
   const cleared = await clearAdminUserSessionMfaPending(session.sessionId);
+
+  // Record terminal success on BOTH ledgers: the dedicated MFA
+  // challenge ledger (per-admin throttle) AND the login ledger
+  // (so the password-side flow shows a final 'success' for the
+  // complete login).
+  await recordAdminMfaChallengeAttempt(
+    rateLimit.actorFingerprint,
+    session.adminUserId,
+    'success'
+  );
+  await recordAdminLoginAttempt(loginAttemptFingerprint(), 'success');
+  await stampAdminUserLogin(session.adminUserId);
+
   if (!cleared) {
     // The session row may have been revoked or already cleared
     // by a concurrent challenge. Either way the next request
