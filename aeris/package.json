@@ -56,6 +56,8 @@
     "test:admin-login-rate-limit": "tsx lib/admin/__tests__/login-rate-limit.test.ts",
     "test:public-action-rate-limit": "tsx lib/rate-limit/__tests__/public-action.test.ts",
     "test:admin-user-credentials": "tsx lib/admin/users/__tests__/credentials.test.ts",
+    "test:admin-mfa-totp": "tsx lib/admin/mfa/__tests__/totp.test.ts",
+    "test:admin-mfa-recovery-codes": "tsx lib/admin/mfa/__tests__/recovery-codes.test.ts",
     "format": "prettier --write .",
     "db:types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts",
     "generate:icons": "node scripts/generate-pwa-icons.mjs"
