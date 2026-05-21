@@ -131,6 +131,13 @@ export interface AdminSessionInfo {
   role: AdminUserRole;
   email: string;
   mustChangePassword: boolean;
+  /**
+   * PR-3b — session is in post-password / pre-MFA state. While
+   * true, requireAdminSession() denies all routes EXCEPT the
+   * MFA challenge page + verify action + signOut. The challenge
+   * verify clears this flag atomically.
+   */
+  mfaPending: boolean;
   /** Unix seconds. Kept for back-compat with admin-pii audit
    *  loggers that used to read VerifiedCookie.expiry. */
   expiry: number;
@@ -167,6 +174,12 @@ export interface AdminSessionInfo {
 export async function requireAdminSession(opts: {
   touchSession?: boolean;
   allowMustChangePassword?: boolean;
+  /**
+   * PR-3b — opt-in for the MFA challenge page + verify Server
+   * Action + signOut. Default false means a pending-MFA session
+   * is redirected to /admin/login/mfa before anything else.
+   */
+  allowMfaPending?: boolean;
 } = {}): Promise<AdminSessionInfo> {
   requireAdminEnv();
 
@@ -196,6 +209,16 @@ export async function requireAdminSession(opts: {
     redirect('/admin/login');
   }
 
+  // PR-3b — MFA challenge gate. Runs BEFORE the
+  // must_change_password gate because a session that just
+  // completed password verification but still owes MFA should
+  // never touch any other admin surface, including the password
+  // rotation page. The MFA challenge page + verify action +
+  // signOut explicitly opt in.
+  if (verdict.session.mfa_pending && opts.allowMfaPending !== true) {
+    redirect('/admin/login/mfa');
+  }
+
   // Round-1 fix for PR #89 P1: deny by default when the admin
   // has not rotated their seed password yet. Redirect to the
   // rotation page; do NOT clear the cookie (the session itself
@@ -219,6 +242,7 @@ export async function requireAdminSession(opts: {
     role: userInfo.role,
     email: userInfo.email,
     mustChangePassword: userInfo.must_change_password,
+    mfaPending: verdict.session.mfa_pending,
     expiry: Math.floor(
       new Date(verdict.session.expires_at).getTime() / 1000
     ),
@@ -253,15 +277,30 @@ export async function issueAdminSession(input: {
   adminUserId: string;
   userAgent: string | null;
   ipFingerprint: string | null;
-}): Promise<{ raw_token: string; sessionId: string } | null> {
+  /**
+   * PR-3b — when true, the session is created in mfa_pending
+   * state. The signIn Server Action sets this when the admin
+   * has active MFA enrollment; the challenge verify clears it.
+   */
+  mfaPending?: boolean;
+}): Promise<{
+  raw_token: string;
+  sessionId: string;
+  mfaPending: boolean;
+} | null> {
   const created = await createAdminUserSession({
     admin_user_id: input.adminUserId,
     user_agent_snapshot: input.userAgent,
     ip_fingerprint: input.ipFingerprint,
+    mfa_pending: input.mfaPending === true,
   });
   if (!created) return null;
   setAdminCookie(created.raw_token);
-  return { raw_token: created.raw_token, sessionId: created.session.id };
+  return {
+    raw_token: created.raw_token,
+    sessionId: created.session.id,
+    mfaPending: created.session.mfa_pending,
+  };
 }
 
 // --------------------------------------------------------------

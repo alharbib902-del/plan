@@ -29,12 +29,18 @@ export function AdminLoginForm() {
           setError(ERROR_AR[result.error]);
           return;
         }
-        // Successful login. Navigate explicitly — the server
-        // action does not redirect anymore (it returns the
-        // must_change_password flag so the UI can route to the
-        // password-rotation page if needed). The rotation route
-        // ships in PR-2b; until then we land everyone on /admin/leads.
-        if (result.must_change_password) {
+        // Successful login. Navigation priority (highest wins):
+        //   1. mfa_required → /admin/login/mfa (PR-3b — must
+        //      complete the OTP challenge before any other
+        //      admin surface is reachable; the layout gate
+        //      enforces this server-side too).
+        //   2. must_change_password → /admin/account/password
+        //   3. default → /admin/leads
+        // Using window.location.href (hard nav) so the server
+        // layout re-evaluates all gates on the next request.
+        if (result.mfa_required) {
+          window.location.href = '/admin/login/mfa';
+        } else if (result.must_change_password) {
           window.location.href = '/admin/account/password';
         } else {
           window.location.href = '/admin/leads';

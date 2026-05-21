@@ -19,6 +19,7 @@ import {
   verifyAdminCredentials,
 } from '@/lib/admin/users/queries';
 import { tryFounderSeed } from '@/lib/admin/users/founder-seed';
+import { adminHasActiveMfa } from '@/lib/admin/mfa/queries';
 import {
   actorIdentityFromHeaders,
   fingerprintAdminLoginActor,
@@ -46,7 +47,17 @@ import { adminLoginSchema } from '@/lib/validators/admin';
  */
 
 export type SignInResult =
-  | { ok: true; must_change_password: boolean }
+  | {
+      ok: true;
+      must_change_password: boolean;
+      /**
+       * PR-3b — when true, the password verified but the admin
+       * has MFA enrolled. The session was issued in mfa_pending
+       * state; the UI must navigate to /admin/login/mfa for the
+       * challenge step.
+       */
+      mfa_required: boolean;
+    }
   | {
       ok: false;
       error:
@@ -119,10 +130,17 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
   const userAgent = headers().get('user-agent');
   const ipFingerprint = ipFingerprintFromHeaders(env.secret);
 
+  // PR-3b — if the admin has active MFA enrollment, issue the
+  // session in mfa_pending state. requireAdminSession() then
+  // routes the user to /admin/login/mfa for the challenge step
+  // before any other admin surface becomes accessible.
+  const mfaActive = await adminHasActiveMfa(verdict.user.id);
+
   const issued = await issueAdminSession({
     adminUserId: verdict.user.id,
     userAgent,
     ipFingerprint,
+    mfaPending: mfaActive,
   });
   if (!issued) {
     // createAdminUserSession failed — fail-closed. Reported as
@@ -134,10 +152,26 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
     return { ok: false, error: 'invalid_credentials' };
   }
 
-  await stampAdminUserLogin(verdict.user.id);
-  await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'success');
+  // Only stamp last_login_at + record the success attempt once
+  // the FULL login completes (post-MFA). For mfa_pending=true
+  // sessions, those happen in the challenge verify action.
+  if (!issued.mfaPending) {
+    await stampAdminUserLogin(verdict.user.id);
+    await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'success');
+  } else {
+    // Half-successful login — the password verified but MFA is
+    // still pending. Record as success at this layer so the
+    // rate-limit ledger doesn't penalize the legit user; the
+    // mfa_pending session itself is the canonical record of
+    // "auth in progress".
+    await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'success');
+  }
 
-  return { ok: true, must_change_password: verdict.user.must_change_password };
+  return {
+    ok: true,
+    must_change_password: verdict.user.must_change_password,
+    mfa_required: issued.mfaPending,
+  };
 }
 
 export async function signOut(): Promise<void> {
@@ -146,12 +180,16 @@ export async function signOut(): Promise<void> {
   // requireAdminSession call also fail-closes on revoked /
   // disabled users so a stale cookie can't trigger revoke loops.
   //
-  // Opt-in to the must_change_password bypass — letting a user
-  // log out without rotating is the right UX. Without this
-  // flag, an admin seeded with must_change_password=true who
-  // wants to walk away would get the logout request redirected
-  // to the rotation page instead.
-  await requireAdminSession({ allowMustChangePassword: true });
+  // Opt-in to BOTH the must_change_password AND mfa_pending
+  // bypasses — letting a user log out without completing
+  // rotation or MFA challenge is the right UX. Without these
+  // flags, an admin mid-MFA-challenge who wants to walk away
+  // would get the logout request redirected back to the
+  // challenge page.
+  await requireAdminSession({
+    allowMustChangePassword: true,
+    allowMfaPending: true,
+  });
   await clearAdminCookieAndSession();
   redirect('/admin/login');
 }
