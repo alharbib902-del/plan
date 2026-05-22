@@ -29,7 +29,7 @@ export const metadata: Metadata = {
 };
 
 interface AddonsPageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 /**
@@ -54,7 +54,8 @@ interface AddonsPageProps {
  * thin wrappers around PR 2a's SECURITY DEFINER RPCs).
  */
 export default async function AddonsPage({ params }: AddonsPageProps) {
-  const trip = await getTripById(params.id);
+  const { id } = await params;
+  const trip = await getTripById(id);
   if (!trip) {
     notFound();
   }

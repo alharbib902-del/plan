@@ -31,14 +31,15 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 interface PageProps {
-  params: { leg_number: string };
+  params: Promise<{ leg_number: string }>;
 }
 
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
+  const { leg_number } = await params;
   return {
-    title: `${clientsAr.emptyLegsPortalTitle} — ${params.leg_number}`,
+    title: `${clientsAr.emptyLegsPortalTitle} — ${leg_number}`,
     robots: { index: false, follow: false },
   };
 }
@@ -87,8 +88,9 @@ export default async function ClientMeEmptyLegDetailPage({
   if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
   if (process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL !== 'true') notFound();
 
+  const { leg_number } = await params;
   const session = await requireClientSession();
-  const leg = await getEmptyLegByNumber(params.leg_number);
+  const leg = await getEmptyLegByNumber(leg_number);
   if (!leg) notFound();
 
   const isReservedByMe =

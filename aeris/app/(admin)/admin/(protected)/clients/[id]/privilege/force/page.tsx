@@ -23,11 +23,12 @@ export const metadata: Metadata = {
 export default async function AdminPrivilegeForcePage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
   if (process.env.ENABLE_PRIVILEGE !== 'true') notFound();
 
-  const detail = await readAdminClientPrivilegeDetail(params.id);
+  const { id } = await params;
+  const detail = await readAdminClientPrivilegeDetail(id);
   if (!detail) notFound();
 
   return (

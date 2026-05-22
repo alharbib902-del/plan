@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 function formatDate(iso: string | null | undefined): string {
@@ -43,7 +43,8 @@ export default async function AdminOperatorDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  const operator = await getOperatorById(params.id);
+  const { id } = await params;
+  const operator = await getOperatorById(id);
   if (!operator) notFound();
 
   return (

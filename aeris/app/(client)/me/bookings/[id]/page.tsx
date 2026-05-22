@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 const PAYMENT_STATUS_LABEL: Record<string, string> = {
@@ -65,8 +65,9 @@ export default async function ClientMeBookingDetailPage({
 }: PageProps) {
   if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
 
+  const { id } = await params;
   const session = await requireClientSession();
-  const booking = await getBookingForClient(session.client_id, params.id);
+  const booking = await getBookingForClient(session.client_id, id);
 
   if (!booking) {
     return (

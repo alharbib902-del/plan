@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 function fmt(value: string | null): string {
@@ -35,7 +35,8 @@ function fmt(value: string | null): string {
 export default async function ActivateSubPage({ params }: PageProps) {
   if (process.env.ENABLE_MEDEVAC !== 'true') notFound();
 
-  const sub = await getAdminMedevacSubscription(params.id);
+  const { id } = await params;
+  const sub = await getAdminMedevacSubscription(id);
   if (!sub) notFound();
 
   return (

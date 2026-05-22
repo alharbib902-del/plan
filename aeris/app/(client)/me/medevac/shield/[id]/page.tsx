@@ -37,16 +37,17 @@ function fmt(value: string | null): string {
 }
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export default async function ShieldDetailPage({ params }: PageProps) {
   if (process.env.ENABLE_MEDEVAC !== 'true') notFound();
 
+  const { id } = await params;
   const session = await requireClientSession();
-  if (!session) redirect(`/login?next=/me/medevac/shield/${params.id}`);
+  if (!session) redirect(`/login?next=/me/medevac/shield/${id}`);
 
-  const sub = await getMyShieldSubscription(session.client_id, params.id);
+  const sub = await getMyShieldSubscription(session.client_id, id);
   if (!sub) notFound();
 
   const remaining =

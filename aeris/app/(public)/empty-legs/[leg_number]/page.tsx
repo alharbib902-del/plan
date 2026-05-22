@@ -9,14 +9,15 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 interface PageProps {
-  params: { leg_number: string };
+  params: Promise<{ leg_number: string }>;
 }
 
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
+  const { leg_number } = await params;
   return {
-    title: `${emptyLegsAr.publicListTitle} — ${params.leg_number}`,
+    title: `${emptyLegsAr.publicListTitle} — ${leg_number}`,
     description: emptyLegsAr.publicListSubtitle,
   };
 }
@@ -28,6 +29,8 @@ export default async function PublicEmptyLegDetailPage({
     notFound();
   }
 
+  const { leg_number } = await params;
+
   // The detail page surfaces 'sold' and 'expired' rows too
   // so a stale link still renders a meaningful state, not
   // a 404. The reserve CTA on the detail card only appears
@@ -36,7 +39,7 @@ export default async function PublicEmptyLegDetailPage({
   // that PR 2e expires would surface the generic
   // not-found branch instead of the dedicated
   // `publicLegExpired` copy in `<PublicLegDetail />`.
-  const leg = await getPublicLegByNumber(params.leg_number, {
+  const leg = await getPublicLegByNumber(leg_number, {
     allowedStatuses: ['available', 'sold', 'expired'],
   });
   if (!leg) {

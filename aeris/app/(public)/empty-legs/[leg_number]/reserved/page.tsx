@@ -25,8 +25,8 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { leg_number: string };
-  searchParams?: { token?: string };
+  params: Promise<{ leg_number: string }>;
+  searchParams?: Promise<{ token?: string }>;
 }
 
 function NotFoundCard() {
@@ -46,6 +46,9 @@ export default async function PublicEmptyLegReservedPage({
   if (process.env.ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE !== 'true') {
     notFound();
   }
+
+  const { leg_number } = await params;
+  const resolvedSearchParams = (await searchParams) ?? undefined;
 
   // Codex round-1 P1 #1 fix. The reserved page reads via
   // the admin Supabase client (no RLS), so a guessed
@@ -69,7 +72,7 @@ export default async function PublicEmptyLegReservedPage({
   //
   // Any failure renders the opaque `publicLegNotFound`
   // copy — the visitor cannot tell which layer rejected.
-  const token = searchParams?.token ?? '';
+  const token = resolvedSearchParams?.token ?? '';
   if (!token) {
     return <NotFoundCard />;
   }
@@ -79,7 +82,7 @@ export default async function PublicEmptyLegReservedPage({
     return <NotFoundCard />;
   }
 
-  const leg = await getPublicLegByNumber(params.leg_number, {
+  const leg = await getPublicLegByNumber(leg_number, {
     allowedStatuses: ['available', 'reserved'],
   });
   if (!leg) {

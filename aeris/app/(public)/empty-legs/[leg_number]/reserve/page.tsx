@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { leg_number: string };
+  params: Promise<{ leg_number: string }>;
 }
 
 export default async function PublicEmptyLegReservePage({
@@ -30,7 +30,8 @@ export default async function PublicEmptyLegReservePage({
     notFound();
   }
 
-  const leg = await getPublicLegByNumber(params.leg_number, {
+  const { leg_number } = await params;
+  const leg = await getPublicLegByNumber(leg_number, {
     allowedStatuses: ['available'],
   });
   if (!leg) {

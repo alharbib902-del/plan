@@ -38,7 +38,7 @@ export const metadata: Metadata = {
 };
 
 interface TripDetailPageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 /**
@@ -67,7 +67,8 @@ function phase5UiReady(): boolean {
 }
 
 export default async function TripDetailPage({ params }: TripDetailPageProps) {
-  const trip = await getTripById(params.id);
+  const { id } = await params;
+  const trip = await getTripById(id);
   if (!trip) {
     notFound();
   }

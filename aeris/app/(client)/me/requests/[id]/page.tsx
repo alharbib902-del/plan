@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 const CANCELLABLE_STATUSES: TripStatus[] = [
@@ -50,8 +50,9 @@ export default async function ClientMeRequestDetailPage({
 }: PageProps) {
   if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
 
+  const { id } = await params;
   const session = await requireClientSession();
-  const trip = await getTripRequestForClient(session.client_id, params.id);
+  const trip = await getTripRequestForClient(session.client_id, id);
 
   if (!trip) {
     return (

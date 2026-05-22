@@ -38,14 +38,15 @@ function formatDateAr(value: string | null): string {
 export default async function OperatorCargoOfferPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
   if (process.env.ENABLE_CARGO !== 'true') notFound();
   noStore();
 
+  const { id } = await params;
   const session = await requireOperatorSession();
 
-  const request = await loadOperatorCargoRequestForOffer(params.id);
+  const request = await loadOperatorCargoRequestForOffer(id);
   if (!request) notFound();
 
   const aircraftOptions = await listCapableAircraftForOperator(
