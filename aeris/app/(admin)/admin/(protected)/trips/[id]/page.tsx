@@ -16,16 +16,15 @@ import { Phase4OfferCard } from '@/components/admin/phase4-offer-card';
 // the gate must stay off until the migration has been verified.
 import { listOffersByTripUnified } from '@/lib/supabase/queries/unified-offers';
 import { listCurrentRoundTargets } from '@/lib/supabase/queries/phase5-targets';
+import { listApprovedOperatorsForDispatch } from '@/lib/supabase/queries/operators-list';
 import {
   buildOperatorUrl,
   buildOperatorWhatsAppLink,
 } from '@/lib/operator/links';
 import { issueOperatorTokenFromTarget } from '@/lib/operator/token';
 import { TripDetailCard } from '@/components/admin/trip-detail-card';
-import {
-  DispatchPanelV2,
-  type DispatchPanelV2Props,
-} from '@/components/admin/dispatch-panel-v2';
+import { type DispatchPanelV2Props } from '@/components/admin/dispatch-panel-v2';
+import { OperatorPickerPanel } from '@/components/admin/operator-picker-panel';
 import { UnifiedOfferCard } from '@/components/admin/unified-offer-card';
 import type { TripRequestRow } from '@/types/database';
 
@@ -167,9 +166,11 @@ async function Phase5TripView({ trip }: { trip: TripRequestRow }) {
   //   - unified offers list (Phase 4 + Phase 5 merged + tagged)
   //   - current round's still-pending targets (refresh-durable
   //     source for the operator URL cards — see acceptance #14a)
-  const [offers, currentTargets] = await Promise.all([
+  //   - approved operators list for the semi-auto picker
+  const [offers, currentTargets, operators] = await Promise.all([
     listOffersByTripUnified(trip.id),
     listCurrentRoundTargets(trip.id),
+    listApprovedOperatorsForDispatch(),
   ]);
 
   // Sort offers: pending first (so admin focuses on actionable
@@ -253,10 +254,11 @@ async function Phase5TripView({ trip }: { trip: TripRequestRow }) {
             <h3 className="font-ar text-base font-medium text-ink">
               إرسال للمشغّلين
             </h3>
-            <DispatchPanelV2
+            <OperatorPickerPanel
               tripRequestId={trip.id}
               isClosed={isClosed}
               currentDispatches={currentDispatches}
+              operators={operators}
             />
           </div>
         </aside>
