@@ -21,11 +21,12 @@ export const metadata: Metadata = {
 };
 
 interface LeadDetailPageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
-  const lead = await getLeadById(params.id);
+  const { id } = await params;
+  const lead = await getLeadById(id);
   if (!lead) {
     notFound();
   }

@@ -65,17 +65,18 @@ function fmtSAR(value: string): string {
 }
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export default async function MyMedevacDetailPage({ params }: PageProps) {
   if (process.env.ENABLE_MEDEVAC !== 'true') notFound();
 
+  const { id } = await params;
   const session = await requireClientSession();
-  if (!session) redirect(`/login?next=/me/medevac/${params.id}`);
+  if (!session) redirect(`/login?next=/me/medevac/${id}`);
 
   const [detail, cashbackContext] = await Promise.all([
-    getMyMedevacRequestDetail(session.client_id, params.id),
+    getMyMedevacRequestDetail(session.client_id, id),
     loadAcceptCashbackContext(session.client_id),
   ]);
   if (!detail) notFound();

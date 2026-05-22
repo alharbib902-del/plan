@@ -14,16 +14,17 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
-export default function OperatorWelcomePage({ params }: PageProps) {
+export default async function OperatorWelcomePage({ params }: PageProps) {
   if (process.env.ENABLE_OPERATOR_PORTAL === 'false') notFound();
-  if (!params.token || params.token.length === 0) notFound();
+  const { token } = await params;
+  if (!token || token.length === 0) notFound();
 
   return (
     <OperatorPublicShell title={operatorsAr.portal.welcome.title}>
-      <OperatorWelcomeHandoff rawToken={params.token} />
+      <OperatorWelcomeHandoff rawToken={token} />
     </OperatorPublicShell>
   );
 }

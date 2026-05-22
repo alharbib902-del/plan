@@ -12,10 +12,11 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
-export default function PublicEmptyLegsOptOutPage({ params }: PageProps) {
+export default async function PublicEmptyLegsOptOutPage({ params }: PageProps) {
+  const { token } = await params;
   // Codex round-2 P2 #1 fix. The opt-out lander is
   // explicitly NOT gated by
   // `ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE`. Opt-out tokens
@@ -34,7 +35,7 @@ export default function PublicEmptyLegsOptOutPage({ params }: PageProps) {
   // happens until they click confirm. The confirm
   // Server Action re-verifies before updating
   // lead_inquiries (defense in depth).
-  const verified = verifyOptOutToken(params.token);
+  const verified = verifyOptOutToken(token);
 
   return (
     <section className="mx-auto max-w-md px-4 pb-16 pt-28 sm:px-6">
@@ -48,7 +49,7 @@ export default function PublicEmptyLegsOptOutPage({ params }: PageProps) {
             {emptyLegsAr.publicOptOutHint}
           </p>
           <div className="mt-6">
-            <OptOutConfirmButton token={params.token} />
+            <OptOutConfirmButton token={token} />
           </div>
         </>
       ) : (

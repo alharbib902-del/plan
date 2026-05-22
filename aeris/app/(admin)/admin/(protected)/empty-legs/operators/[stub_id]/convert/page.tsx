@@ -20,8 +20,8 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { stub_id: string };
-  searchParams?: { convert_target?: string };
+  params: Promise<{ stub_id: string }>;
+  searchParams?: Promise<{ convert_target?: string }>;
 }
 
 export default async function AdminConvertStubPage({
@@ -32,12 +32,14 @@ export default async function AdminConvertStubPage({
     notFound();
   }
 
-  const stub = await getStubById(params.stub_id);
+  const { stub_id } = await params;
+  const resolvedSearchParams = (await searchParams) ?? undefined;
+  const stub = await getStubById(stub_id);
   if (!stub) notFound();
 
   // If admin entered from /admin/operators/<id> with the
   // ?convert_target=<id> hint, pre-select the dropdown.
-  const initialOperatorId = searchParams?.convert_target ?? null;
+  const initialOperatorId = resolvedSearchParams?.convert_target ?? null;
 
   const [candidateOperators, legsPreview] = await Promise.all([
     listApprovedOperators(),

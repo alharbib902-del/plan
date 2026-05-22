@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
 export default async function OperatorEmptyLegNewPage({ params }: PageProps) {
@@ -23,7 +23,8 @@ export default async function OperatorEmptyLegNewPage({ params }: PageProps) {
     notFound();
   }
 
-  const session = await validateOperatorEmptyLegSession(params.token);
+  const { token } = await params;
+  const session = await validateOperatorEmptyLegSession(token);
   if (!session.ok) {
     return (
       <main dir="rtl" className="min-h-screen bg-navy">
@@ -42,7 +43,7 @@ export default async function OperatorEmptyLegNewPage({ params }: PageProps) {
     <main dir="rtl" className="min-h-screen bg-navy">
       <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
         <Link
-          href={`/operator/empty-legs/${params.token}`}
+          href={`/operator/empty-legs/${token}`}
           className="font-ar text-xs text-ink-muted hover:text-gold-light"
         >
           ← {emptyLegsAr.back}
@@ -50,7 +51,7 @@ export default async function OperatorEmptyLegNewPage({ params }: PageProps) {
         <h1 className="font-ar mt-2 mb-6 text-2xl text-ink sm:text-3xl">
           {emptyLegsAr.operatorPortalNewLeg}
         </h1>
-        <OperatorPublishForm mode="token" token={params.token} />
+        <OperatorPublishForm mode="token" token={token} />
       </div>
     </main>
   );

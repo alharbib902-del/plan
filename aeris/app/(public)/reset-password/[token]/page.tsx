@@ -14,17 +14,18 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
-export default function ClientResetPasswordPage({ params }: PageProps) {
+export default async function ClientResetPasswordPage({ params }: PageProps) {
   if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
+  const { token } = await params;
   return (
     <ClientPublicShell
       title={clientsAr.resetTitle}
       subtitle={clientsAr.resetSubtitle}
     >
-      <ClientResetPasswordForm token={params.token} />
+      <ClientResetPasswordForm token={token} />
     </ClientPublicShell>
   );
 }

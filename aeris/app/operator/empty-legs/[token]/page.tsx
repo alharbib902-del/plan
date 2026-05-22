@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
 export default async function OperatorEmptyLegsListPage({ params }: PageProps) {
@@ -24,7 +24,8 @@ export default async function OperatorEmptyLegsListPage({ params }: PageProps) {
     notFound();
   }
 
-  const session = await validateOperatorEmptyLegSession(params.token);
+  const { token } = await params;
+  const session = await validateOperatorEmptyLegSession(token);
   if (!session.ok) {
     return <SessionInvalidNotice />;
   }
@@ -39,7 +40,7 @@ export default async function OperatorEmptyLegsListPage({ params }: PageProps) {
             AERIS
           </span>
           <Link
-            href={`/operator/empty-legs/${params.token}/new`}
+            href={`/operator/empty-legs/${token}/new`}
             className="font-ar inline-flex items-center gap-2 rounded-md border border-gold bg-gold/10 px-4 py-2 text-sm text-gold-light transition-colors hover:bg-gold/15"
           >
             {emptyLegsAr.operatorPortalNewLeg}
@@ -54,7 +55,7 @@ export default async function OperatorEmptyLegsListPage({ params }: PageProps) {
         <EmptyLegsTable
           legs={legs}
           getLegHref={(leg) =>
-            `/operator/empty-legs/${params.token}/${leg.id}`
+            `/operator/empty-legs/${token}/${leg.id}`
           }
         />
       </section>

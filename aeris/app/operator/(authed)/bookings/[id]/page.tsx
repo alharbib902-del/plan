@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 function formatDateTime(iso: string): string {
@@ -34,8 +34,9 @@ function formatDateTime(iso: string): string {
 }
 
 export default async function OperatorBookingDetailPage({ params }: PageProps) {
+  const { id } = await params;
   const session = await requireOperatorSession();
-  const booking = await getOperatorBookingById(session.operator_id, params.id);
+  const booking = await getOperatorBookingById(session.operator_id, id);
   if (!booking) notFound();
 
   return (

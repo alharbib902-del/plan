@@ -33,8 +33,8 @@ export const metadata: Metadata = {
 };
 
 interface OperatorOfferPageProps {
-  params: { token: string };
-  searchParams?: { lang?: string | string[] };
+  params: Promise<{ token: string }>;
+  searchParams?: Promise<{ lang?: string | string[] }>;
 }
 
 /**
@@ -73,9 +73,11 @@ export default async function OperatorOfferPage({
   params,
   searchParams,
 }: OperatorOfferPageProps) {
-  const lang = parseLang(searchParams?.lang);
+  const { token } = await params;
+  const resolvedSearchParams = (await searchParams) ?? undefined;
+  const lang = parseLang(resolvedSearchParams?.lang);
 
-  const verified = verifyOperatorToken(params.token);
+  const verified = verifyOperatorToken(token);
   if (!verified.valid) {
     // HMAC-fail / shape-fail / expiry-from-payload-fail.
     // Do NOT pass `reason` — see Phase 5 activation entry's
@@ -143,7 +145,7 @@ export default async function OperatorOfferPage({
           addons={v1Addons}
         />
         <OperatorOfferForm
-          token={params.token}
+          token={token}
           tripRequestNumber={trip.request_number}
           lang={lang}
         />
@@ -219,7 +221,7 @@ export default async function OperatorOfferPage({
         addons={v2Addons}
       />
       <OperatorOfferForm
-        token={params.token}
+        token={token}
         tripRequestNumber={trip.request_number}
         lang={lang}
       />

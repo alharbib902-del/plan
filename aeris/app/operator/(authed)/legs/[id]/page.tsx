@@ -18,7 +18,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -45,8 +45,9 @@ function formatDateTime(iso: string | null | undefined): string {
 }
 
 export default async function OperatorLegDetailPage({ params }: PageProps) {
+  const { id } = await params;
   const session = await requireOperatorSession();
-  const leg = await getOperatorLegById(session.operator_id, params.id);
+  const leg = await getOperatorLegById(session.operator_id, id);
   if (!leg) notFound();
 
   return (

@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { token: string; id: string };
+  params: Promise<{ token: string; id: string }>;
 }
 
 export default async function OperatorEmptyLegDetailPage({ params }: PageProps) {
@@ -31,7 +31,8 @@ export default async function OperatorEmptyLegDetailPage({ params }: PageProps) 
     notFound();
   }
 
-  const session = await validateOperatorEmptyLegSession(params.token);
+  const { token, id } = await params;
+  const session = await validateOperatorEmptyLegSession(token);
   if (!session.ok) {
     return (
       <main dir="rtl" className="min-h-screen bg-navy">
@@ -50,7 +51,7 @@ export default async function OperatorEmptyLegDetailPage({ params }: PageProps) 
   // operator_stub_id != session.operatorStubId. The opaque
   // "not found" is by design (Codex iteration-12 P1 #1).
   const leg = await getEmptyLegByIdAndStub(
-    params.id,
+    id,
     session.operatorStubId
   );
   if (!leg) {
@@ -62,7 +63,7 @@ export default async function OperatorEmptyLegDetailPage({ params }: PageProps) 
               {emptyLegsAr.operatorPortalLegNotFound}
             </p>
             <Link
-              href={`/operator/empty-legs/${params.token}`}
+              href={`/operator/empty-legs/${token}`}
               className="font-ar mt-4 inline-flex text-xs text-gold-light hover:text-gold"
             >
               ← {emptyLegsAr.back}
@@ -84,7 +85,7 @@ export default async function OperatorEmptyLegDetailPage({ params }: PageProps) 
     <main dir="rtl" className="min-h-screen bg-navy">
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
         <Link
-          href={`/operator/empty-legs/${params.token}`}
+          href={`/operator/empty-legs/${token}`}
           className="font-ar text-xs text-ink-muted hover:text-gold-light"
         >
           ← {emptyLegsAr.back}
@@ -137,7 +138,7 @@ export default async function OperatorEmptyLegDetailPage({ params }: PageProps) 
           <section className="mt-6">
             <OperatorLegActions
               mode="token"
-              token={params.token}
+              token={token}
               legId={leg.id}
               currentPrice={leg.current_price}
               floorPrice={floor}

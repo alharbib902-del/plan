@@ -73,7 +73,7 @@ function fmtSAR(value: string | null): string {
 }
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export default async function AdminMedevacDetailPage({
@@ -81,7 +81,8 @@ export default async function AdminMedevacDetailPage({
 }: PageProps) {
   if (process.env.ENABLE_MEDEVAC !== 'true') notFound();
 
-  const detail = await readAdminMedevacRequestDetail(params.id);
+  const { id } = await params;
+  const detail = await readAdminMedevacRequestDetail(id);
   if (!detail) notFound();
 
   const r = detail.request;

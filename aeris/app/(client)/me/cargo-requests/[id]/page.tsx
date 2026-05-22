@@ -83,16 +83,17 @@ function routeLabel(row: CargoRequestRow): string {
 export default async function MyCargoRequestDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
   if (process.env.ENABLE_CARGO !== 'true') notFound();
   noStore();
 
+  const { id } = await params;
   const session = await requireClientSession();
-  if (!session) redirect(`/login?redirect=/me/cargo-requests/${params.id}`);
+  if (!session) redirect(`/login?redirect=/me/cargo-requests/${id}`);
 
   const [detail, cashbackContext] = await Promise.all([
-    loadMyCargoRequestDetail(session.client_id, params.id),
+    loadMyCargoRequestDetail(session.client_id, id),
     loadAcceptCashbackContext(session.client_id),
   ]);
   if (!detail) notFound();

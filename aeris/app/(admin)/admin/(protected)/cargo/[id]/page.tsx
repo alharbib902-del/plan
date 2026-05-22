@@ -30,14 +30,15 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
+  const { id } = await params;
   return {
-    title: `${cargoAr.adminDetailTitle} — ${params.id}`,
+    title: `${cargoAr.adminDetailTitle} — ${id}`,
     robots: { index: false, follow: false },
   };
 }
@@ -68,7 +69,8 @@ function formatSAR(value: number | string | null): string {
 export default async function AdminCargoRequestDetailPage({ params }: PageProps) {
   if (process.env.ENABLE_CARGO !== 'true') notFound();
 
-  const data = await getAdminCargoRequest(params.id);
+  const { id } = await params;
+  const data = await getAdminCargoRequest(id);
   if (!data) notFound();
 
   const { offers, ...request } = data;

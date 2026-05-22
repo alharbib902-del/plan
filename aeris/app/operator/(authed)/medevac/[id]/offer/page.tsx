@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 interface AircraftRow {
@@ -70,14 +70,15 @@ function matchesService(cert: CertRow, level: string): boolean {
 
 export default async function OperatorOfferPage({ params }: PageProps) {
   if (process.env.ENABLE_MEDEVAC !== 'true') notFound();
-  if (!isUuid(params.id)) notFound();
+  const { id } = await params;
+  if (!isUuid(id)) notFound();
 
   const session = await requireOperatorSession();
   if (session.password_must_change) {
     notFound(); // layout already redirects; defensive
   }
 
-  const request = await getOpenMedevacRequestForOperator(params.id);
+  const request = await getOpenMedevacRequestForOperator(id);
   if (!request) notFound();
 
   // Pull operator's aircraft + cert rows so the form can filter

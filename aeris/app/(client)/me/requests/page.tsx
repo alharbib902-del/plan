@@ -30,7 +30,7 @@ const FILTER_LABEL: Record<ClientTripStatusFilter, string> = {
 };
 
 interface PageProps {
-  searchParams: { status?: string };
+  searchParams: Promise<{ status?: string }>;
 }
 
 export default async function ClientMeRequestsPage({
@@ -38,12 +38,11 @@ export default async function ClientMeRequestsPage({
 }: PageProps) {
   if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
 
+  const { status } = await searchParams;
   const session = await requireClientSession();
 
-  const filter: ClientTripStatusFilter = isClientTripStatusFilter(
-    searchParams.status
-  )
-    ? searchParams.status
+  const filter: ClientTripStatusFilter = isClientTripStatusFilter(status)
+    ? status
     : 'all';
 
   const rows = await listTripRequestsForClient(session.client_id, filter);

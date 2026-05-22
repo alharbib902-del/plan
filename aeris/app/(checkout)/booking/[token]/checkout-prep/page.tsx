@@ -27,7 +27,7 @@ export const metadata: Metadata = {
 };
 
 interface CheckoutPrepPageProps {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
 const WHATSAPP_NUMBER = '966558048004';
@@ -61,14 +61,15 @@ const WHATSAPP_NUMBER = '966558048004';
 export default async function CheckoutPrepPage({
   params,
 }: CheckoutPrepPageProps) {
+  const { token } = await params;
   // Layer 1: signature + payload exp.
-  const payload = verifyCheckoutToken(params.token);
+  const payload = verifyCheckoutToken(token);
   if (!payload) {
     return <ExpiredOrNotIssuedSurface />;
   }
 
   // Layer 2 + 3: DB hash + DB expiry.
-  const expectedHash = hashCheckoutToken(params.token);
+  const expectedHash = hashCheckoutToken(token);
   const booking = await getBookingById(payload.booking_id);
   if (
     !booking ||
@@ -90,7 +91,7 @@ export default async function CheckoutPrepPage({
 
   return (
     <CheckoutPrepView
-      token={params.token}
+      token={token}
       booking={booking}
       addons={addons}
       airports={airports}

@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 async function loadReservationClient(
@@ -54,7 +54,8 @@ export default async function AdminEmptyLegDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  const leg = await getEmptyLegById(params.id);
+  const { id } = await params;
+  const leg = await getEmptyLegById(id);
   if (!leg) {
     notFound();
   }

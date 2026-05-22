@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export default async function AdminOperatorDocumentsPage({ params }: PageProps) {
@@ -28,7 +28,8 @@ export default async function AdminOperatorDocumentsPage({ params }: PageProps) 
     notFound();
   }
 
-  const operator = await getOperatorById(params.id);
+  const { id } = await params;
+  const operator = await getOperatorById(id);
   if (!operator) notFound();
 
   const documents = await listOperatorDocuments(operator.id);
