@@ -40,10 +40,16 @@ export function OperatorOfferForm({
   token,
   tripRequestNumber,
   lang,
+  prefillCompanyName,
+  prefillOperatorPhone,
+  prefillOperatorEmail,
 }: {
   token: string;
   tripRequestNumber: string;
   lang: Lang;
+  prefillCompanyName: string | null;
+  prefillOperatorPhone: string | null;
+  prefillOperatorEmail: string | null;
 }) {
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
   const [, startTransition] = useTransition();
@@ -129,6 +135,7 @@ export function OperatorOfferForm({
           name="operator_name"
           required
           maxLength={120}
+          defaultValue={prefillCompanyName ?? ''}
           className={inputClass()}
         />
       </Field>
@@ -146,6 +153,7 @@ export function OperatorOfferForm({
             required
             placeholder="+966500000000"
             dir="ltr"
+            defaultValue={prefillOperatorPhone ?? ''}
             className={inputClass()}
           />
         </Field>
@@ -157,6 +165,7 @@ export function OperatorOfferForm({
             type="email"
             name="operator_email"
             dir="ltr"
+            defaultValue={prefillOperatorEmail ?? ''}
             className={inputClass()}
           />
         </Field>
