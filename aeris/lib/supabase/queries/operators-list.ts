@@ -142,3 +142,45 @@ export async function listApprovedOperatorsForDispatch(): Promise<
 
   return scored;
 }
+
+/**
+ * Phone-keyed lookup for the operator offer page (UX prefill).
+ *
+ * When an operator opens `/operator/offer/[token]`, the dispatch
+ * target row's `target_phone` is matched against approved operators
+ * to pre-fill the offer form's company / phone / email fields. Saves
+ * the operator from re-typing data the platform already knows.
+ *
+ * Returns null when no matching approved operator is found (e.g.,
+ * ad-hoc dispatch to a phone that isn't in the operators table).
+ * The caller falls back to an empty form in that case.
+ */
+export interface OperatorPrefillInfo {
+  id: string;
+  company_name: string;
+  contact_phone: string;
+  contact_email: string;
+}
+
+export async function findApprovedOperatorByPhone(
+  phone: string
+): Promise<OperatorPrefillInfo | null> {
+  noStore();
+  const trimmed = phone.trim();
+  if (!trimmed) return null;
+
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from(TABLE)
+    .select('id, company_name, contact_phone, contact_email')
+    .eq('signup_status', 'approved')
+    .eq('contact_phone', trimmed)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[operators-list] findApprovedOperatorByPhone failed', error);
+    return null;
+  }
+  return (data as OperatorPrefillInfo | null) ?? null;
+}

@@ -9,6 +9,7 @@ import {
 import { parseLang } from '@/lib/i18n/operator';
 import { verifyOperatorToken } from '@/lib/operator/token';
 import { listAirports } from '@/lib/supabase/queries/airports';
+import { findApprovedOperatorByPhone } from '@/lib/supabase/queries/operators-list';
 import { getTargetById } from '@/lib/supabase/queries/phase5-targets';
 import { getTripById } from '@/lib/supabase/queries/trips';
 // Phase 6.2 PR 2b S6: best-effort fetch of attached add-ons
@@ -148,6 +149,9 @@ export default async function OperatorOfferPage({
           token={token}
           tripRequestNumber={trip.request_number}
           lang={lang}
+          prefillCompanyName={null}
+          prefillOperatorPhone={null}
+          prefillOperatorEmail={null}
         />
       </div>
     );
@@ -209,7 +213,10 @@ export default async function OperatorOfferPage({
     return <ExpiredLink reason={reason} lang={lang} />;
   }
 
-  const v2Addons = await fetchTripAddons(trip.id);
+  const [v2Addons, prefillOperator] = await Promise.all([
+    fetchTripAddons(trip.id),
+    findApprovedOperatorByPhone(target.target_phone),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -224,6 +231,9 @@ export default async function OperatorOfferPage({
         token={token}
         tripRequestNumber={trip.request_number}
         lang={lang}
+        prefillCompanyName={prefillOperator?.company_name ?? null}
+        prefillOperatorPhone={prefillOperator?.contact_phone ?? target.target_phone}
+        prefillOperatorEmail={prefillOperator?.contact_email ?? null}
       />
     </div>
   );
