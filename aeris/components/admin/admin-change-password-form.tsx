@@ -7,6 +7,7 @@ import {
   changePassword,
   type ChangePasswordResult,
 } from '@/app/(admin)/admin/actions/admin-account';
+import { PasswordInput } from '@/components/ui/password-input';
 
 const ERROR_AR: Record<
   Exclude<ChangePasswordResult, { ok: true }>['error'],
@@ -104,10 +105,9 @@ export function AdminChangePasswordForm({
         >
           كلمة المرور الحالية <span className="text-gold">*</span>
         </label>
-        <input
+        <PasswordInput
           id="current-password"
           name="current_password"
-          type="password"
           autoComplete="current-password"
           required
           dir="ltr"
@@ -123,10 +123,9 @@ export function AdminChangePasswordForm({
         >
           كلمة المرور الجديدة <span className="text-gold">*</span>
         </label>
-        <input
+        <PasswordInput
           id="new-password"
           name="new_password"
-          type="password"
           autoComplete="new-password"
           required
           dir="ltr"
@@ -146,10 +145,9 @@ export function AdminChangePasswordForm({
         >
           تأكيد كلمة المرور الجديدة <span className="text-gold">*</span>
         </label>
-        <input
+        <PasswordInput
           id="confirm-password"
           name="confirm_password"
-          type="password"
           autoComplete="new-password"
           required
           dir="ltr"

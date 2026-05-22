@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { signIn, type SignInResult } from '@/app/(admin)/admin/actions/admin-auth';
+import { PasswordInput } from '@/components/ui/password-input';
 
 const ERROR_AR: Record<Exclude<SignInResult, { ok: true }>['error'], string> = {
   env: 'الإعدادات غير مكتملة. تواصل مع مسؤول النظام.',
@@ -97,10 +98,9 @@ export function AdminLoginForm() {
           كلمة المرور
           <span className="text-gold"> *</span>
         </label>
-        <input
+        <PasswordInput
           id="admin-password"
           name="password"
-          type="password"
           autoComplete="current-password"
           required
           dir="ltr"
