@@ -83,6 +83,63 @@ const dictionary = {
     ar: 'تم استخدام هذا الرابط مسبقاً — تم استلام عرضك. يرجى التواصل عبر واتساب لأي استفسار.',
     en: 'This link has already been used — your offer was received. Please reach out on WhatsApp with any questions.',
   },
+
+  // Enriched "link already used" variant — when we can echo the
+  // submitted offer back to the operator the page becomes a
+  // positive confirmation card rather than a generic dead-end.
+  expired_link_already_used_enriched_title: {
+    ar: 'تم استلام عرضك بنجاح',
+    en: 'Your offer was received',
+  },
+  expired_link_already_used_enriched_subtitle: {
+    ar: 'هذا الرابط للأمان يُستخدم مرة واحدة فقط — تم تسجيل عرضك.',
+    en: 'For security this link can be used only once — your offer is on file.',
+  },
+  expired_link_already_used_enriched_footer: {
+    ar: 'سيتواصل معك فريق Aeris قريباً للرد على عرضك.',
+    en: 'The Aeris team will reach out to you shortly regarding your offer.',
+  },
+  expired_link_offer_summary_title: {
+    ar: 'ملخص العرض المُرسَل',
+    en: 'Submitted offer summary',
+  },
+  expired_link_summary_price: {
+    ar: 'السعر الإجمالي',
+    en: 'Total price',
+  },
+  expired_link_summary_aircraft_category: {
+    ar: 'فئة الطائرة',
+    en: 'Aircraft category',
+  },
+  expired_link_summary_aircraft_type: {
+    ar: 'نوع الطائرة',
+    en: 'Aircraft type',
+  },
+  expired_link_summary_aircraft_registration: {
+    ar: 'رقم التسجيل',
+    en: 'Registration',
+  },
+  expired_link_summary_departure: {
+    ar: 'موعد الإقلاع',
+    en: 'Departure time',
+  },
+  expired_link_summary_validity: {
+    ar: 'مدة صلاحية العرض',
+    en: 'Offer validity',
+  },
+  expired_link_summary_notes: {
+    ar: 'ملاحظات',
+    en: 'Notes',
+  },
+  expired_link_summary_submitted_at: {
+    ar: 'تم الإرسال في',
+    en: 'Submitted at',
+  },
+  aeris_marketing_link_label: {
+    ar: 'معرفة المزيد عن Aeris',
+    en: 'Learn more about Aeris',
+  },
+
   whatsapp_contact_button: {
     ar: 'تواصل عبر واتساب',
     en: 'Contact on WhatsApp',

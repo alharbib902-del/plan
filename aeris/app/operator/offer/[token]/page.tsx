@@ -10,6 +10,7 @@ import { parseLang } from '@/lib/i18n/operator';
 import { verifyOperatorToken } from '@/lib/operator/token';
 import { listAirports } from '@/lib/supabase/queries/airports';
 import { findApprovedOperatorByPhone } from '@/lib/supabase/queries/operators-list';
+import { getSubmittedOfferByTargetId } from '@/lib/supabase/queries/phase5-offers';
 import { getTargetById } from '@/lib/supabase/queries/phase5-targets';
 import { getTripById } from '@/lib/supabase/queries/trips';
 // Phase 6.2 PR 2b S6: best-effort fetch of attached add-ons
@@ -210,6 +211,25 @@ export default async function OperatorOfferPage({
         : targetStatus === 'cancelled' || !roundCurrent || !nonceMatches
           ? 'link_cancelled'
           : 'link_already_used'; // tripOpen=false fallback (booked/cancelled)
+
+    // Enrichment: when the operator already submitted on this
+    // exact target, fetch the offer they sent and pass it to
+    // the friendly page so it renders as a positive confirmation
+    // (price, aircraft, departure echo) instead of a generic
+    // "link used" message. Other failure reasons (expired /
+    // cancelled / trip-closed) keep the simple layout — the
+    // operator did not submit anything on those branches, so
+    // there's nothing to echo.
+    if (reason === 'link_already_used' && targetStatus === 'submitted') {
+      const submittedOffer = await getSubmittedOfferByTargetId(target.id);
+      return (
+        <ExpiredLink
+          reason={reason}
+          lang={lang}
+          submittedOffer={submittedOffer}
+        />
+      );
+    }
     return <ExpiredLink reason={reason} lang={lang} />;
   }
 
