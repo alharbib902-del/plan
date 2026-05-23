@@ -2,6 +2,7 @@ import 'server-only';
 
 import { unstable_noStore as noStore } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
+import type { AircraftCategoryValue } from '@/lib/validators/promote-lead';
 import type {
   AcceptOfferArgs,
   AcceptOfferResult,
@@ -13,6 +14,70 @@ import type {
 } from '@/types/database';
 
 const TABLE = 'phase5_operator_offers';
+
+/**
+ * Read-only projection of the submitted Phase 5 offer for a given
+ * dispatch target. Used by the operator portal's "link already
+ * used" friendly page (post-S2 enrichment): instead of a generic
+ * "this link was used" message, the page can echo the offer the
+ * operator already sent so it feels like a confirmation rather
+ * than a dead end.
+ *
+ * Server-only — read through the admin client, RLS-free. The
+ * caller has already proven legitimate access to the target row
+ * via the HMAC-verified v=2 token (see app/operator/offer/[token]/
+ * page.tsx).
+ */
+export interface SubmittedOfferDetails {
+  total_price_sar: number;
+  aircraft_category: AircraftCategoryValue | null;
+  aircraft_type: string | null;
+  aircraft_registration: string | null;
+  departure_eta: string;
+  validity_hours: number | null;
+  notes: string | null;
+  submitted_at: string;
+}
+
+/**
+ * Fetch the single submitted offer attached to a dispatch target.
+ * Phase 5 enforces `UNIQUE(dispatch_target_id)` on
+ * `phase5_operator_offers`, so this is at-most-one. Returns null
+ * when no offer exists for the target (defensive — should not
+ * happen on the page's `targetStatus === 'submitted'` branch, but
+ * the page must not crash if a race or admin cleanup made it
+ * disappear between the status check and this read).
+ */
+export async function getSubmittedOfferByTargetId(
+  targetId: string
+): Promise<SubmittedOfferDetails | null> {
+  noStore();
+  const client = createAdminClient();
+  const { data, error } = await client
+    .from(TABLE)
+    .select(
+      'total_price_sar, aircraft_category, aircraft_type, aircraft_registration, departure_eta, validity_hours, notes, created_at'
+    )
+    .eq('dispatch_target_id', targetId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[phase5-offers] getSubmittedOfferByTargetId failed', error);
+    return null;
+  }
+  if (!data) return null;
+
+  return {
+    total_price_sar: Number(data.total_price_sar),
+    aircraft_category: (data.aircraft_category ?? null) as AircraftCategoryValue | null,
+    aircraft_type: data.aircraft_type ?? null,
+    aircraft_registration: data.aircraft_registration ?? null,
+    departure_eta: data.departure_eta,
+    validity_hours: data.validity_hours ?? null,
+    notes: data.notes ?? null,
+    submitted_at: data.created_at,
+  };
+}
 
 /**
  * List Phase 5 offers for a trip (all rounds), newest first.
