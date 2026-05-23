@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { operatorVerifyPasswordReset } from '@/app/actions/operators-public';
 import { OperatorBanner, operatorErrorMessage } from './error-banner';
+import { PasswordInput } from '@/components/ui/password-input';
 
 const ar = operatorsAr.portal.resetPassword;
 
@@ -54,9 +55,8 @@ export function OperatorResetPasswordForm({ rawToken }: { rawToken: string }) {
       ) : null}
       <div>
         <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.new_password}</label>
-        <input
+        <PasswordInput
           name="new_password"
-          type="password"
           dir="ltr"
           required
           className={`font-ar w-full rounded-lg border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:outline-none ${
@@ -69,9 +69,8 @@ export function OperatorResetPasswordForm({ rawToken }: { rawToken: string }) {
       </div>
       <div>
         <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.confirm_password}</label>
-        <input
+        <PasswordInput
           name="confirm_password"
-          type="password"
           dir="ltr"
           required
           className={`font-ar w-full rounded-lg border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:outline-none ${

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { operatorChangePassword } from '@/app/actions/operators-public';
 import { OperatorBanner, operatorErrorMessage } from './error-banner';
+import { PasswordInput } from '@/components/ui/password-input';
 
 const ar = operatorsAr.portal.password;
 
@@ -93,18 +94,29 @@ function Field(props: {
   error?: string;
   required?: boolean;
 }) {
+  const isPassword = props.type === 'password';
+  const fieldClass = `font-ar w-full rounded-lg border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:outline-none ${
+    props.error ? 'border-rose-500/60' : 'border-border focus:border-gold/50'
+  }`;
   return (
     <div>
       <label className="font-ar mb-1 block text-xs text-ink-muted">{props.label}</label>
-      <input
-        name={props.name}
-        type={props.type ?? 'text'}
-        dir={props.dir}
-        required={props.required}
-        className={`font-ar w-full rounded-lg border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:outline-none ${
-          props.error ? 'border-rose-500/60' : 'border-border focus:border-gold/50'
-        }`}
-      />
+      {isPassword ? (
+        <PasswordInput
+          name={props.name}
+          dir={props.dir}
+          required={props.required}
+          className={fieldClass}
+        />
+      ) : (
+        <input
+          name={props.name}
+          type={props.type ?? 'text'}
+          dir={props.dir}
+          required={props.required}
+          className={fieldClass}
+        />
+      )}
       {props.error ? <p className="font-ar mt-1 text-xs text-rose-200">{props.error}</p> : null}
     </div>
   );
