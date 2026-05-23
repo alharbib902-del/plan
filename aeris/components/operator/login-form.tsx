@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { operatorLogin } from '@/app/actions/operators-public';
 import { OperatorBanner, operatorErrorMessage } from './error-banner';
+import { PasswordInput } from '@/components/ui/password-input';
 
 const ar = operatorsAr.portal.login;
 
@@ -51,9 +52,8 @@ export function OperatorLoginForm() {
       </div>
       <div>
         <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.password}</label>
-        <input
+        <PasswordInput
           name="password"
-          type="password"
           dir="ltr"
           required
           className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"

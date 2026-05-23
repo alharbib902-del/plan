@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { operatorSignup } from '@/app/actions/operators-public';
 import { OperatorBanner, operatorErrorMessage } from './error-banner';
+import { PasswordInput } from '@/components/ui/password-input';
 
 const ar = operatorsAr.portal.signup;
 
@@ -113,18 +114,29 @@ function Field({
   hint?: string;
   required?: boolean;
 }) {
+  const isPassword = type === 'password';
+  const fieldClass = `font-ar w-full rounded-lg border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:outline-none ${
+    error ? 'border-rose-500/60' : 'border-border focus:border-gold/50'
+  }`;
   return (
     <div>
       <label className="font-ar mb-1 block text-xs text-ink-muted">{label}</label>
-      <input
-        name={name}
-        type={type}
-        dir={dir}
-        required={required}
-        className={`font-ar w-full rounded-lg border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:outline-none ${
-          error ? 'border-rose-500/60' : 'border-border focus:border-gold/50'
-        }`}
-      />
+      {isPassword ? (
+        <PasswordInput
+          name={name}
+          dir={dir}
+          required={required}
+          className={fieldClass}
+        />
+      ) : (
+        <input
+          name={name}
+          type={type}
+          dir={dir}
+          required={required}
+          className={fieldClass}
+        />
+      )}
       {error ? <p className="font-ar mt-1 text-xs text-rose-200">{error}</p> : null}
       {!error && hint ? <p className="font-ar mt-1 text-xs text-ink-muted">{hint}</p> : null}
     </div>
