@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { createReviewAction, type ReviewActionState } from '@/app/actions/reviews';
+import { clientsAr } from '@/lib/i18n/clients-ar';
 
 const initialState: ReviewActionState = { ok: false, message: '' };
 
@@ -26,7 +27,7 @@ function StarPicker({
           <button
             key={star}
             type="button"
-            aria-label={`${star} من 5`}
+            aria-label={`${star} ${clientsAr.reviewStarSuffix}`}
             aria-pressed={value === star}
             onClick={() => onChange(star)}
             className={
@@ -51,7 +52,7 @@ function SubmitButton() {
       disabled={pending}
       className="rounded-md bg-gold px-4 py-2 font-medium text-navy transition hover:bg-gold-dark hover:text-white disabled:opacity-50"
     >
-      {pending ? 'جارٍ الإرسال...' : 'إرسال التقييم'}
+      {pending ? clientsAr.reviewFormSubmitting : clientsAr.reviewFormSubmit}
     </button>
   );
 }
@@ -69,20 +70,20 @@ export function ReviewForm({ bookingId, label }: { bookingId: string; label?: st
 
       {label ? <p className="text-sm text-muted">{label}</p> : null}
 
-      <StarPicker name="overall_rating" label="التقييم العام" value={overall} onChange={setOverall} />
+      <StarPicker name="overall_rating" label={clientsAr.reviewFormOverall} value={overall} onChange={setOverall} />
       {state.errors?.overall_rating ? (
         <p className="text-sm text-red-600">{state.errors.overall_rating[0]}</p>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StarPicker name="aircraft_rating" label="الطائرة" value={aircraft} onChange={setAircraft} />
-        <StarPicker name="crew_rating" label="الطاقم" value={crew} onChange={setCrew} />
-        <StarPicker name="service_rating" label="الخدمة" value={service} onChange={setService} />
+        <StarPicker name="aircraft_rating" label={clientsAr.reviewFormAircraft} value={aircraft} onChange={setAircraft} />
+        <StarPicker name="crew_rating" label={clientsAr.reviewFormCrew} value={crew} onChange={setCrew} />
+        <StarPicker name="service_rating" label={clientsAr.reviewFormService} value={service} onChange={setService} />
       </div>
 
       <div>
         <label htmlFor={`comment-${bookingId}`} className="block text-sm font-medium text-navy">
-          تعليق (اختياري)
+          {clientsAr.reviewFormCommentLabel}
         </label>
         <textarea
           id={`comment-${bookingId}`}

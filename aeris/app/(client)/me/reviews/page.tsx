@@ -4,8 +4,24 @@ import { requireClientSession } from '@/lib/clients/auth';
 import { getReviewsForClient, getReviewableBookings } from '@/lib/reviews/queries';
 import { ReviewForm } from '@/components/reviews/review-form';
 import { ReviewList } from '@/components/reviews/review-list';
+import { clientsAr } from '@/lib/i18n/clients-ar';
 
 export const dynamic = 'force-dynamic';
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('ar-SA', {
+      timeZone: 'Asia/Riyadh',
+      calendar: 'gregory',
+      numberingSystem: 'latn',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return iso;
+  }
+}
 
 export default async function MyReviewsPage() {
   const session = await requireClientSession();
@@ -17,12 +33,12 @@ export default async function MyReviewsPage() {
 
   return (
     <div dir="rtl" className="space-y-8">
-      <h1 className="text-2xl font-semibold text-navy">تقييماتي</h1>
+      <h1 className="text-2xl font-semibold text-navy">{clientsAr.meReviewsTitle}</h1>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-medium text-navy">رحلات بانتظار تقييمك</h2>
+        <h2 className="text-lg font-medium text-navy">{clientsAr.meReviewsAwaitingTitle}</h2>
         {reviewable.length === 0 ? (
-          <p className="text-muted">لا توجد رحلات مكتملة بانتظار التقييم.</p>
+          <p className="text-muted">{clientsAr.meReviewsAwaitingEmpty}</p>
         ) : (
           <ul className="space-y-4">
             {reviewable.map((booking) => (
@@ -32,13 +48,13 @@ export default async function MyReviewsPage() {
               >
                 <div className="mb-3 flex items-center justify-between">
                   <span className="font-medium text-navy">
-                    حجز {booking.booking_number}
+                    {clientsAr.meReviewsBookingPrefix} {booking.booking_number}
                   </span>
                   <span className="text-sm text-muted">
-                    {new Date(booking.departure_scheduled).toLocaleDateString('ar')}
+                    {formatDate(booking.departure_scheduled)}
                   </span>
                 </div>
-                <ReviewForm bookingId={booking.id} label="قيّم رحلتك" />
+                <ReviewForm bookingId={booking.id} label={clientsAr.meReviewsRateCta} />
               </li>
             ))}
           </ul>
@@ -46,8 +62,8 @@ export default async function MyReviewsPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-medium text-navy">تقييماتك السابقة</h2>
-        <ReviewList reviews={reviews} emptyLabel="لم تكتب أي تقييم بعد." />
+        <h2 className="text-lg font-medium text-navy">{clientsAr.meReviewsPastTitle}</h2>
+        <ReviewList reviews={reviews} emptyLabel={clientsAr.meReviewsPastEmpty} />
       </section>
     </div>
   );

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireClientSession } from '@/lib/clients/auth';
 import { reviewSchema } from '@/lib/reviews/validators';
+import { clientsAr } from '@/lib/i18n/clients-ar';
 
 export type ReviewActionState = {
   ok: boolean;
@@ -40,7 +41,7 @@ export async function createReviewAction(
   if (!parsed.success) {
     return {
       ok: false,
-      message: 'تحقق من البيانات المدخلة',
+      message: clientsAr.reviewActionInvalid,
       errors: parsed.error.flatten().fieldErrors,
     };
   }
@@ -58,7 +59,7 @@ export async function createReviewAction(
 
   if (error) {
     console.error('[reviews] create_review rpc error', error);
-    return { ok: false, message: 'تعذّر حفظ التقييم، حاول مرة أخرى' };
+    return { ok: false, message: clientsAr.reviewActionError };
   }
 
   // The RPC returns NULL when the booking is not owned by the client,
@@ -66,10 +67,10 @@ export async function createReviewAction(
   if (!data) {
     return {
       ok: false,
-      message: 'لا يمكن تقييم هذا الحجز (غير مكتمل أو تم تقييمه مسبقًا)',
+      message: clientsAr.reviewActionNotEligible,
     };
   }
 
   revalidatePath('/me/reviews');
-  return { ok: true, message: 'تم حفظ تقييمك بنجاح، شكرًا لك' };
+  return { ok: true, message: clientsAr.reviewActionSuccess };
 }

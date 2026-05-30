@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
+import { clientsAr } from '@/lib/i18n/clients-ar';
+
 const ratingField = z.coerce
   .number()
-  .int('التقييم يجب أن يكون رقمًا صحيحًا')
-  .min(1, 'التقييم يجب أن يكون بين 1 و 5')
-  .max(5, 'التقييم يجب أن يكون بين 1 و 5');
+  .int(clientsAr.reviewValidationRatingInt)
+  .min(1, clientsAr.reviewValidationRatingRange)
+  .max(5, clientsAr.reviewValidationRatingRange);
 
 const optionalRatingField = z
   .union([z.literal(''), ratingField])
@@ -12,14 +14,14 @@ const optionalRatingField = z
   .transform((value) => (value === '' || value === undefined ? null : value));
 
 export const reviewSchema = z.object({
-  booking_id: z.string().uuid('معرّف الحجز غير صالح'),
+  booking_id: z.string().uuid(clientsAr.reviewValidationBookingId),
   overall_rating: ratingField,
   aircraft_rating: optionalRatingField,
   crew_rating: optionalRatingField,
   service_rating: optionalRatingField,
   comment: z
     .string()
-    .max(1000, 'التعليق طويل جدًا')
+    .max(1000, clientsAr.reviewValidationCommentLong)
     .optional()
     .transform((value) => value?.trim() ?? ''),
 });

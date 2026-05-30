@@ -17,6 +17,9 @@ export type ReviewRow = {
   response: string | null;
   response_at: string | null;
   created_at: string;
+  // Embedded via the reviews.booking_id FK so the UI shows the human booking
+  // number instead of a truncated UUID.
+  bookings: { booking_number: string } | null;
 };
 
 export type ReviewableBooking = {
@@ -28,7 +31,7 @@ export type ReviewableBooking = {
 };
 
 const REVIEW_COLUMNS =
-  'id, booking_id, client_id, operator_id, aircraft_id, overall_rating, aircraft_rating, crew_rating, service_rating, comment, is_published, response, response_at, created_at';
+  'id, booking_id, client_id, operator_id, aircraft_id, overall_rating, aircraft_rating, crew_rating, service_rating, comment, is_published, response, response_at, created_at, bookings(booking_number)';
 
 /** Reviews written by a client (by users.id), newest first. */
 export async function getReviewsForClient(clientId: string): Promise<ReviewRow[]> {
