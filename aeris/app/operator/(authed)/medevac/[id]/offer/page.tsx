@@ -25,6 +25,7 @@ interface AircraftRow {
   registration: string | null;
   manufacturer: string | null;
   model: string | null;
+  status: string | null;
 }
 
 interface CertRow {
@@ -88,9 +89,13 @@ export default async function OperatorOfferPage({ params }: PageProps) {
   const loose = createAdminClient() as unknown as LooseAdmin;
   const aircraftResult = await loose
     .from('aircraft')
-    .select('id, registration, manufacturer, model')
+    .select('id, registration, manufacturer, model, status')
     .eq('operator_id', session.operator_id);
-  const aircraftRows = (aircraftResult.data ?? []) as AircraftRow[];
+  // Phase 14 — exclude retired aircraft from medevac offer selection (the
+  // offer-table trigger is the DB backstop).
+  const aircraftRows = ((aircraftResult.data ?? []) as AircraftRow[]).filter(
+    (a) => a.status !== 'retired'
+  );
   const aircraftIds = aircraftRows.map((a) => a.id).filter(Boolean);
 
   let certRows: CertRow[] = [];
