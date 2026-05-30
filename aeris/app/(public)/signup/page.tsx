@@ -13,14 +13,24 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function ClientSignupPage() {
+interface SignupPageProps {
+  // Referral share links land here as /signup?ref=CODE → prefilled.
+  searchParams: Promise<{ ref?: string }>;
+}
+
+export default async function ClientSignupPage({
+  searchParams,
+}: SignupPageProps) {
   if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
+  const { ref } = await searchParams;
+  const initialReferralCode =
+    typeof ref === 'string' && ref.trim().length > 0 ? ref.trim() : undefined;
   return (
     <ClientPublicShell
       title={clientsAr.signupTitle}
       subtitle={clientsAr.signupSubtitle}
     >
-      <ClientSignupForm />
+      <ClientSignupForm initialReferralCode={initialReferralCode} />
     </ClientPublicShell>
   );
 }

@@ -59,6 +59,10 @@
       "schedule": "0 7 * * *"
     },
     {
+      "path": "/api/cron/client/referral-rewards",
+      "schedule": "0 8 * * *"
+    },
+    {
       "path": "/api/cron/cargo/dispatch-drain",
       "schedule": "*/15 * * * *"
     },

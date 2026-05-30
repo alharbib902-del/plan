@@ -147,6 +147,7 @@ export async function clientSignup(input: {
   full_name: string;
   phone: string;
   marketing_opt_in: boolean;
+  referral_code?: string | null;
 }): Promise<ClientSignupResult> {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
@@ -199,6 +200,24 @@ export async function clientSignup(input: {
     | { ok: false; error: string };
   if (!result.ok) {
     return { ok: false, error: result.error };
+  }
+
+  // Best-effort referral linking. A blank / unknown / self / duplicate
+  // code is a no-op (the RPC decides) and must NEVER fail the signup —
+  // only transport errors are logged. The RPC derives the referrer from
+  // the code, so the referee can't forge who referred them.
+  const referralCode = (parsed.data.referral_code ?? '').trim();
+  if (referralCode.length > 0) {
+    const { error: referralErr } = await client.rpc('apply_referral_code', {
+      p_referee_client_id: result.client_id,
+      p_code: referralCode,
+    });
+    if (referralErr) {
+      console.error(
+        '[clients-public.clientSignup] referral apply error',
+        referralErr
+      );
+    }
   }
 
   return { ok: true, client_id: result.client_id };
