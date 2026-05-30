@@ -17,10 +17,13 @@ import type { EmptyLegRow } from '@/lib/empty-legs/types';
  * Empty Legs price-alerts cron.
  *
  * Schedule: hourly (vercel.json). For each ACTIVE client alert, find `available`
- * legs matching its IATA route + optional price cap + optional date window, skip
- * any already delivered (per-(alert,leg) dedup), email the client about each new
- * match, then record the delivery only AFTER a successful send (so a transient /
- * env-missing failure is retried next run rather than silently swallowed).
+ * legs matching its IATA route + optional price cap + optional date window. For
+ * each match, CLAIM the (alert, leg) delivery atomically FIRST
+ * (record_empty_leg_alert_delivery — INSERT ... ON CONFLICT DO NOTHING RETURNING
+ * id) so only one run can ever send; email the client only on a won claim; on a
+ * send failure, release the claim (delete_empty_leg_alert_delivery) so the next
+ * run retries. No duplicate email even if two cron invocations overlap.
+ * (listDeliveredLegIds is only a cheap pre-filter, not the lock.)
  *
  * Auth: shared CRON_SECRET (Authorization: Bearer …) — Vercel Cron sets it.
  */
