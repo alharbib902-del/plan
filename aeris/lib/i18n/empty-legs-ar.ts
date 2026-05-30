@@ -344,6 +344,33 @@ export const emptyLegsAr = {
   errorRpcOptOutInvalid: 'رابط إلغاء الاشتراك غير صالح.',
   errorRpcLeadInquiryNotFound:
     'سجل العميل غير موجود. ربما تم حذف الحساب من قاعدة البيانات.',
+
+  // ----- Price alerts (client-defined subscriptions) -----
+  alertsNavLink: 'تنبيهات الأسعار',
+  alertsTitle: 'تنبيهات أسعار الرحلات الفارغة',
+  alertsIntro: 'نبّهني عند توفّر رحلة فارغة على مساري تحت سعر معيّن.',
+  alertsNewTitle: 'تنبيه جديد',
+  alertsMyTitle: 'تنبيهاتي',
+  alertsEmpty: 'لا توجد تنبيهات بعد.',
+  alertFieldOrigin: 'من (رمز مطار IATA)',
+  alertFieldDest: 'إلى (رمز مطار IATA)',
+  alertFieldMaxPrice: 'أقصى سعر بالريال (اختياري)',
+  alertFieldDateFrom: 'من تاريخ (اختياري)',
+  alertFieldDateTo: 'إلى تاريخ (اختياري)',
+  alertSubmit: 'إنشاء التنبيه',
+  alertSubmitting: 'جارٍ الحفظ...',
+  alertAnyPrice: 'أي سعر',
+  alertActiveLabel: 'نشط',
+  alertPausedLabel: 'متوقّف',
+  alertPause: 'إيقاف',
+  alertResume: 'تفعيل',
+  alertDelete: 'حذف',
+  alertActionInvalid: 'تحقق من البيانات المدخلة',
+  alertCreateSuccess: 'تم إنشاء التنبيه — سننبّهك عند ظهور رحلة مطابقة',
+  alertCreateError: 'تعذّر إنشاء التنبيه، حاول مرة أخرى',
+  alertDeleteSuccess: 'تم حذف التنبيه',
+  alertToggleSuccess: 'تم تحديث التنبيه',
+  alertGenericError: 'تعذّر إتمام العملية، حاول مرة أخرى',
 } as const;
 
 export type EmptyLegsArKey = keyof typeof emptyLegsAr;

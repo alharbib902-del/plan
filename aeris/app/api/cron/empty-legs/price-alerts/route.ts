@@ -1,0 +1,118 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  unauthorizedJsonResponse,
+  verifyCronAuth,
+} from '@/lib/empty-legs/cron-auth';
+import {
+  listActiveAlertsWithClient,
+  findMatchingAvailableLegs,
+  listDeliveredLegIds,
+} from '@/lib/empty-legs/alerts';
+import { sendClientEmptyLegMatchEmail } from '@/lib/notifications/client-empty-leg-email';
+
+/**
+ * Empty Legs price-alerts cron.
+ *
+ * Schedule: hourly (vercel.json). For each ACTIVE client alert, find `available`
+ * legs matching its IATA route + optional price cap + optional date window, skip
+ * any already delivered (per-(alert,leg) dedup), email the client about each new
+ * match, then record the delivery only AFTER a successful send (so a transient /
+ * env-missing failure is retried next run rather than silently swallowed).
+ *
+ * Auth: shared CRON_SECRET (Authorization: Bearer …) — Vercel Cron sets it.
+ */
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const runtime = 'nodejs';
+
+type LooseRpcClient = {
+  rpc: (
+    name: string,
+    args?: Record<string, unknown>
+  ) => Promise<{ data: unknown; error: { message?: string } | null }>;
+};
+
+function siteBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://aeris.sa').replace(/\/$/, '');
+}
+
+export async function GET(req: NextRequest): Promise<Response> {
+  const auth = verifyCronAuth(req.headers);
+  if (!auth.ok) {
+    return unauthorizedJsonResponse();
+  }
+
+  let alerts;
+  try {
+    alerts = await listActiveAlertsWithClient(500);
+  } catch (err) {
+    console.error('[cron.price-alerts] load alerts failed', err);
+    return NextResponse.json({ ok: false, error: 'load_failed' }, { status: 200 });
+  }
+
+  const rpc = createAdminClient() as unknown as LooseRpcClient;
+  let matched = 0;
+  let sent = 0;
+  let skipped = 0;
+
+  for (const alert of alerts) {
+    const client = alert.clients;
+    if (!client) continue;
+
+    let legs;
+    let delivered;
+    try {
+      [legs, delivered] = await Promise.all([
+        findMatchingAvailableLegs(alert),
+        listDeliveredLegIds(alert.id),
+      ]);
+    } catch (err) {
+      console.error('[cron.price-alerts] match failed', { alert: alert.id, err });
+      continue;
+    }
+
+    for (const leg of legs) {
+      if (delivered.has(leg.id)) continue;
+      matched += 1;
+
+      const result = await sendClientEmptyLegMatchEmail({
+        client: {
+          id: client.id,
+          full_name: client.full_name,
+          auth_email: client.auth_email,
+          contact_phone: client.contact_phone,
+        },
+        leg,
+        eventType: 'published',
+        legUrl: `${siteBaseUrl()}/me/empty-legs/${leg.leg_number}`,
+      });
+
+      if (!result.ok) {
+        skipped += 1;
+        continue; // not recorded → retried next run
+      }
+
+      const { error: recErr } = await rpc.rpc('record_empty_leg_alert_delivery', {
+        p_alert_id: alert.id,
+        p_empty_leg_id: leg.id,
+        p_channel: 'email',
+      });
+      if (recErr) {
+        console.error('[cron.price-alerts] record delivery failed', {
+          alert: alert.id,
+          leg: leg.id,
+          err: recErr,
+        });
+      }
+      sent += 1;
+    }
+  }
+
+  return NextResponse.json(
+    { ok: true, alerts: alerts.length, matched, sent, skipped },
+    { status: 200 }
+  );
+}
