@@ -25,7 +25,7 @@ export default async function AdminSupportTicketPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  requireAdminSession();
+  await requireAdminSession();
   const { id } = await params;
 
   const ticket = await getTicketById(id);

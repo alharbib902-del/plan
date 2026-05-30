@@ -37,7 +37,7 @@ function formatDate(iso: string): string {
 }
 
 export default async function AdminSupportPage() {
-  requireAdminSession();
+  await requireAdminSession();
 
   const tickets = await getAllTickets();
 
@@ -56,7 +56,7 @@ export default async function AdminSupportPage() {
                 <th className="p-2">{supportAr.thCategory}</th>
                 <th className="p-2">{supportAr.thStatus}</th>
                 <th className="p-2">{supportAr.thUpdated}</th>
-                <th className="p-2"></th>
+                <th className="p-2"><span className="sr-only">{supportAr.thActions}</span></th>
               </tr>
             </thead>
             <tbody>

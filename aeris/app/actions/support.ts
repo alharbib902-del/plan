@@ -122,7 +122,7 @@ export async function adminReplyToTicketAction(
   _prevState: SupportActionState,
   formData: FormData
 ): Promise<SupportActionState> {
-  requireAdminSession();
+  await requireAdminSession();
 
   const parsed = ticketReplySchema.safeParse({
     ticket_id: formData.get('ticket_id'),
@@ -158,7 +158,7 @@ export async function updateTicketStatusAction(
   _prevState: SupportActionState,
   formData: FormData
 ): Promise<SupportActionState> {
-  requireAdminSession();
+  await requireAdminSession();
 
   const parsed = ticketStatusSchema.safeParse({
     ticket_id: formData.get('ticket_id'),

@@ -28,6 +28,7 @@ export const supportAr = {
   thCategory: 'التصنيف',
   thStatus: 'الحالة',
   thUpdated: 'آخر تحديث',
+  thActions: 'إجراءات',
 
   // ticket form
   fieldCategory: 'التصنيف',
@@ -42,7 +43,7 @@ export const supportAr = {
 
   // status form
   submitUpdate: 'تحديث',
-  updating: '...',
+  updating: 'جارٍ التحديث...',
   resolutionPlaceholder: 'ملاحظة الحل (اختياري)',
 
   // thread
