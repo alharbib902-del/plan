@@ -219,8 +219,23 @@ export const clientsAr = {
   offerStatusExpired: 'منتهي الصلاحية',
   offerExpiresLabel: 'صلاحية حتى',
   offerPriceLabel: 'السعر الإجمالي',
+  currencySAR: 'ريال',
   offerDepartureEtaLabel: 'موعد الإقلاع المقترح',
   offerAircraftLabel: 'الطائرة',
+
+  // Offer comparison view (Phase 14) — read-only side-by-side
+  // table toggled from the cards on /me/requests/[id].
+  offersViewToggleLabel: 'طريقة عرض العروض',
+  offersViewCards: 'بطاقات',
+  offersViewCompare: 'مقارنة',
+  compareCaption: 'جدول مقارنة العروض المقدّمة على هذا الطلب',
+  compareAttributeHeader: 'المعيار',
+  compareCheapestBadge: 'الأرخص',
+  compareEarliestBadge: 'الأقرب إقلاعاً',
+  compareAircraftCategoryLabel: 'فئة الطائرة',
+  compareValidityLabel: 'مدة صلاحية العرض',
+  compareValidityUnit: 'ساعة',
+  compareNotesLabel: 'ملاحظات',
 
   // Booking detail surface
   bookingDetailHeading: 'تفاصيل الحجز',

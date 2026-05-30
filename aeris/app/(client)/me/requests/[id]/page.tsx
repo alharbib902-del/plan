@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { CancelTripButton } from '@/components/clients/cancel-trip-button';
-import { ClientOfferCard, type ClientOfferRow } from '@/components/clients/offer-card';
+import { OffersPanel, type PanelOfferRow } from '@/components/clients/offers-panel';
 import { TripStatusChip, type TripStatus } from '@/components/clients/status-chip';
 import { requireClientSession } from '@/lib/clients/auth';
 import { getTripRequestForClient } from '@/lib/clients/queries/me-requests';
@@ -136,32 +136,29 @@ export default async function ClientMeRequestDetailPage({
             {clientsAr.requestDetailOffersEmpty}
           </p>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {offers.map((row) => (
-              <ClientOfferCard
-                key={`${row.source}:${row.id}`}
-                offer={
-                  {
-                    source: row.source,
-                    id: row.id,
-                    trip_request_id: row.trip_request_id,
-                    operator_name: row.operator_name,
-                    operator_phone: row.operator_phone,
-                    total_price_sar: row.total_price_sar,
-                    departure_eta: row.departure_eta,
-                    expires_at: row.expires_at,
-                    aircraft_type: row.aircraft_type,
-                    aircraft_registration: row.aircraft_registration,
-                    status: row.status,
-                    is_current_round: row.is_current_round,
-                  } satisfies ClientOfferRow
-                }
-                tripIsActionable={tripIsActionable}
-                privilegeEnabled={cashbackContext.enabled}
-                cashbackBalanceSar={cashbackContext.cashback_balance_sar}
-              />
-            ))}
-          </div>
+          <OffersPanel
+            offers={offers.map(
+              (row): PanelOfferRow => ({
+                source: row.source,
+                id: row.id,
+                trip_request_id: row.trip_request_id,
+                operator_name: row.operator_name,
+                total_price_sar: row.total_price_sar,
+                aircraft_category: row.aircraft_category,
+                aircraft_type: row.aircraft_type,
+                aircraft_registration: row.aircraft_registration,
+                departure_eta: row.departure_eta,
+                validity_hours: row.validity_hours,
+                expires_at: row.expires_at,
+                notes: row.notes,
+                status: row.status,
+                is_current_round: row.is_current_round,
+              })
+            )}
+            tripIsActionable={tripIsActionable}
+            privilegeEnabled={cashbackContext.enabled}
+            cashbackBalanceSar={cashbackContext.cashback_balance_sar}
+          />
         )}
       </section>
 
