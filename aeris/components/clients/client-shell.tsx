@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useTransition, type ReactNode } from 'react';
 
 import { clientsAr } from '@/lib/i18n/clients-ar';
+import { supportAr } from '@/lib/i18n/support-ar';
 import { clientLogout } from '@/app/actions/clients-public';
 
 interface ClientShellProps {
@@ -62,6 +63,12 @@ export function ClientShell({ fullName, children }: ClientShellProps) {
                 active={pathname.startsWith('/me/reviews')}
               >
                 {clientsAr.meReviewsTitle}
+              </NavLink>
+              <NavLink
+                href="/me/support"
+                active={pathname.startsWith('/me/support')}
+              >
+                {supportAr.nav}
               </NavLink>
               <NavLink
                 href="/me/profile"

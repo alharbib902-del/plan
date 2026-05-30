@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { LogOut } from 'lucide-react';
 import { signOut } from '@/app/(admin)/admin/actions/admin-auth';
+import { supportAr } from '@/lib/i18n/support-ar';
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   return (
@@ -32,6 +33,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                 className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
               >
                 الرحلات
+              </Link>
+              <Link
+                href="/admin/support"
+                className="font-ar rounded-md px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-navy-card/60 hover:text-gold-light"
+              >
+                {supportAr.nav}
               </Link>
               {process.env.ENABLE_EMPTY_LEGS_ADMIN_UI !== 'false' ? (
                 <>
