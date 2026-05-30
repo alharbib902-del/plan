@@ -38,8 +38,16 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: analyticsAr.statusCancelled,
 };
 
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
+// YYYY-MM-DD for an instant rendered in Asia/Riyadh (en-CA → ISO-like).
+// Used for the default date-input values so they show the Riyadh "today",
+// not the UTC day (which lags by 3h between 00:00–02:59 local).
+function ymdRiyadh(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Riyadh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
 }
 
 // Calendar +1 day on a date-only value (UTC arithmetic is DST-safe for a
@@ -116,8 +124,8 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
   const today = new Date();
   const monthAgo = new Date(today);
   monthAgo.setUTCDate(monthAgo.getUTCDate() - 30);
-  const fromInput = validYmd(from) ? from : ymd(monthAgo);
-  const toInput = validYmd(to) ? to : ymd(today);
+  const fromInput = validYmd(from) ? from : ymdRiyadh(monthAgo);
+  const toInput = validYmd(to) ? to : ymdRiyadh(today);
 
   return (
     <section dir="rtl" className="space-y-6">

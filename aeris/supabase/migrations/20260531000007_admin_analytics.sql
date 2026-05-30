@@ -125,10 +125,12 @@ BEGIN
     ), '[]'::jsonb),
 
     'top_operators', COALESCE((
-      -- INNER JOIN drops nothing: bookings.operator_id is NOT NULL (FK),
-      -- so every paid booking has an operator → this per-operator total
-      -- reconciles exactly with revenue.paid_total_sar. ORDER BY inside
-      -- jsonb_agg keeps the array order deterministic.
+      -- Per-operator paid revenue, NAMED operators only. bookings.operator_id
+      -- is NULLABLE (relaxed in 20260508000007_phase_6_2_addons), so paid
+      -- bookings with no assigned operator are intentionally EXCLUDED from
+      -- this ranking — they are still counted in revenue.paid_total_sar
+      -- above, so the per-operator totals may sum to less than total revenue.
+      -- ORDER BY inside jsonb_agg keeps the array order deterministic.
       SELECT jsonb_agg(jsonb_build_object(
         'company_name',   company_name,
         'paid_total_sar', paid_total_sar,
