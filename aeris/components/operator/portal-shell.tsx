@@ -28,6 +28,7 @@ export function OperatorPortalShell({
                 { href: '/operator/dashboard', label: operatorsAr.portal.nav.dashboard },
                 { href: '/operator/legs', label: operatorsAr.portal.nav.legs },
                 { href: '/operator/fleet', label: operatorsAr.portal.nav.fleet },
+                { href: '/operator/crew', label: operatorsAr.portal.nav.crew },
                 // Phase 11 PR 2 — gated cargo nav links. Same
                 // ENABLE_CARGO === 'true' (fail-closed) discipline as
                 // the admin-shell + /operator/cargo pages themselves.
