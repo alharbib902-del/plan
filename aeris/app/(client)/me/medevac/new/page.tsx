@@ -39,11 +39,11 @@ export default async function NewMyMedevacPage() {
   const loose = createAdminClient() as unknown as LooseClient;
   const { data: clientRow } = await loose
     .from('clients')
-    .select('full_name, phone_e164')
+    .select('full_name, contact_phone')
     .eq('id', session.client_id)
     .maybeSingle();
   const client = (clientRow as
-    | { full_name?: string | null; phone_e164?: string | null }
+    | { full_name?: string | null; contact_phone?: string | null }
     | null);
 
   const subs = await listMyShieldSubscriptions(session.client_id);
@@ -64,7 +64,7 @@ export default async function NewMyMedevacPage() {
       <MedevacAuthedForm
         activeSubscription={activeSubscription}
         defaultClientName={client?.full_name ?? ''}
-        defaultClientPhone={client?.phone_e164 ?? ''}
+        defaultClientPhone={client?.contact_phone ?? ''}
       />
     </section>
   );
