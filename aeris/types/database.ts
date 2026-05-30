@@ -670,6 +670,13 @@ export type BookingRow = {
   loyalty_points_earned: number;
   cancellation_reason: string | null;
   cancelled_at: string | null;
+  // Phase 12 §3 (MedEvac Shield coverage) + Phase 13 (Privilege
+  // cashback). NOT NULL columns carry DB defaults. Accessed via
+  // service-role / loose clients today (see lib/supabase/loose-query.ts).
+  is_covered: boolean;
+  cashback_redemption_sar: number;
+  cashback_earned_sar: number | null;
+  paid_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1513,6 +1520,16 @@ export type ClientRow = {
   // Phase 10 PR 1 §3.3: per-client opt-in JSONB. Default '{}'.
   // Missing keys → opt-in (see lib/clients/notification-preferences.ts).
   notification_preferences: Record<string, unknown>;
+  // Phase 13 (Privilege tiers + cashback) + admin 2FA. NOT NULL
+  // columns carry DB defaults. Accessed via loose clients today
+  // (see lib/supabase/loose-query.ts); typed here for parity with live.
+  privilege_tier: 'silver' | 'gold' | 'platinum' | 'diamond';
+  privilege_tier_assigned_at: string;
+  privilege_tier_qualified_spend_12m_sar: number;
+  privilege_below_threshold_since: string | null;
+  tier_locked_until: string | null;
+  cashback_balance_sar: number;
+  two_factor_enabled: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -1711,6 +1728,8 @@ export type CargoRequestRow = {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   accepted_offer_id: string | null;
+  // Phase 11 founder-batch alert bookkeeping (nullable).
+  founder_batch_alerted_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1747,6 +1766,9 @@ export type CargoOfferRow = {
   expires_at: string;
   decided_at: string | null;
   decided_by_user_id: string | null;
+  // Decline / withdraw reasons (nullable; set on the respective transitions).
+  decline_reason: string | null;
+  withdraw_reason: string | null;
   created_at: string;
   updated_at: string;
 };
