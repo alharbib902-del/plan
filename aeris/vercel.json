@@ -55,6 +55,10 @@
       "schedule": "0 */6 * * *"
     },
     {
+      "path": "/api/cron/client/abandoned-request-recovery",
+      "schedule": "0 7 * * *"
+    },
+    {
       "path": "/api/cron/cargo/dispatch-drain",
       "schedule": "*/15 * * * *"
     },
