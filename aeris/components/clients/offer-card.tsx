@@ -8,7 +8,16 @@ import {
   clientDeclineOffer,
 } from '@/app/actions/clients-trip-requests';
 import { CashbackRedeemInput } from '@/components/privilege/cashback-redeem-input';
+import type { OfferSource, OfferStatus } from '@/types/database';
 import { ClientBanner, clientErrorMessage } from './error-banner';
+import {
+  OFFER_STATUS_LABEL,
+  OFFER_STATUS_TONE,
+  aircraftLabel,
+  formatDateTimeAr,
+  formatSAR,
+  offerSourceLabel,
+} from './offer-format';
 
 /**
  * Phase 9 PR 3 — client-side offer card.
@@ -28,7 +37,7 @@ import { ClientBanner, clientErrorMessage } from './error-banner';
  */
 
 export type ClientOfferRow = {
-  source: 'phase4' | 'phase5';
+  source: OfferSource;
   id: string;
   trip_request_id: string;
   operator_name: string;
@@ -38,62 +47,9 @@ export type ClientOfferRow = {
   expires_at: string | null;
   aircraft_type: string | null;
   aircraft_registration: string | null;
-  status: 'pending' | 'viewed' | 'accepted' | 'rejected' | 'expired';
+  status: OfferStatus;
   is_current_round?: boolean | null;
 };
-
-const OFFER_STATUS_LABEL: Record<
-  ClientOfferRow['status'],
-  string
-> = {
-  pending: clientsAr.offerStatusPending,
-  viewed: clientsAr.offerStatusViewed,
-  accepted: clientsAr.offerStatusAccepted,
-  rejected: clientsAr.offerStatusRejected,
-  expired: clientsAr.offerStatusExpired,
-};
-
-const OFFER_STATUS_TONE: Record<ClientOfferRow['status'], string> = {
-  pending: 'border-gold/40 bg-gold/10 text-gold-light',
-  viewed: 'border-blue-400/40 bg-blue-500/10 text-blue-200',
-  accepted: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200',
-  rejected: 'border-rose-400/40 bg-rose-500/10 text-rose-200',
-  expired: 'border-border bg-navy-secondary/60 text-ink-muted',
-};
-
-function formatSAR(amount: number): string {
-  try {
-    return new Intl.NumberFormat('en-US', {
-      maximumFractionDigits: 0,
-    }).format(amount);
-  } catch {
-    return String(amount);
-  }
-}
-
-function formatDateTimeAr(value: string | null): string {
-  if (!value) return '—';
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-      timeZone: 'Asia/Riyadh',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
-}
-
-function aircraftLabel(offer: ClientOfferRow): string {
-  const t = offer.aircraft_type?.trim() ?? '';
-  const r = offer.aircraft_registration?.trim() ?? '';
-  if (t && r) return `${t} (${r})`;
-  if (t) return t;
-  if (r) return r;
-  return '—';
-}
 
 interface ClientOfferCardProps {
   offer: ClientOfferRow;
@@ -267,12 +223,7 @@ function SourceBadge({
   source: ClientOfferRow['source'];
   isCurrentRound: boolean;
 }) {
-  const label =
-    source === 'phase5' && isCurrentRound
-      ? clientsAr.offerSourceCurrentRound
-      : source === 'phase5'
-        ? clientsAr.offerSourcePhase5
-        : clientsAr.offerSourcePhase4;
+  const label = offerSourceLabel(source, isCurrentRound);
   return (
     <span className="font-ar rounded-full border border-border bg-navy-secondary/60 px-2 py-0.5 text-[10px] text-ink-muted">
       {label}
