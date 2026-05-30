@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { requireClientSession } from '@/lib/clients/auth';
@@ -11,6 +12,7 @@ import {
   EmptyLegMatchesTable,
 } from '@/components/clients/empty-leg-table';
 import { clientsAr } from '@/lib/i18n/clients-ar';
+import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
 /**
  * Phase 10 PR 2 — `/me/empty-legs` tabbed list.
@@ -59,10 +61,16 @@ export default async function ClientMeEmptyLegsPage({
 
   return (
     <section className="space-y-6">
-      <header>
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-ar text-2xl text-ink-primary sm:text-3xl">
           {clientsAr.emptyLegsPortalTitle}
         </h1>
+        <Link
+          href="/me/empty-legs/alerts"
+          className="font-ar rounded-md border border-border px-3 py-1.5 text-sm text-gold-light transition-colors hover:border-gold/40 hover:text-gold"
+        >
+          {emptyLegsAr.alertsNavLink}
+        </Link>
       </header>
 
       <nav className="flex gap-2 border-b border-border">
