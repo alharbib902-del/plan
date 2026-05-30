@@ -70,7 +70,7 @@ export async function listOperatorBookings(
   try {
     const { data, error } = await client
       .from('bookings')
-      .select('id, booking_number, status, total_price_sar, created_at, customer_name, customer_phone, operator_id')
+      .select('id, booking_number, status:flight_status, total_price_sar:total_amount, created_at, customer_name:customer_name_snapshot, customer_phone:customer_phone_snapshot, operator_id')
       .eq('operator_id', operatorId)
       .order('created_at', { ascending: false })
       .limit(200);
@@ -95,7 +95,7 @@ export async function getOperatorBookingById(
   try {
     const { data, error } = await client
       .from('bookings')
-      .select('id, booking_number, status, total_price_sar, created_at, customer_name, customer_phone, operator_id')
+      .select('id, booking_number, status:flight_status, total_price_sar:total_amount, created_at, customer_name:customer_name_snapshot, customer_phone:customer_phone_snapshot, operator_id')
       .eq('id', bookingId)
       .eq('operator_id', operatorId)
       .maybeSingle();
