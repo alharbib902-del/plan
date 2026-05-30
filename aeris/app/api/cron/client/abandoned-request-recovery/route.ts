@@ -5,7 +5,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
-import { listStaleOfferedRequests } from '@/lib/clients/request-recovery';
+import { listRecoverableRequests } from '@/lib/clients/request-recovery';
 import { sendClientRequestRecoveryEmail } from '@/lib/notifications/client-request-recovery-email';
 
 /**
@@ -48,7 +48,9 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   let requests;
   try {
-    requests = await listStaleOfferedRequests(STALE_HOURS, 500);
+    // Candidates already exclude reminded requests (anti-join in the RPC) BEFORE
+    // the limit, so newer requests are never starved by old reminded ones.
+    requests = await listRecoverableRequests(STALE_HOURS, 500);
   } catch (err) {
     console.error('[cron.request-recovery] load failed', err);
     return NextResponse.json({ ok: false, error: 'load_failed' }, { status: 200 });
@@ -58,40 +60,46 @@ export async function GET(req: NextRequest): Promise<Response> {
   let sent = 0;
   let skipped = 0;
 
-  for (const request of requests) {
-    const client = request.clients;
-    if (!client) continue;
-
+  for (const c of requests) {
     // Atomic claim BEFORE sending — only the run that wins the unique
     // (trip_request_id) row sends; no duplicate reminder even if two runs overlap.
+    // (client_id is derived inside the RPC from the request itself.)
     const { data: claimId, error: claimErr } = await rpc.rpc(
       'record_trip_request_recovery_reminder',
-      { p_trip_request_id: request.id, p_client_id: client.id, p_channel: 'email' }
+      { p_trip_request_id: c.trip_request_id, p_channel: 'email' }
     );
     if (claimErr) {
-      console.error('[cron.request-recovery] claim failed', { request: request.id, err: claimErr });
+      console.error('[cron.request-recovery] claim failed', { request: c.trip_request_id, err: claimErr });
       continue;
     }
     if (!claimId) {
-      skipped += 1; // already reminded
+      skipped += 1; // already reminded / became ineligible
       continue;
     }
 
     const result = await sendClientRequestRecoveryEmail({
       client: {
-        id: client.id,
-        full_name: client.full_name,
-        auth_email: client.auth_email,
+        id: c.client_id,
+        full_name: c.client_full_name,
+        auth_email: c.client_auth_email,
       },
-      requestNumber: request.request_number,
-      routeFrom: request.departure_airport ?? '—',
-      routeTo: request.arrival_airport ?? '—',
-      requestUrl: `${siteBaseUrl()}/me/requests/${request.id}`,
+      requestNumber: c.request_number,
+      routeFrom: c.departure_airport ?? '—',
+      routeTo: c.arrival_airport ?? '—',
+      requestUrl: `${siteBaseUrl()}/me/requests/${c.trip_request_id}`,
     });
 
     if (!result.ok) {
       // Release the claim so the next run retries (transient / env-missing send).
-      await rpc.rpc('delete_trip_request_recovery_reminder', { p_reminder_id: claimId });
+      const { error: releaseErr } = await rpc.rpc('delete_trip_request_recovery_reminder', {
+        p_reminder_id: claimId,
+      });
+      if (releaseErr) {
+        console.error('[cron.request-recovery] release claim failed', {
+          request: c.trip_request_id,
+          err: releaseErr,
+        });
+      }
       skipped += 1;
       continue;
     }

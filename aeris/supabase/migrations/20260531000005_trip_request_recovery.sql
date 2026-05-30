@@ -29,7 +29,6 @@ REVOKE ALL ON trip_request_recovery_reminders FROM anon, authenticated;
 -- ---- RPC: record_trip_request_recovery_reminder (race-safe claim) ------------
 CREATE OR REPLACE FUNCTION record_trip_request_recovery_reminder(
   p_trip_request_id UUID,
-  p_client_id UUID,
   p_channel TEXT
 )
 RETURNS UUID
@@ -40,11 +39,14 @@ AS $$
 DECLARE
   v_id UUID;
 BEGIN
+  -- client_id is derived from the request itself, never trusted from the caller.
   INSERT INTO trip_request_recovery_reminders (trip_request_id, client_id, channel)
-  VALUES (p_trip_request_id, p_client_id, COALESCE(NULLIF(trim(p_channel), ''), 'email'))
+  SELECT tr.id, tr.client_id, COALESCE(NULLIF(trim(p_channel), ''), 'email')
+  FROM trip_requests tr
+  WHERE tr.id = p_trip_request_id AND tr.client_id IS NOT NULL
   ON CONFLICT (trip_request_id) DO NOTHING
   RETURNING id INTO v_id;
-  RETURN v_id;  -- NULL when this request was already reminded
+  RETURN v_id;  -- NULL when already reminded, or request missing / guest-owned
 END;
 $$;
 
@@ -66,15 +68,56 @@ BEGIN
 END;
 $$;
 
+-- ---- RPC: list_recoverable_trip_requests ------------------------------------
+-- Candidate selection for the cron. The not-yet-reminded filter is an anti-join
+-- (LEFT JOIN reminders ... IS NULL) applied BEFORE the limit, so already-reminded
+-- requests can never crowd out newer ones (no starvation). Uses updated_at (no
+-- activity for the stale window) rather than created_at, so a request that only
+-- just became `offered` is not reminded immediately. Guests excluded by the join.
+CREATE OR REPLACE FUNCTION list_recoverable_trip_requests(
+  p_stale_before TIMESTAMPTZ,
+  p_limit INTEGER
+)
+RETURNS TABLE (
+  trip_request_id UUID,
+  request_number VARCHAR,
+  departure_airport VARCHAR,
+  arrival_airport VARCHAR,
+  client_id UUID,
+  client_full_name VARCHAR,
+  client_auth_email VARCHAR,
+  client_contact_phone VARCHAR
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT tr.id, tr.request_number, tr.departure_airport, tr.arrival_airport,
+         c.id, c.full_name, c.auth_email, c.contact_phone
+  FROM trip_requests tr
+  JOIN clients c ON c.id = tr.client_id
+  LEFT JOIN trip_request_recovery_reminders r ON r.trip_request_id = tr.id
+  WHERE tr.status = 'offered'
+    AND tr.updated_at < p_stale_before
+    AND r.id IS NULL
+  ORDER BY tr.updated_at ASC
+  LIMIT LEAST(GREATEST(COALESCE(p_limit, 500), 1), 1000);
+$$;
+
 -- ---- grants — service_role ONLY ---------------------------------------------
-REVOKE ALL ON FUNCTION record_trip_request_recovery_reminder(UUID, UUID, TEXT)
+REVOKE ALL ON FUNCTION record_trip_request_recovery_reminder(UUID, TEXT)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION record_trip_request_recovery_reminder(UUID, UUID, TEXT)
+GRANT EXECUTE ON FUNCTION record_trip_request_recovery_reminder(UUID, TEXT)
   TO service_role;
 
 REVOKE ALL ON FUNCTION delete_trip_request_recovery_reminder(UUID)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION delete_trip_request_recovery_reminder(UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION list_recoverable_trip_requests(TIMESTAMPTZ, INTEGER)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION list_recoverable_trip_requests(TIMESTAMPTZ, INTEGER)
   TO service_role;
 
 -- ============================================
