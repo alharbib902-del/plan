@@ -70,11 +70,14 @@ DECLARE
 BEGIN
   v_o := upper(trim(COALESCE(p_origin, '')));
   v_d := upper(trim(COALESCE(p_destination, '')));
-  -- 3-letter IATA, distinct route, non-negative price.
-  IF length(v_o) <> 3 OR length(v_d) <> 3 OR v_o = v_d THEN
+  -- 3-letter IATA, distinct route, non-negative price, sane date window.
+  IF v_o !~ '^[A-Z]{3}$' OR v_d !~ '^[A-Z]{3}$' OR v_o = v_d THEN
     RETURN NULL;
   END IF;
   IF p_max_price IS NOT NULL AND p_max_price < 0 THEN
+    RETURN NULL;
+  END IF;
+  IF p_date_from IS NOT NULL AND p_date_to IS NOT NULL AND p_date_from > p_date_to THEN
     RETURN NULL;
   END IF;
 
@@ -155,6 +158,24 @@ BEGIN
 END;
 $$;
 
+-- ---- RPC: delete_empty_leg_alert_delivery (cron releases a claim on send fail) -
+CREATE OR REPLACE FUNCTION delete_empty_leg_alert_delivery(
+  p_delivery_id UUID
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_n INTEGER;
+BEGIN
+  DELETE FROM empty_leg_alert_deliveries WHERE id = p_delivery_id;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n > 0;
+END;
+$$;
+
 -- ---- grants — service_role ONLY ---------------------------------------------
 REVOKE ALL ON FUNCTION create_client_empty_leg_alert(UUID, VARCHAR, VARCHAR, NUMERIC, DATE, DATE, TEXT[])
   FROM PUBLIC, anon, authenticated;
@@ -169,6 +190,9 @@ GRANT EXECUTE ON FUNCTION set_client_empty_leg_alert_active(UUID, UUID, BOOLEAN)
 
 REVOKE ALL ON FUNCTION record_empty_leg_alert_delivery(UUID, UUID, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION record_empty_leg_alert_delivery(UUID, UUID, TEXT) TO service_role;
+
+REVOKE ALL ON FUNCTION delete_empty_leg_alert_delivery(UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION delete_empty_leg_alert_delivery(UUID) TO service_role;
 
 -- ============================================
 -- END OF MIGRATION

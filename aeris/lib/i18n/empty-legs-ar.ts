@@ -371,6 +371,13 @@ export const emptyLegsAr = {
   alertDeleteSuccess: 'تم حذف التنبيه',
   alertToggleSuccess: 'تم تحديث التنبيه',
   alertGenericError: 'تعذّر إتمام العملية، حاول مرة أخرى',
+  alertCurrency: 'ريال',
+  alertValIata: 'رمز المطار يجب أن يكون 3 أحرف (IATA)',
+  alertValPricePositive: 'السعر يجب أن يكون أكبر من صفر',
+  alertValDate: 'تاريخ غير صالح',
+  alertValRouteDistinct: 'مطار المغادرة والوصول يجب أن يختلفا',
+  alertValDateOrder: 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية',
+  alertValAlertId: 'معرّف التنبيه غير صالح',
 } as const;
 
 export type EmptyLegsArKey = keyof typeof emptyLegsAr;

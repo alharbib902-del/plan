@@ -65,6 +65,7 @@ export async function listActiveAlertsWithClient(
     .from('client_empty_leg_alerts')
     .select(`${ALERT_COLUMNS}, clients(id, full_name, auth_email, contact_phone)`)
     .eq('is_active', true)
+    .order('created_at', { ascending: true })
     .limit(limit);
   if (error) {
     throw new Error(error.message);

@@ -76,8 +76,28 @@ export async function GET(req: NextRequest): Promise<Response> {
     }
 
     for (const leg of legs) {
-      if (delivered.has(leg.id)) continue;
+      if (delivered.has(leg.id)) continue; // cheap pre-filter; the claim below is the lock
       matched += 1;
+
+      // Atomic claim BEFORE sending: INSERT ... ON CONFLICT DO NOTHING RETURNING id.
+      // Only the run that wins the unique (alert, leg) row sends — no duplicate email
+      // even if two cron invocations overlap.
+      const { data: claimId, error: claimErr } = await rpc.rpc(
+        'record_empty_leg_alert_delivery',
+        { p_alert_id: alert.id, p_empty_leg_id: leg.id, p_channel: 'email' }
+      );
+      if (claimErr) {
+        console.error('[cron.price-alerts] claim failed', {
+          alert: alert.id,
+          leg: leg.id,
+          err: claimErr,
+        });
+        continue;
+      }
+      if (!claimId) {
+        skipped += 1; // already claimed / delivered
+        continue;
+      }
 
       const result = await sendClientEmptyLegMatchEmail({
         client: {
@@ -92,21 +112,10 @@ export async function GET(req: NextRequest): Promise<Response> {
       });
 
       if (!result.ok) {
+        // Release the claim so the next run retries (transient / env-missing send).
+        await rpc.rpc('delete_empty_leg_alert_delivery', { p_delivery_id: claimId });
         skipped += 1;
-        continue; // not recorded → retried next run
-      }
-
-      const { error: recErr } = await rpc.rpc('record_empty_leg_alert_delivery', {
-        p_alert_id: alert.id,
-        p_empty_leg_id: leg.id,
-        p_channel: 'email',
-      });
-      if (recErr) {
-        console.error('[cron.price-alerts] record delivery failed', {
-          alert: alert.id,
-          leg: leg.id,
-          err: recErr,
-        });
+        continue;
       }
       sent += 1;
     }

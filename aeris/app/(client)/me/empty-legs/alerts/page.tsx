@@ -16,7 +16,7 @@ export const revalidate = 0;
 function priceLabel(price: number | null): string {
   return price == null
     ? emptyLegsAr.alertAnyPrice
-    : `${Number(price).toLocaleString('en-US')} ريال`;
+    : `${Number(price).toLocaleString('en-US')} ${emptyLegsAr.alertCurrency}`;
 }
 
 export default async function EmptyLegAlertsPage() {
