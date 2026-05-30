@@ -4,8 +4,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
  * Structurally-typed view of the service-role Supabase client for tables and
- * RPCs that are NOT present in the generated `types/database.ts`
- * (`reviews`, `support_tickets`, `support_ticket_messages`, plus their RPCs).
+ * RPCs that are NOT present in the generated `types/database.ts` (e.g. `reviews`
+ * + its RPCs; the Support tables/RPCs join this list when the Support PR lands).
  *
  * This mirrors the `LooseRpcClient` escape hatch already used across
  * `app/actions/*` for the Phase 9+ RPCs: the generated Database type is

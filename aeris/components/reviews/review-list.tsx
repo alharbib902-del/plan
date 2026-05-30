@@ -44,8 +44,9 @@ export function ReviewList({
           <div className="flex items-center justify-between">
             <Stars rating={review.overall_rating} />
             <span className="text-sm text-muted">
-              {clientsAr.meReviewsBookingPrefix}{' '}
-              {review.bookings?.booking_number ?? review.booking_id.slice(0, 8)}
+              {review.bookings?.booking_number
+                ? `${clientsAr.meReviewsBookingPrefix} ${review.bookings.booking_number}`
+                : clientsAr.meReviewsBookingPrefix}
             </span>
           </div>
           {review.comment ? (
