@@ -149,6 +149,7 @@ export const clientsAr = {
   meRequestsViewDetails: 'عرض التفاصيل',
 
   meBookingsTitle: 'حجوزاتي',
+  meReviewsTitle: 'تقييماتي',
   meBookingsEmpty: 'لا توجد حجوزات بعد.',
   meBookingsTableNumber: 'رقم الحجز',
   meBookingsTableRoute: 'الرحلة',
