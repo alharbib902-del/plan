@@ -31,7 +31,7 @@ export type RecoverableRequest = {
 
 /**
  * Client-owned trip_requests stuck at `offered` with no activity for
- * `staleHours` that have NOT already been reminded. Newest-inactive first.
+ * `staleHours` that have NOT already been reminded. Oldest-inactive first.
  */
 export async function listRecoverableRequests(
   staleHours = 24,

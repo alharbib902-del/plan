@@ -43,10 +43,12 @@ BEGIN
   INSERT INTO trip_request_recovery_reminders (trip_request_id, client_id, channel)
   SELECT tr.id, tr.client_id, COALESCE(NULLIF(trim(p_channel), ''), 'email')
   FROM trip_requests tr
-  WHERE tr.id = p_trip_request_id AND tr.client_id IS NOT NULL
+  -- Re-check status at claim time: if the request was booked/cancelled between
+  -- candidate selection and the claim, no row is inserted (no late reminder).
+  WHERE tr.id = p_trip_request_id AND tr.client_id IS NOT NULL AND tr.status = 'offered'
   ON CONFLICT (trip_request_id) DO NOTHING
   RETURNING id INTO v_id;
-  RETURN v_id;  -- NULL when already reminded, or request missing / guest-owned
+  RETURN v_id;  -- NULL when already reminded, request missing/guest, or no longer offered
 END;
 $$;
 
