@@ -3,8 +3,11 @@
 -- Migration: 20260531000007  (forward-only)
 -- ============================================
 -- A single aggregating RPC for the admin dashboard. NO new tables.
--- Live queries over bookings / trip_requests / operators (indexed on
--- the date columns used here). Returns one jsonb envelope.
+-- Live queries over bookings / trip_requests / operators. Returns one
+-- jsonb envelope. The two btree indexes below back the created_at range
+-- scans (paid_at is already covered by the existing (paid_at DESC,
+-- client_id) index; the prior created_at indexes were composites led by
+-- client_id/status, useless for a bare created_at range).
 --
 -- Date field PER KPI (deliberate — Codex plan review):
 --   - revenue + per-operator → bookings.paid_at (money is realised
@@ -18,6 +21,12 @@
 -- Security: SECURITY DEFINER + service_role-only. The admin page calls
 -- it through the service-role client AFTER requireAdminSession(); anon
 -- and authenticated are revoked.
+
+-- ---- Indexes backing the created_at range scans (idempotent) ----------------
+CREATE INDEX IF NOT EXISTS idx_bookings_created_at_analytics
+  ON bookings (created_at);
+CREATE INDEX IF NOT EXISTS idx_trip_requests_created_at_analytics
+  ON trip_requests (created_at);
 
 CREATE OR REPLACE FUNCTION admin_analytics_summary(
   p_from TIMESTAMPTZ DEFAULT NULL,
@@ -98,11 +107,13 @@ BEGIN
     ),
 
     'top_routes', COALESCE((
+      -- ORDER BY inside jsonb_agg → deterministic array order (the inner
+      -- ORDER BY+LIMIT only PICKS the top 10; the agg order is separate).
       SELECT jsonb_agg(jsonb_build_object(
         'departure', departure_airport,
         'arrival',   arrival_airport,
         'count',     cnt
-      ))
+      ) ORDER BY cnt DESC, departure_airport, arrival_airport)
       FROM (
         SELECT departure_airport, arrival_airport, COUNT(*) AS cnt
         FROM req
@@ -114,11 +125,15 @@ BEGIN
     ), '[]'::jsonb),
 
     'top_operators', COALESCE((
+      -- INNER JOIN drops nothing: bookings.operator_id is NOT NULL (FK),
+      -- so every paid booking has an operator → this per-operator total
+      -- reconciles exactly with revenue.paid_total_sar. ORDER BY inside
+      -- jsonb_agg keeps the array order deterministic.
       SELECT jsonb_agg(jsonb_build_object(
         'company_name',   company_name,
         'paid_total_sar', paid_total_sar,
         'paid_count',     paid_count
-      ))
+      ) ORDER BY paid_total_sar DESC, company_name)
       FROM (
         SELECT op.company_name,
                COALESCE(SUM(p.total_amount), 0) AS paid_total_sar,

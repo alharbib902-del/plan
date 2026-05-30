@@ -42,6 +42,14 @@ function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Calendar +1 day on a date-only value (UTC arithmetic is DST-safe for a
+// pure day increment). Used to build the half-open upper bound.
+function nextYmd(s: string): string {
+  const d = new Date(`${s}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function validYmd(s?: string): s is string {
   return (
     !!s &&
@@ -92,15 +100,15 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
   const { from, to } = await searchParams;
 
   // Custom range only when BOTH bounds are valid; otherwise the RPC
-  // defaults to the last 30 days. The "to" day is made inclusive by
-  // passing the following midnight (RPC range is half-open [from, to)).
+  // defaults to the last 30 days. The date inputs are interpreted as
+  // Asia/Riyadh (+03:00) calendar days: `from` = start of the from-day,
+  // `to` = start of the day AFTER the to-day (the RPC range is half-open
+  // [from, to)), so the whole selected to-day is included — no UTC drift.
   let fromIso: string | null = null;
   let toIso: string | null = null;
   if (validYmd(from) && validYmd(to)) {
-    fromIso = `${from}T00:00:00.000Z`;
-    const toExclusive = new Date(`${to}T00:00:00.000Z`);
-    toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
-    toIso = toExclusive.toISOString();
+    fromIso = `${from}T00:00:00+03:00`;
+    toIso = `${nextYmd(to)}T00:00:00+03:00`;
   }
 
   const summary = await getAnalyticsSummary(fromIso, toIso);
@@ -122,7 +130,8 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
             <p className="font-ar mt-1 text-sm text-ink-muted">
               {analyticsAr.rangeSummary}:{' '}
               <span dir="ltr">
-                {formatDateAr(summary.range.from)} – {formatDateAr(summary.range.to)}
+                {formatDateAr(`${fromInput}T00:00:00+03:00`)} –{' '}
+                {formatDateAr(`${toInput}T00:00:00+03:00`)}
               </span>
             </p>
           ) : null}
