@@ -219,6 +219,7 @@ export const clientsAr = {
   offerStatusExpired: 'منتهي الصلاحية',
   offerExpiresLabel: 'صلاحية حتى',
   offerPriceLabel: 'السعر الإجمالي',
+  currencySAR: 'ريال',
   offerDepartureEtaLabel: 'موعد الإقلاع المقترح',
   offerAircraftLabel: 'الطائرة',
 

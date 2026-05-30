@@ -72,6 +72,11 @@ export function formatSAR(amount: number): string {
   }
 }
 
+/** Formatted SAR amount followed by the Arabic currency word. */
+export function formatSARLabel(amount: number): string {
+  return `${formatSAR(amount)} ${clientsAr.currencySAR}`;
+}
+
 /** Riyadh-zoned Arabic date+time (gregorian, latin digits), or —. */
 export function formatDateTimeAr(value: string | null): string {
   if (!value) return '—';

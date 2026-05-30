@@ -28,9 +28,9 @@ import { OfferComparison } from './offer-comparison';
  * the server→client boundary: a structural superset of BOTH
  * `ClientOfferRow` (cards) and `OfferComparisonRow` (table), so a
  * row can be handed to either view directly. It deliberately omits
- * operator_email + internal dispatch identifiers (target/round ids)
- * that neither view renders — keeping them out of the client
- * payload.
+ * operator_email, operator_phone, and internal dispatch identifiers
+ * (target/round ids) that neither view renders — keeping them out
+ * of the client payload.
  */
 
 export type PanelOfferRow = {
@@ -38,7 +38,6 @@ export type PanelOfferRow = {
   id: string;
   trip_request_id: string;
   operator_name: string;
-  operator_phone: string | null;
   total_price_sar: number;
   aircraft_category: AircraftCategoryValue | null;
   aircraft_type: string | null;

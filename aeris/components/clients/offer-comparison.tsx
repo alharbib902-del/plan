@@ -10,7 +10,7 @@ import {
   aircraftCategoryLabel,
   aircraftLabel,
   formatDateTimeAr,
-  formatSAR,
+  formatSARLabel,
   offerSourceLabel,
 } from './offer-format';
 
@@ -80,7 +80,7 @@ export function OfferComparison({ offers }: { offers: OfferComparisonRow[] }) {
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-navy-card/40">
-      <table className="w-full min-w-[640px] border-collapse text-right">
+      <table className="w-full min-w-[640px] border-collapse text-start">
         <caption className="sr-only">{clientsAr.compareCaption}</caption>
         <thead>
           <tr className="border-b border-border">
@@ -131,7 +131,7 @@ export function OfferComparison({ offers }: { offers: OfferComparisonRow[] }) {
               return (
                 <Cell key={key} highlight={cheapestKeys.has(key)}>
                   <span className="font-ar text-gold-light">
-                    {formatSAR(offer.total_price_sar)} ريال
+                    {formatSARLabel(offer.total_price_sar)}
                   </span>
                 </Cell>
               );

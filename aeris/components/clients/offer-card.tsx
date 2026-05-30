@@ -15,7 +15,7 @@ import {
   OFFER_STATUS_TONE,
   aircraftLabel,
   formatDateTimeAr,
-  formatSAR,
+  formatSARLabel,
   offerSourceLabel,
 } from './offer-format';
 
@@ -41,7 +41,6 @@ export type ClientOfferRow = {
   id: string;
   trip_request_id: string;
   operator_name: string;
-  operator_phone: string | null;
   total_price_sar: number;
   departure_eta: string | null;
   expires_at: string | null;
@@ -141,7 +140,7 @@ export function ClientOfferCard({
       <dl className="grid gap-3 sm:grid-cols-2">
         <Field label={clientsAr.offerPriceLabel}>
           <span className="font-ar text-base text-gold-light">
-            {formatSAR(offer.total_price_sar)} ريال
+            {formatSARLabel(offer.total_price_sar)}
           </span>
         </Field>
         <Field label={clientsAr.offerDepartureEtaLabel}>

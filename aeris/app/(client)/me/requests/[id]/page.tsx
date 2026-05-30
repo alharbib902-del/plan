@@ -143,7 +143,6 @@ export default async function ClientMeRequestDetailPage({
                 id: row.id,
                 trip_request_id: row.trip_request_id,
                 operator_name: row.operator_name,
-                operator_phone: row.operator_phone,
                 total_price_sar: row.total_price_sar,
                 aircraft_category: row.aircraft_category,
                 aircraft_type: row.aircraft_type,
