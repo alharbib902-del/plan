@@ -45,6 +45,7 @@ export const clientsAr = {
   signupPasswordLabel: 'كلمة المرور (10 أحرف على الأقل، حرف ورقم)',
   signupFullNameLabel: 'الاسم الكامل',
   signupPhoneLabel: 'رقم الجوال (مع رمز الدولة)',
+  signupReferralCodeLabel: 'كود الإحالة (اختياري)',
   signupMarketingOptIn:
     'أرغب في تلقي عروض ورحلات Empty Legs على بريدي.',
   signupSubmit: 'إنشاء الحساب',

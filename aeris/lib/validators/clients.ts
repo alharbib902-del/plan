@@ -54,6 +54,21 @@ export const sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/, {
   message: 'يجب أن يكون hash بصيغة sha256 (64 حرف hex)',
 });
 
+// Optional referral code applied at signup. Lenient shape — the
+// SECURITY DEFINER `apply_referral_code` RPC upper()/trim()s and is
+// the authority on validity; an unknown/blank code is a no-op that
+// never blocks the signup.
+export const referralCodeSchema = z
+  .string()
+  .trim()
+  // Never REJECT — truncate instead, so a malformed ?ref= share link
+  // (or an over-long paste) can never block an otherwise-valid signup.
+  // The `apply_referral_code` RPC is the authority on validity; an
+  // unknown code is a silent no-op.
+  .transform((v) => v.slice(0, 32))
+  .optional()
+  .nullable();
+
 // ============================================================
 // 1. clientSignup
 // ============================================================
@@ -64,6 +79,7 @@ export const clientSignupSchema = z.object({
   full_name: fullNameSchema,
   phone: phoneSchema,
   marketing_opt_in: z.boolean(),
+  referral_code: referralCodeSchema,
 });
 
 export type ClientSignupInput = z.infer<typeof clientSignupSchema>;

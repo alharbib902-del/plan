@@ -11,7 +11,11 @@ import {
 } from '@/app/actions/clients-public';
 import { ClientBanner, clientErrorMessage } from './error-banner';
 
-export function ClientSignupForm() {
+export function ClientSignupForm({
+  initialReferralCode,
+}: {
+  initialReferralCode?: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -28,6 +32,7 @@ export function ClientSignupForm() {
     const full_name = String(fd.get('full_name') ?? '');
     const phone = String(fd.get('phone') ?? '');
     const marketing_opt_in = fd.get('marketing_opt_in') === 'on';
+    const referral_code = String(fd.get('referral_code') ?? '');
 
     setErrorCode(null);
     setFieldErrors({});
@@ -38,6 +43,7 @@ export function ClientSignupForm() {
         full_name,
         phone,
         marketing_opt_in,
+        referral_code,
       });
       if (!signup.ok) {
         setErrorCode(signup.error);
@@ -107,6 +113,15 @@ export function ClientSignupForm() {
         label={clientsAr.signupPhoneLabel}
         error={fieldErrors.phone}
       />
+      <Field
+        name="referral_code"
+        type="text"
+        dir="ltr"
+        label={clientsAr.signupReferralCodeLabel}
+        error={fieldErrors.referral_code}
+        defaultValue={initialReferralCode}
+        optional
+      />
 
       <label className="font-ar flex items-start gap-2 text-sm text-ink-secondary">
         <input
@@ -141,12 +156,16 @@ function Field({
   dir,
   label,
   error,
+  optional = false,
+  defaultValue,
 }: {
   name: string;
   type: string;
   dir?: 'ltr' | 'rtl';
   label: string;
   error?: string;
+  optional?: boolean;
+  defaultValue?: string;
 }) {
   return (
     <div>
@@ -161,7 +180,8 @@ function Field({
         name={name}
         type={type}
         dir={dir}
-        required
+        required={!optional}
+        defaultValue={defaultValue}
         className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
       />
       {error ? (
