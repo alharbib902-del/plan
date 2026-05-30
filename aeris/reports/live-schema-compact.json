@@ -1,0 +1,2786 @@
+{
+  "project": "https://ugwxklkulptxrgqysxkn.supabase.co",
+  "tables": {
+    "admin_login_attempts": {
+      "id": "uuid [PK]",
+      "actor_fingerprint": "character varying",
+      "outcome": "text",
+      "attempted_at": "timestamp with time zone"
+    },
+    "admin_mfa_challenge_attempts": {
+      "id": "uuid [PK]",
+      "actor_fingerprint": "character varying",
+      "admin_user_id": "uuid [FK->admin_users.id]",
+      "outcome": "text",
+      "attempted_at": "timestamp with time zone"
+    },
+    "payments": {
+      "id": "uuid [PK]",
+      "booking_id": "uuid [FK->bookings.id]",
+      "amount": "numeric",
+      "currency": "character varying",
+      "payment_method": "public.payment_method enum(apple_pay|mada|visa|mastercard|stc_pay)",
+      "gateway": "character varying",
+      "gateway_transaction_id": "character varying",
+      "status": "public.payment_status enum(initiated|success|failed|refunded)",
+      "gateway_response": "jsonb",
+      "fee_amount": "numeric",
+      "refund_amount": "numeric",
+      "refund_reason": "text",
+      "refunded_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "spatial_ref_sys": {
+      "srid": "integer [PK]",
+      "auth_name": "character varying",
+      "auth_srid": "integer",
+      "srtext": "character varying",
+      "proj4text": "character varying"
+    },
+    "empty_leg_alert_deliveries": {
+      "id": "uuid [PK]",
+      "alert_id": "uuid [FK->client_empty_leg_alerts.id]",
+      "empty_leg_id": "uuid [FK->empty_legs.id]",
+      "channel": "text",
+      "delivered_at": "timestamp with time zone"
+    },
+    "admin_accounts": {
+      "id": "uuid [PK]",
+      "email": "text",
+      "password_hash": "text",
+      "totp_secret": "text",
+      "totp_enabled": "boolean",
+      "is_active": "boolean",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "support_tickets": {
+      "id": "uuid [PK]",
+      "ticket_number": "character varying",
+      "client_id": "uuid [FK->clients.id]",
+      "booking_id": "uuid [FK->bookings.id]",
+      "category": "public.support_category enum(booking|payment|refund|complaint|other)",
+      "priority": "public.support_priority enum(low|medium|high|urgent)",
+      "subject": "character varying",
+      "description": "text",
+      "status": "public.support_status enum(open|in_progress|resolved|closed)",
+      "assigned_to": "uuid",
+      "resolution": "text",
+      "resolved_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "phase7_operator_stubs": {
+      "id": "uuid [PK]",
+      "company_name": "character varying",
+      "contact_email": "character varying",
+      "contact_phone": "character varying",
+      "status": "text",
+      "notes": "text",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "booking_addons": {
+      "id": "uuid [PK]",
+      "booking_id": "uuid [FK->bookings.id]",
+      "addon_type": "public.addon_type enum(ground_transfer|crew|catering|special)",
+      "addon_subtype": "character varying",
+      "details": "jsonb",
+      "quantity": "integer",
+      "unit_price": "numeric",
+      "total_price": "numeric",
+      "commission_rate": "numeric",
+      "supplier_id": "uuid",
+      "status": "public.addon_status enum(pending|confirmed|delivered|cancelled)",
+      "created_at": "timestamp with time zone",
+      "cancelled_at": "timestamp with time zone"
+    },
+    "client_notification_alert_status": {
+      "id": "integer [PK]",
+      "status": "text",
+      "last_failure_at": "timestamp with time zone",
+      "last_failure_reason": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "cargo_aircraft_capabilities": {
+      "aircraft_id": "uuid [PK,FK->aircraft.id]",
+      "supports_horse": "boolean",
+      "supports_luxury_car": "boolean",
+      "supports_valuables": "boolean",
+      "supports_other": "boolean",
+      "max_horse_count": "integer",
+      "max_car_count": "integer",
+      "max_payload_kg": "numeric",
+      "notes": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "medevac_severity_sla": {
+      "severity": "public.medevac_severity enum(stable|moderate|critical) [PK]",
+      "sla_interval": "interval",
+      "updated_at": "timestamp with time zone"
+    },
+    "client_loyalty_ledger": {
+      "id": "uuid [PK]",
+      "client_id": "uuid [FK->clients.id]",
+      "event_type": "public.loyalty_ledger_event_type enum(earn|redeem|adjust|expire|diamond_shield_granted|diamond_shield_skipped_already_diamond|diamond_shield_skipped_paying_paid_plan|diamond_shield_grant_failed|diamond_shield_revoked_on_downgrade)",
+      "amount_sar": "numeric",
+      "balance_after_sar": "numeric",
+      "booking_id": "uuid [FK->bookings.id]",
+      "source_change_log_id": "uuid [FK->privilege_tier_change_log.id]",
+      "source_subscription_id": "uuid [FK->medevac_subscriptions.id]",
+      "admin_actor_cookie_fingerprint": "text",
+      "admin_reason": "text",
+      "cashback_expiry_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone"
+    },
+    "cargo_email_alert_status": {
+      "id": "integer [PK]",
+      "status": "text",
+      "last_failure_at": "timestamp with time zone",
+      "last_failure_reason": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "public_action_attempts": {
+      "id": "uuid [PK]",
+      "action": "text",
+      "actor_fingerprint": "character varying",
+      "outcome": "text",
+      "attempted_at": "timestamp with time zone"
+    },
+    "admin_mfa_secrets": {
+      "admin_user_id": "uuid [PK,FK->admin_users.id]",
+      "secret_base32": "character varying",
+      "enrolled_at": "timestamp with time zone",
+      "last_used_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "empty_legs": {
+      "id": "uuid [PK]",
+      "leg_number": "character varying",
+      "parent_booking_id": "uuid [FK->bookings.id]",
+      "operator_id": "uuid [FK->operators.id]",
+      "aircraft_id": "uuid [FK->aircraft.id]",
+      "departure_airport": "character varying [FK->airports.iata_code]",
+      "arrival_airport": "character varying [FK->airports.iata_code]",
+      "departure_window_start": "timestamp with time zone",
+      "departure_window_end": "timestamp with time zone",
+      "flexibility_hours": "integer",
+      "original_price": "numeric",
+      "current_discount_pct": "numeric",
+      "current_price": "numeric",
+      "max_passengers": "integer",
+      "status": "public.empty_leg_status enum(available|reserved|sold|expired|cancelled)",
+      "views_count": "integer",
+      "notifications_sent": "integer",
+      "created_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "operator_name_snapshot": "character varying",
+      "operator_phone_snapshot": "character varying",
+      "operator_email_snapshot": "character varying",
+      "operator_stub_id": "uuid [FK->phase7_operator_stubs.id]",
+      "aircraft_snapshot": "text",
+      "departure_airport_freeform_snapshot": "character varying",
+      "arrival_airport_freeform_snapshot": "character varying",
+      "reservation_token_hash": "character varying",
+      "reservation_expires_at": "timestamp with time zone",
+      "reservation_customer_name_snapshot": "character varying",
+      "reservation_customer_phone_snapshot": "character varying",
+      "customer_booking_id": "uuid [FK->bookings.id]",
+      "auction_initial_discount_pct": "numeric",
+      "auction_floor_discount_pct": "numeric",
+      "auction_curve": "character varying",
+      "auction_window_start_at": "timestamp with time zone",
+      "auction_window_end_at": "timestamp with time zone",
+      "last_price_drop_at": "timestamp with time zone",
+      "suppress_notifications": "boolean",
+      "reservation_client_id": "uuid [FK->clients.id]"
+    },
+    "privilege_tier_change_log": {
+      "id": "uuid [PK]",
+      "client_id": "uuid [FK->clients.id]",
+      "from_tier": "public.client_privilege_tier enum(silver|gold|platinum|diamond)",
+      "to_tier": "public.client_privilege_tier enum(silver|gold|platinum|diamond)",
+      "reason": "public.privilege_tier_change_reason enum(signup_default|auto_upgrade|auto_downgrade|admin_force|admin_lock_expired|data_correction)",
+      "qualified_spend_12m_sar": "numeric",
+      "grace_started_at": "timestamp with time zone",
+      "admin_actor_cookie_fingerprint": "text",
+      "admin_reason": "text",
+      "lock_until": "date",
+      "source_booking_id": "uuid [FK->bookings.id]",
+      "created_at": "timestamp with time zone"
+    },
+    "operator_sessions": {
+      "id": "uuid [PK]",
+      "operator_id": "uuid [FK->operators.id]",
+      "token_hash": "character varying",
+      "issued_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "remember_me": "boolean",
+      "ip_address": "inet",
+      "user_agent": "text",
+      "revoked_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone"
+    },
+    "geometry_columns": {
+      "f_table_catalog": "character varying",
+      "f_table_schema": "name",
+      "f_table_name": "name",
+      "f_geometry_column": "name",
+      "coord_dimension": "integer",
+      "srid": "integer",
+      "type": "character varying"
+    },
+    "auth_login_attempts": {
+      "id": "uuid [PK]",
+      "actor_type": "text",
+      "actor_fingerprint": "character varying",
+      "outcome": "text",
+      "attempted_at": "timestamp with time zone"
+    },
+    "operator_signup_attempts": {
+      "id": "uuid [PK]",
+      "ip_address": "inet",
+      "attempted_at": "timestamp with time zone",
+      "email_attempted": "text",
+      "result": "text",
+      "created_at": "timestamp with time zone"
+    },
+    "clients": {
+      "id": "uuid [PK]",
+      "auth_email": "character varying",
+      "full_name": "character varying",
+      "contact_phone": "character varying",
+      "password_hash": "text",
+      "password_must_change": "boolean",
+      "signup_status": "public.client_status enum(active|suspended|deleted)",
+      "last_login_at": "timestamp with time zone",
+      "marketing_opt_in": "boolean",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "notification_preferences": "jsonb",
+      "privilege_tier": "public.client_privilege_tier enum(silver|gold|platinum|diamond)",
+      "privilege_tier_assigned_at": "timestamp with time zone",
+      "privilege_tier_qualified_spend_12m_sar": "numeric",
+      "privilege_below_threshold_since": "timestamp with time zone",
+      "tier_locked_until": "date",
+      "cashback_balance_sar": "numeric",
+      "two_factor_enabled": "boolean"
+    },
+    "operator_documents": {
+      "id": "uuid [PK]",
+      "operator_id": "uuid [FK->operators.id]",
+      "document_type": "text",
+      "storage_path": "text",
+      "file_name": "text",
+      "file_size": "bigint",
+      "content_type": "text",
+      "uploaded_at": "timestamp with time zone",
+      "uploaded_by_admin": "boolean",
+      "created_at": "timestamp with time zone"
+    },
+    "client_empty_leg_alerts": {
+      "id": "uuid [PK]",
+      "client_id": "uuid [FK->clients.id]",
+      "origin_iata": "character varying",
+      "destination_iata": "character varying",
+      "max_price_sar": "numeric",
+      "date_from": "date",
+      "date_to": "date",
+      "channels": "text[]",
+      "is_active": "boolean",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "empty_leg_outreach_alert_status": {
+      "id": "integer [PK]",
+      "status": "text",
+      "last_failure_at": "timestamp with time zone",
+      "last_failure_reason": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "support_ticket_messages": {
+      "id": "uuid [PK]",
+      "ticket_id": "uuid [FK->support_tickets.id]",
+      "author_role": "public.user_role enum(client|operator|admin|support)",
+      "author_id": "uuid",
+      "body": "text",
+      "created_at": "timestamp with time zone"
+    },
+    "cargo_offers": {
+      "id": "uuid [PK]",
+      "cargo_request_id": "uuid [FK->cargo_requests.id]",
+      "operator_id": "uuid [FK->operators.id]",
+      "aircraft_id": "uuid [FK->aircraft.id]",
+      "operator_name_snapshot": "character varying",
+      "operator_phone_snapshot": "character varying",
+      "operator_email_snapshot": "character varying",
+      "aircraft_snapshot": "text",
+      "base_price_sar": "numeric",
+      "insurance_price_sar": "numeric",
+      "customs_handling_price_sar": "numeric",
+      "total_price_sar": "numeric",
+      "proposed_pickup_date": "date",
+      "proposed_delivery_date": "date",
+      "operator_notes": "text",
+      "status": "public.cargo_offer_status enum(pending|accepted|declined|withdrawn|expired)",
+      "expires_at": "timestamp with time zone",
+      "decided_at": "timestamp with time zone",
+      "decided_by_user_id": "uuid",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "decline_reason": "text",
+      "withdraw_reason": "text"
+    },
+    "offers": {
+      "id": "uuid [PK]",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "operator_id": "uuid [FK->operators.id]",
+      "aircraft_id": "uuid [FK->aircraft.id]",
+      "crew_ids": "uuid[]",
+      "base_price": "numeric",
+      "vat_amount": "numeric",
+      "total_price": "numeric",
+      "match_score": "integer",
+      "cancellation_policy": "jsonb",
+      "validity_minutes": "integer",
+      "notes": "text",
+      "status": "public.offer_status enum(pending|viewed|accepted|rejected|expired)",
+      "viewed_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "medevac_subscriptions": {
+      "id": "uuid [PK]",
+      "subscription_number": "character varying",
+      "client_id": "uuid [FK->clients.id]",
+      "plan": "public.aeris_shield_plan enum(individual|family|vip_family|diamond)",
+      "annual_fee_at_signup_sar": "numeric",
+      "covered_events_at_signup": "integer",
+      "service_level_at_signup": "public.medevac_service_level enum(BMT|ALS|CCT|repatriation)",
+      "includes_repatriation_at_signup": "boolean",
+      "max_covered_members_at_signup": "integer",
+      "covered_members": "jsonb",
+      "used_events": "integer",
+      "start_date": "date",
+      "end_date": "date",
+      "auto_renew": "boolean",
+      "status": "public.aeris_shield_subscription_status enum(pending_payment|active|expired|cancelled|suspended)",
+      "payment_token_hash": "text",
+      "last_renewal_at": "timestamp with time zone",
+      "next_renewal_due": "timestamp with time zone",
+      "cancelled_at": "timestamp with time zone",
+      "cancellation_reason": "text",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "client_signup_attempts": {
+      "id": "uuid [PK]",
+      "ip_address": "inet",
+      "attempted_at": "timestamp with time zone",
+      "email_attempted": "text",
+      "result": "text",
+      "created_at": "timestamp with time zone"
+    },
+    "client_referral_codes": {
+      "client_id": "uuid [PK,FK->clients.id]",
+      "code": "text",
+      "created_at": "timestamp with time zone"
+    },
+    "operators": {
+      "id": "uuid [PK]",
+      "user_id": "uuid [FK->users.id]",
+      "company_name": "character varying",
+      "company_name_ar": "character varying",
+      "commercial_registration": "character varying",
+      "vat_number": "character varying",
+      "gaca_license": "character varying",
+      "license_expiry": "date",
+      "base_airport": "character varying [FK->airports.iata_code]",
+      "operating_airports": "text[]",
+      "contact_email": "character varying",
+      "contact_phone": "character varying",
+      "bank_iban": "character varying",
+      "bank_name": "character varying",
+      "commission_rate": "numeric",
+      "rating": "numeric",
+      "total_trips": "integer",
+      "response_time_avg": "integer",
+      "documents_urls": "jsonb",
+      "signup_status": "public.operator_status enum(pending|approved|suspended|rejected)",
+      "approved_at": "timestamp with time zone",
+      "approved_by": "uuid [FK->users.id]",
+      "rejection_reason": "text",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "auth_email": "text",
+      "password_hash": "text",
+      "password_set_at": "timestamp with time zone",
+      "password_must_change": "boolean",
+      "last_login_at": "timestamp with time zone",
+      "approved_by_admin_at": "timestamp with time zone",
+      "rejected_at": "timestamp with time zone",
+      "suspended_at": "timestamp with time zone",
+      "suspension_reason": "text",
+      "welcome_token_hash": "character varying",
+      "welcome_token_expires_at": "timestamp with time zone",
+      "welcome_token_used_at": "timestamp with time zone"
+    },
+    "aeris_shield_config": {
+      "id": "integer [PK]",
+      "default_operator_id": "uuid [FK->operators.id]",
+      "founder_notification_email": "character varying",
+      "updated_at": "timestamp with time zone"
+    },
+    "operator_notification_alert_status": {
+      "id": "integer [PK]",
+      "status": "text",
+      "last_failure_at": "timestamp with time zone",
+      "last_failure_reason": "text",
+      "updated_at": "timestamp with time zone",
+      "whatsapp_status": "text",
+      "whatsapp_last_failure_at": "timestamp with time zone",
+      "whatsapp_last_failure_reason": "text"
+    },
+    "bookings": {
+      "id": "uuid [PK]",
+      "booking_number": "character varying",
+      "offer_id": "uuid [FK->offers.id]",
+      "client_id": "uuid [FK->clients.id]",
+      "operator_id": "uuid [FK->operators.id]",
+      "aircraft_id": "uuid [FK->aircraft.id]",
+      "base_amount": "numeric",
+      "addons_amount": "numeric",
+      "vat_amount": "numeric",
+      "total_amount": "numeric",
+      "commission_amount": "numeric",
+      "operator_payout": "numeric",
+      "payment_status": "public.booking_payment_status enum(pending|paid|refunded|pending_offline)",
+      "flight_status": "public.booking_flight_status enum(confirmed|boarding|in_flight|completed|cancelled)",
+      "zatca_invoice_url": "text",
+      "zatca_qr_code": "text",
+      "zatca_uuid": "character varying",
+      "departure_scheduled": "timestamp with time zone",
+      "departure_actual": "timestamp with time zone",
+      "arrival_actual": "timestamp with time zone",
+      "loyalty_points_earned": "integer",
+      "cancellation_reason": "text",
+      "cancelled_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "operator_name_snapshot": "character varying",
+      "operator_phone_snapshot": "character varying",
+      "operator_email_snapshot": "character varying",
+      "aircraft_snapshot": "text",
+      "customer_name_snapshot": "character varying",
+      "customer_phone_snapshot": "character varying",
+      "checkout_token_hash": "character varying",
+      "checkout_token_expires_at": "timestamp with time zone",
+      "source_offer_table": "character varying",
+      "source_offer_id": "uuid",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "route_origin_iata": "character varying",
+      "route_destination_iata": "character varying",
+      "route_origin_freeform_snapshot": "character varying",
+      "route_destination_freeform_snapshot": "character varying",
+      "passengers_count_snapshot": "smallint",
+      "return_scheduled": "timestamp with time zone",
+      "source_discriminator": "text",
+      "cashback_redemption_sar": "numeric",
+      "cashback_earned_sar": "numeric",
+      "paid_at": "timestamp with time zone",
+      "is_covered": "boolean"
+    },
+    "medevac_requests": {
+      "id": "uuid [PK]",
+      "medevac_request_number": "character varying",
+      "client_id": "uuid [FK->clients.id]",
+      "patient_name_snapshot": "character varying",
+      "patient_age_snapshot": "integer",
+      "contact_name_snapshot": "character varying",
+      "contact_phone_snapshot": "character varying",
+      "contact_email_snapshot": "character varying",
+      "condition_severity": "public.medevac_severity enum(stable|moderate|critical)",
+      "service_level": "public.medevac_service_level enum(BMT|ALS|CCT|repatriation)",
+      "from_location_freeform": "character varying",
+      "from_iata": "character varying",
+      "to_hospital_name": "character varying",
+      "to_hospital_contact_phone": "character varying",
+      "to_hospital_freeform_address": "character varying",
+      "to_iata": "character varying",
+      "insurance_provider_snapshot": "character varying",
+      "insurance_claim_ref": "character varying",
+      "estimated_value_sar": "numeric",
+      "subscription_id": "uuid [FK->medevac_subscriptions.id]",
+      "is_covered": "boolean",
+      "status": "public.medevac_request_status enum(pending|offers_received|accepted|covered|cancelled|expired)",
+      "expires_at": "timestamp with time zone",
+      "cancelled_at": "timestamp with time zone",
+      "cancellation_reason": "text",
+      "accepted_offer_id": "uuid [FK->medevac_offers.id]",
+      "dispatched_at": "timestamp with time zone",
+      "sla_escalated_at": "timestamp with time zone",
+      "handling_notes": "text",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "founder_batch_alerted_at": "timestamp with time zone"
+    },
+    "aircraft_medical_certifications": {
+      "aircraft_id": "uuid [PK,FK->aircraft.id]",
+      "supports_bmt": "boolean",
+      "supports_als": "boolean",
+      "supports_cct": "boolean",
+      "supports_repatriation": "boolean",
+      "certifying_authority": "public.medical_certifying_authority enum(SCFHS|civil_aviation_authority|foreign_equivalent|other)",
+      "certification_number": "text",
+      "certification_expires_at": "timestamp with time zone",
+      "warning_30d_sent_at": "timestamp with time zone",
+      "warning_14d_sent_at": "timestamp with time zone",
+      "warning_7d_sent_at": "timestamp with time zone",
+      "warning_1d_sent_at": "timestamp with time zone",
+      "notes": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "admin_users": {
+      "id": "uuid [PK]",
+      "email": "text",
+      "password_hash": "text",
+      "full_name": "text",
+      "role": "text",
+      "status": "text",
+      "must_change_password": "boolean",
+      "created_at": "timestamp with time zone",
+      "created_by_admin_user_id": "uuid [FK->admin_users.id]",
+      "last_login_at": "timestamp with time zone",
+      "disabled_at": "timestamp with time zone",
+      "disabled_by_admin_user_id": "uuid [FK->admin_users.id]"
+    },
+    "client_empty_leg_alert_status": {
+      "id": "integer [PK]",
+      "status": "text",
+      "last_failure_at": "timestamp with time zone",
+      "last_failure_reason": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "aircraft": {
+      "id": "uuid [PK]",
+      "operator_id": "uuid [FK->operators.id]",
+      "registration": "character varying",
+      "manufacturer": "character varying",
+      "model": "character varying",
+      "category": "public.aircraft_category enum(light|mid|super_mid|heavy|long_range)",
+      "year": "integer",
+      "max_passengers": "integer",
+      "max_range_km": "integer",
+      "cabin_config": "jsonb",
+      "photos": "text[]",
+      "base_hourly_rate": "numeric",
+      "amenities": "jsonb",
+      "is_cargo_capable": "boolean",
+      "is_medevac_capable": "boolean",
+      "status": "public.aircraft_status enum(active|maintenance|retired)",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "trip_distribution_log": {
+      "id": "bigint [PK]",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "operator_id": "uuid [FK->operators.id]",
+      "dispatched_at": "timestamp with time zone",
+      "score": "numeric",
+      "rank": "integer",
+      "dispatch_target_id": "uuid [FK->trip_dispatch_targets.id]",
+      "notification_channel": "text",
+      "created_at": "timestamp with time zone"
+    },
+    "loyalty_transactions": {
+      "id": "uuid [PK]",
+      "user_id": "uuid [FK->users.id]",
+      "transaction_type": "public.loyalty_transaction_type enum(earn|redeem|bonus|referral|expire)",
+      "points": "integer",
+      "source_type": "character varying",
+      "source_id": "uuid",
+      "description": "text",
+      "multiplier": "numeric",
+      "balance_after": "integer",
+      "expires_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone"
+    },
+    "lead_inquiries": {
+      "id": "uuid [PK]",
+      "request_number": "character varying",
+      "customer_name": "character varying",
+      "customer_phone": "character varying",
+      "trip_type": "public.lead_trip_type enum(one_way|round_trip|multi_city)",
+      "origin": "character varying",
+      "destination": "character varying",
+      "departure_date": "date",
+      "return_date": "date",
+      "passengers": "smallint",
+      "notes": "text",
+      "status": "public.lead_status enum(new|contacted|quoted|converted|closed)",
+      "source": "character varying",
+      "internal_notes": "text",
+      "last_contacted_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "converted_at": "timestamp with time zone",
+      "origin_iata": "character varying [FK->airports.iata_code]",
+      "destination_iata": "character varying [FK->airports.iata_code]",
+      "preferences": "jsonb",
+      "empty_legs_opt_in": "boolean",
+      "last_empty_leg_notified_at": "timestamp with time zone"
+    },
+    "client_referrals": {
+      "id": "uuid [PK]",
+      "referrer_client_id": "uuid [FK->clients.id]",
+      "referee_client_id": "uuid [FK->clients.id]",
+      "code_used": "text",
+      "status": "text",
+      "qualifying_booking_id": "uuid [FK->bookings.id]",
+      "referrer_reward_sar": "numeric",
+      "referee_reward_sar": "numeric",
+      "created_at": "timestamp with time zone",
+      "rewarded_at": "timestamp with time zone"
+    },
+    "trip_request_recovery_reminders": {
+      "id": "uuid [PK]",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "client_id": "uuid [FK->clients.id]",
+      "channel": "text",
+      "reminded_at": "timestamp with time zone"
+    },
+    "medevac_email_alert_status": {
+      "id": "integer [PK]",
+      "status": "text",
+      "last_failure_at": "timestamp with time zone",
+      "last_failure_reason": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "airports": {
+      "iata_code": "character varying [PK]",
+      "icao_code": "character varying",
+      "name": "character varying",
+      "name_ar": "character varying",
+      "city": "character varying",
+      "city_ar": "character varying",
+      "country": "character varying",
+      "country_ar": "character varying",
+      "latitude": "numeric",
+      "longitude": "numeric",
+      "timezone": "character varying",
+      "is_private_capable": "boolean",
+      "created_at": "timestamp with time zone"
+    },
+    "medevac_subscription_plan_terms": {
+      "plan": "public.aeris_shield_plan enum(individual|family|vip_family|diamond) [PK]",
+      "annual_fee_sar": "numeric",
+      "covered_events": "integer",
+      "service_level": "public.medevac_service_level enum(BMT|ALS|CCT|repatriation)",
+      "includes_repatriation": "boolean",
+      "max_covered_members": "integer",
+      "description": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "geography_columns": {
+      "f_table_catalog": "name",
+      "f_table_schema": "name",
+      "f_table_name": "name",
+      "f_geography_column": "name",
+      "coord_dimension": "integer",
+      "srid": "integer",
+      "type": "text"
+    },
+    "phase4_operator_offers": {
+      "id": "uuid [PK]",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "operator_name": "character varying",
+      "operator_phone": "character varying",
+      "operator_email": "character varying",
+      "aircraft_category": "public.aircraft_category enum(light|mid|super_mid|heavy|long_range)",
+      "aircraft_type": "character varying",
+      "aircraft_registration": "character varying",
+      "total_price_sar": "numeric",
+      "departure_eta": "timestamp with time zone",
+      "validity_hours": "integer",
+      "expires_at": "timestamp with time zone",
+      "notes": "text",
+      "status": "public.offer_status enum(pending|viewed|accepted|rejected|expired)",
+      "decided_at": "timestamp with time zone",
+      "source_dispatch_nonce": "text",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "trip_dispatch_rounds": {
+      "id": "uuid [PK]",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "status": "public.dispatch_round_status enum(open|closed)",
+      "opened_at": "timestamp with time zone",
+      "closed_at": "timestamp with time zone",
+      "closed_reason": "text",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "medevac_dispatch_events_outbox": {
+      "id": "uuid [PK]",
+      "medevac_request_id": "uuid [FK->medevac_requests.id]",
+      "event_type": "text",
+      "emitted_at": "timestamp with time zone",
+      "claim_id": "uuid",
+      "claimed_at": "timestamp with time zone",
+      "processed_at": "timestamp with time zone",
+      "dispatch_result": "jsonb",
+      "attempt_count": "integer"
+    },
+    "empty_leg_notifications": {
+      "id": "uuid [PK]",
+      "lead_inquiry_id": "uuid [FK->lead_inquiries.id]",
+      "leg_id": "uuid [FK->empty_legs.id]",
+      "event_type": "text",
+      "channel": "text",
+      "wa_url": "text",
+      "sent_at": "timestamp with time zone",
+      "outreach_sent_at": "timestamp with time zone",
+      "external_message_id": "text",
+      "created_at": "timestamp with time zone",
+      "client_id": "uuid [FK->clients.id]",
+      "email_url": "text"
+    },
+    "trip_dispatch_targets": {
+      "id": "uuid [PK]",
+      "dispatch_round_id": "uuid [FK->trip_dispatch_rounds.id]",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "target_phone": "character varying",
+      "nonce": "text",
+      "expires_at": "timestamp with time zone",
+      "status": "public.dispatch_target_status enum(pending|submitted|expired|cancelled)",
+      "sent_at": "timestamp with time zone",
+      "submitted_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "client_sessions": {
+      "id": "uuid [PK]",
+      "client_id": "uuid [FK->clients.id]",
+      "token_hash": "character varying",
+      "issued_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "remember_me": "boolean",
+      "ip_address": "inet",
+      "user_agent": "text",
+      "revoked_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone"
+    },
+    "operator_password_reset_tokens": {
+      "id": "uuid [PK]",
+      "operator_id": "uuid [FK->operators.id]",
+      "token_hash": "character varying",
+      "issued_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "used_at": "timestamp with time zone",
+      "ip_address": "inet",
+      "created_at": "timestamp with time zone"
+    },
+    "admin_mfa_recovery_codes": {
+      "id": "uuid [PK]",
+      "admin_user_id": "uuid [FK->admin_users.id]",
+      "code_hash": "character varying",
+      "created_at": "timestamp with time zone",
+      "consumed_at": "timestamp with time zone",
+      "consumed_session_id": "uuid [FK->admin_user_sessions.id]"
+    },
+    "operator_empty_leg_sessions": {
+      "id": "uuid [PK]",
+      "operator_stub_id": "uuid [FK->phase7_operator_stubs.id]",
+      "token_hash": "character varying",
+      "issued_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "revoked_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone"
+    },
+    "addon_catalog": {
+      "subtype": "character varying [PK]",
+      "addon_type": "public.addon_type enum(ground_transfer|crew|catering|special)",
+      "label_ar": "character varying",
+      "label_en": "character varying",
+      "description_ar": "text",
+      "description_en": "text",
+      "unit_price_sar": "numeric",
+      "unit_price_min_sar": "numeric",
+      "unit_price_max_sar": "numeric",
+      "per_passenger": "boolean",
+      "commission_rate_pct": "integer",
+      "allow_quantity": "boolean",
+      "free": "boolean",
+      "advisor_ref": "text"
+    },
+    "medevac_offers": {
+      "id": "uuid [PK]",
+      "medevac_request_id": "uuid [FK->medevac_requests.id]",
+      "operator_id": "uuid [FK->operators.id]",
+      "aircraft_id": "uuid [FK->aircraft.id]",
+      "operator_name_snapshot": "character varying",
+      "operator_phone_snapshot": "character varying",
+      "operator_email_snapshot": "character varying",
+      "aircraft_snapshot": "text",
+      "medical_team_snapshot": "text",
+      "base_price_sar": "numeric",
+      "medical_team_price_sar": "numeric",
+      "insurance_coordination_price_sar": "numeric",
+      "total_price_sar": "numeric",
+      "proposed_pickup_at": "timestamp with time zone",
+      "proposed_arrival_at": "timestamp with time zone",
+      "operator_notes": "text",
+      "decline_reason": "text",
+      "withdraw_reason": "text",
+      "status": "public.medevac_offer_status enum(pending|accepted|declined|withdrawn|expired)",
+      "expires_at": "timestamp with time zone",
+      "decided_at": "timestamp with time zone",
+      "decided_by_user_id": "uuid",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "operator_cron_tick_history": {
+      "id": "bigint [PK]",
+      "job_name": "text",
+      "ran_at": "timestamp with time zone",
+      "deleted_count": "integer",
+      "success": "boolean",
+      "error_label": "text"
+    },
+    "admin_user_sessions": {
+      "id": "uuid [PK]",
+      "admin_user_id": "uuid [FK->admin_users.id]",
+      "token_hash": "character varying",
+      "created_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "revoked_at": "timestamp with time zone",
+      "revoked_by_admin_user_id": "uuid [FK->admin_users.id]",
+      "last_seen_at": "timestamp with time zone",
+      "user_agent_snapshot": "text",
+      "ip_fingerprint": "character varying",
+      "mfa_pending": "boolean"
+    },
+    "empty_leg_events_outbox": {
+      "id": "uuid [PK]",
+      "leg_id": "uuid [FK->empty_legs.id]",
+      "event_type": "text",
+      "emitted_at": "timestamp with time zone",
+      "processed_at": "timestamp with time zone"
+    },
+    "cargo_requests": {
+      "id": "uuid [PK]",
+      "cargo_request_number": "character varying",
+      "client_id": "uuid [FK->clients.id]",
+      "customer_name_snapshot": "character varying",
+      "customer_phone_snapshot": "character varying",
+      "customer_email_snapshot": "character varying",
+      "cargo_type": "public.cargo_type enum(horse|luxury_car|valuables|other)",
+      "origin_iata": "character varying",
+      "origin_freeform": "text",
+      "destination_iata": "character varying",
+      "destination_freeform": "text",
+      "pickup_date": "date",
+      "delivery_date_target": "date",
+      "flexibility_days": "integer",
+      "estimated_value_sar": "numeric",
+      "insurance_required": "boolean",
+      "handling_notes": "text",
+      "horse_count": "integer",
+      "horse_groom_required": "boolean",
+      "horse_cites_status": "text",
+      "horse_stall_requirements": "text",
+      "car_make": "text",
+      "car_model": "text",
+      "car_year": "integer",
+      "car_running_condition": "boolean",
+      "car_enclosed_required": "boolean",
+      "valuables_declared_value_sar": "numeric",
+      "valuables_security_level": "text",
+      "valuables_climate_controlled": "boolean",
+      "valuables_item_description": "text",
+      "other_description": "text",
+      "other_dimensions_lwh_cm": "text",
+      "other_weight_kg": "numeric",
+      "other_special_handling": "text",
+      "status": "public.cargo_request_status enum(pending|offers_received|accepted|cancelled|expired)",
+      "expires_at": "timestamp with time zone",
+      "cancelled_at": "timestamp with time zone",
+      "cancellation_reason": "text",
+      "accepted_offer_id": "uuid [FK->cargo_offers.id]",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "founder_batch_alerted_at": "timestamp with time zone"
+    },
+    "crew_members": {
+      "id": "uuid [PK]",
+      "operator_id": "uuid [FK->operators.id]",
+      "full_name": "character varying",
+      "role": "public.crew_role enum(captain|first_officer|flight_attendant)",
+      "nationality": "character varying",
+      "languages": "text[]",
+      "specializations": "text[]",
+      "experience_hours": "integer",
+      "license_number": "character varying",
+      "license_expiry": "date",
+      "photo_url": "text",
+      "is_available": "boolean",
+      "extra_fee": "numeric",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "client_password_reset_tokens": {
+      "id": "uuid [PK]",
+      "client_id": "uuid [FK->clients.id]",
+      "token_hash": "character varying",
+      "issued_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "used_at": "timestamp with time zone",
+      "ip_address": "inet",
+      "created_at": "timestamp with time zone"
+    },
+    "cargo_dispatch_events_outbox": {
+      "id": "uuid [PK]",
+      "cargo_request_id": "uuid [FK->cargo_requests.id]",
+      "event_type": "text",
+      "emitted_at": "timestamp with time zone",
+      "claim_id": "uuid",
+      "claimed_at": "timestamp with time zone",
+      "processed_at": "timestamp with time zone",
+      "dispatch_result": "jsonb",
+      "attempt_count": "integer"
+    },
+    "phase5_operator_offers": {
+      "id": "uuid [PK]",
+      "trip_request_id": "uuid [FK->trip_requests.id]",
+      "dispatch_target_id": "uuid [FK->trip_dispatch_targets.id]",
+      "operator_name": "character varying",
+      "operator_phone": "character varying",
+      "operator_email": "character varying",
+      "aircraft_category": "public.aircraft_category enum(light|mid|super_mid|heavy|long_range)",
+      "aircraft_type": "character varying",
+      "aircraft_registration": "character varying",
+      "total_price_sar": "numeric",
+      "departure_eta": "timestamp with time zone",
+      "validity_hours": "integer",
+      "expires_at": "timestamp with time zone",
+      "notes": "text",
+      "status": "public.offer_status enum(pending|viewed|accepted|rejected|expired)",
+      "decided_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "operator_otp_codes": {
+      "id": "uuid [PK]",
+      "operator_id": "uuid [FK->operators.id]",
+      "code_hash": "character varying",
+      "channel": "text",
+      "purpose": "text",
+      "issued_at": "timestamp with time zone",
+      "expires_at": "timestamp with time zone",
+      "used_at": "timestamp with time zone",
+      "attempt_count": "integer",
+      "created_at": "timestamp with time zone"
+    },
+    "users": {
+      "id": "uuid [PK]",
+      "email": "character varying",
+      "phone": "character varying",
+      "full_name": "character varying",
+      "role": "public.user_role enum(client|operator|admin|support)",
+      "language": "character varying",
+      "avatar_url": "text",
+      "nationality": "character varying",
+      "date_of_birth": "date",
+      "loyalty_tier": "public.loyalty_tier enum(silver|gold|platinum|diamond)",
+      "loyalty_points": "integer",
+      "total_spent_yearly": "numeric",
+      "total_spent_lifetime": "numeric",
+      "preferences": "jsonb",
+      "passport_number": "text",
+      "referral_code": "character varying",
+      "referred_by": "uuid [FK->users.id]",
+      "is_verified": "boolean",
+      "status": "public.user_status enum(active|suspended|deleted)",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "client_empty_leg_matches": {
+      "id": "uuid [PK]",
+      "empty_leg_id": "uuid [FK->empty_legs.id]",
+      "client_id": "uuid [FK->clients.id]",
+      "privilege_tier_at_match": "public.client_privilege_tier enum(silver|gold|platinum|diamond)",
+      "boost_hours_applied": "integer",
+      "matched_at": "timestamp with time zone",
+      "notification_sent_at": "timestamp with time zone"
+    },
+    "privilege_tier_thresholds": {
+      "tier": "public.client_privilege_tier enum(silver|gold|platinum|diamond) [PK]",
+      "min_qualified_spend_sar": "numeric",
+      "cashback_pct": "numeric",
+      "empty_legs_boost_hours": "integer",
+      "free_diamond_shield": "boolean",
+      "two_factor_required": "boolean",
+      "cashback_expiry_months": "integer",
+      "perks_jsonb": "jsonb",
+      "updated_at": "timestamp with time zone"
+    },
+    "trip_requests": {
+      "id": "uuid [PK]",
+      "request_number": "character varying",
+      "client_id": "uuid [FK->clients.id]",
+      "trip_type": "public.trip_type enum(charter|empty_leg|medevac|cargo)",
+      "legs": "jsonb",
+      "departure_airport": "character varying [FK->airports.iata_code]",
+      "arrival_airport": "character varying [FK->airports.iata_code]",
+      "departure_date": "timestamp with time zone",
+      "return_date": "timestamp with time zone",
+      "is_flexible_date": "boolean",
+      "passengers_count": "integer",
+      "aircraft_category_preference": "public.aircraft_category enum(light|mid|super_mid|heavy|long_range)",
+      "special_requests": "text",
+      "preferences": "jsonb",
+      "status": "public.trip_request_status enum(pending|distributed|offered|booked|cancelled)",
+      "distributed_to": "uuid[]",
+      "distributed_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "customer_name": "character varying",
+      "customer_phone": "character varying",
+      "customer_source": "character varying",
+      "dispatch_nonce": "text",
+      "dispatch_expires_at": "timestamp with time zone",
+      "dispatch_target_phone": "character varying",
+      "dispatched_at": "timestamp with time zone",
+      "current_dispatch_round_id": "uuid [FK->trip_dispatch_rounds.id]"
+    },
+    "reviews": {
+      "id": "uuid [PK]",
+      "booking_id": "uuid [FK->bookings.id]",
+      "client_id": "uuid [FK->users.id]",
+      "operator_id": "uuid [FK->operators.id]",
+      "aircraft_id": "uuid [FK->aircraft.id]",
+      "overall_rating": "integer",
+      "aircraft_rating": "integer",
+      "crew_rating": "integer",
+      "service_rating": "integer",
+      "comment": "text",
+      "is_verified": "boolean",
+      "is_published": "boolean",
+      "response": "text",
+      "response_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
+    },
+    "notifications": {
+      "id": "uuid [PK]",
+      "user_id": "uuid [FK->users.id]",
+      "type": "public.notification_type enum(booking|offer|empty_leg|payment|loyalty|marketing)",
+      "channel": "public.notification_channel enum(in_app|email|sms|whatsapp)",
+      "title": "character varying",
+      "body": "text",
+      "data": "jsonb",
+      "is_read": "boolean",
+      "sent_at": "timestamp with time zone",
+      "read_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone"
+    },
+    "audit_logs": {
+      "id": "uuid [PK]",
+      "user_id": "uuid [FK->users.id]",
+      "action": "character varying",
+      "entity_type": "character varying",
+      "entity_id": "uuid",
+      "old_value": "jsonb",
+      "new_value": "jsonb",
+      "ip_address": "inet",
+      "user_agent": "text",
+      "created_at": "timestamp with time zone"
+    }
+  },
+  "rpcs": {
+    "st_linetocurve": [
+      "geometry:public.geometry"
+    ],
+    "st_swapordinates": [
+      "geom:public.geometry",
+      "ords:cstring"
+    ],
+    "is_admin": [
+      "user_id:uuid"
+    ],
+    "postgis_libprotobuf_version": [
+      "args:?"
+    ],
+    "st_wrapx": [
+      "geom:public.geometry",
+      "move:double precision",
+      "wrap:double precision"
+    ],
+    "st_quantizecoordinates": [
+      "g:public.geometry",
+      "prec_m:integer",
+      "prec_x:integer",
+      "prec_y:integer",
+      "prec_z:integer"
+    ],
+    "st_closestpoint": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "attach_booking_addon": [
+      "p_addon_subtype:text",
+      "p_note:text",
+      "p_quantity:integer",
+      "p_trip_id:uuid",
+      "p_unit_price_override:numeric"
+    ],
+    "st_linelocatepoint": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_maximuminscribedcircle": [
+      ":public.geometry"
+    ],
+    "st_collect": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "subscribe_to_aeris_shield": [
+      "p_client_id:uuid",
+      "p_owner_dob:date",
+      "p_payload_covered_members:jsonb",
+      "p_plan:text"
+    ],
+    "st_distance": [
+      "geog1:public.geography",
+      "geog2:public.geography",
+      "use_spheroid:boolean"
+    ],
+    "verify_operator_otp": [
+      "p_code_hash:character varying",
+      "p_operator_id:uuid"
+    ],
+    "st_multipointfromwkb": [
+      ":bytea"
+    ],
+    "st_srid": [
+      "geom:public.geometry"
+    ],
+    "longtransactionsenabled": [
+      "args:?"
+    ],
+    "decline_cargo_offer": [
+      "p_actor_admin_user_id:uuid",
+      "p_actor_client_id:uuid",
+      "p_offer_id:uuid",
+      "p_reason:text"
+    ],
+    "st_letters": [
+      "font:json",
+      "letters:text"
+    ],
+    "st_buffer": [
+      "geom:public.geometry",
+      "quadsegs:integer",
+      "radius:double precision"
+    ],
+    "unlockrows": [
+      ":text"
+    ],
+    "open_phase5_dispatch_round": [
+      "p_targets:jsonb",
+      "p_trip_id:uuid"
+    ],
+    "create_client_empty_leg_alert": [
+      "p_channels:text[]",
+      "p_client_id:uuid",
+      "p_date_from:date",
+      "p_date_to:date",
+      "p_destination:character varying",
+      "p_max_price:numeric",
+      "p_origin:character varying"
+    ],
+    "geometry_overbelow": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "client_mint_password_reset_token": [
+      "p_email:text",
+      "p_expires_at:timestamp with time zone",
+      "p_ip:inet",
+      "p_token_hash:text"
+    ],
+    "st_azimuth": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_scale": [
+      ":public.geometry",
+      "origin:public.geometry"
+    ],
+    "_st_3dintersects": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_delaunaytriangles": [
+      "flags:integer",
+      "g1:public.geometry",
+      "tolerance:double precision"
+    ],
+    "st_voronoilines": [
+      "extend_to:public.geometry",
+      "g1:public.geometry",
+      "tolerance:double precision"
+    ],
+    "delete_client_empty_leg_alert": [
+      "p_alert_id:uuid",
+      "p_client_id:uuid"
+    ],
+    "_st_contains": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "dropgeometrytable": [
+      "catalog_name:character varying",
+      "schema_name:character varying",
+      "table_name:character varying"
+    ],
+    "addauth": [
+      ":text"
+    ],
+    "st_expand": [
+      "dm:double precision",
+      "dx:double precision",
+      "dy:double precision",
+      "dz:double precision",
+      "geom:public.geometry"
+    ],
+    "_st_touches": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_makebox2d": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_pointzm": [
+      "mcoordinate:double precision",
+      "srid:integer",
+      "xcoordinate:double precision",
+      "ycoordinate:double precision",
+      "zcoordinate:double precision"
+    ],
+    "record_empty_leg_alert_delivery": [
+      "p_alert_id:uuid",
+      "p_channel:text",
+      "p_empty_leg_id:uuid"
+    ],
+    "geometry_distance_box": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "postgis_lib_revision": [
+      "args:?"
+    ],
+    "st_triangulatepolygon": [
+      "g1:public.geometry"
+    ],
+    "geometry_gt": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "geometry_distance_centroid": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_geometricmedian": [
+      "fail_if_not_converged:boolean",
+      "g:public.geometry",
+      "max_iter:integer",
+      "tolerance:double precision"
+    ],
+    "_st_covers": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_pointm": [
+      "mcoordinate:double precision",
+      "srid:integer",
+      "xcoordinate:double precision",
+      "ycoordinate:double precision"
+    ],
+    "cancel_medevac_request": [
+      "p_actor_admin_user_id:uuid",
+      "p_actor_client_id:uuid",
+      "p_reason:text",
+      "p_request_id:uuid"
+    ],
+    "_operator_cron_marker": [
+      "args:?"
+    ],
+    "client_session_validate": [
+      "p_session_token_hash:text"
+    ],
+    "st_frechetdistance": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_geometryfromtext": [
+      ":text"
+    ],
+    "create_medevac_request_authenticated": [
+      "p_client_id:uuid",
+      "p_payload:jsonb"
+    ],
+    "st_offsetcurve": [
+      "distance:double precision",
+      "line:public.geometry",
+      "params:text"
+    ],
+    "operator_login_lookup": [
+      "p_email:text"
+    ],
+    "st_geomfromewkt": [
+      ":text"
+    ],
+    "postgis_proj_version": [
+      "args:?"
+    ],
+    "disablelongtransactions": [
+      "args:?"
+    ],
+    "st_gmltosql": [
+      ":text"
+    ],
+    "geometry_below": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "award_cashback_for_booking": [
+      "p_booking_id:uuid",
+      "p_client_id:uuid"
+    ],
+    "expire_empty_leg_window": [
+      "p_leg_id:uuid"
+    ],
+    "st_minimumboundingcircle": [
+      "inputgeom:public.geometry",
+      "segs_per_quarter:integer"
+    ],
+    "cleanup_expired_client_sessions": [
+      "args:?"
+    ],
+    "postgis_extensions_upgrade": [
+      "args:?"
+    ],
+    "st_multilinestringfromtext": [
+      ":text"
+    ],
+    "customer_cancel_booking_addon": [
+      "p_booking_addon_id:uuid"
+    ],
+    "_st_sortablehash": [
+      "geom:public.geometry"
+    ],
+    "geometry_cmp": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "geometry_same_3d": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_isvaliddetail": [
+      "flags:integer",
+      "geom:public.geometry"
+    ],
+    "expire_old_loyalty_credits": [
+      "args:?"
+    ],
+    "st_polyfromtext": [
+      ":text"
+    ],
+    "st_squaregrid": [
+      "bounds:public.geometry",
+      "size:double precision"
+    ],
+    "score_operators_for_trip": [
+      "p_trip_request_id:uuid"
+    ],
+    "st_geomfromgml": [
+      ":text"
+    ],
+    "_st_longestline": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_aslatlontext": [
+      "geom:public.geometry",
+      "tmpl:text"
+    ],
+    "mint_operator_otp": [
+      "p_code_hash:character varying",
+      "p_expires_at:timestamp with time zone",
+      "p_operator_id:uuid",
+      "p_purpose:text"
+    ],
+    "st_distancespheroid": [
+      ":public.spheroid",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "operator_signup": [
+      "p_company_name:text",
+      "p_contact_email:text",
+      "p_contact_phone:text",
+      "p_email:text",
+      "p_ip:inet",
+      "p_notes:text",
+      "p_password_hash:text"
+    ],
+    "_validate_crew_payload": [
+      "p_payload:jsonb"
+    ],
+    "claim_medevac_dispatch_events": [
+      "p_claim_id:uuid",
+      "p_limit:integer"
+    ],
+    "geometry_lt": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "admin_mark_empty_leg_sold": [
+      "p_customer_name:text",
+      "p_customer_phone:text",
+      "p_leg_id:uuid"
+    ],
+    "_postgis_deprecate": [
+      "newname:text",
+      "oldname:text",
+      "version:text"
+    ],
+    "st_assvg": [
+      "geom:public.geometry",
+      "maxdecimaldigits:integer",
+      "rel:integer"
+    ],
+    "client_login_create_session": [
+      "p_client_id:uuid",
+      "p_ip:inet",
+      "p_remember_me:boolean",
+      "p_session_token_hash:text",
+      "p_user_agent:text"
+    ],
+    "step_down_one": [
+      "t:public.client_privilege_tier"
+    ],
+    "dropgeometrycolumn": [
+      "catalog_name:character varying",
+      "column_name:character varying",
+      "schema_name:character varying",
+      "table_name:character varying"
+    ],
+    "st_dwithin": [
+      "geog1:public.geography",
+      "geog2:public.geography",
+      "tolerance:double precision",
+      "use_spheroid:boolean"
+    ],
+    "st_3dclosestpoint": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_asmvtgeom": [
+      "bounds:public.box2d",
+      "buffer:integer",
+      "clip_geom:boolean",
+      "extent:integer",
+      "geom:public.geometry"
+    ],
+    "release_empty_leg_reservation": [
+      "p_leg_id:uuid",
+      "p_token_hash:character varying"
+    ],
+    "st_orderingequals": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "cleanup_expired_operator_sessions": [
+      "args:?"
+    ],
+    "create_cargo_request_guest": [
+      "p_ip:inet",
+      "p_payload:jsonb"
+    ],
+    "cleanup_expired_otp_codes": [
+      "args:?"
+    ],
+    "st_snaptogrid": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "auto_dispatch_trip_request": [
+      "p_min_fanout:integer",
+      "p_trip_request_id:uuid"
+    ],
+    "admin_set_operator_documents": [
+      "p_commercial_registration:text",
+      "p_gaca_license:text",
+      "p_license_expiry:date",
+      "p_operator_id:uuid"
+    ],
+    "create_cargo_request_authenticated": [
+      "p_client_id:uuid",
+      "p_ip:inet",
+      "p_payload:jsonb"
+    ],
+    "st_polygonfromwkb": [
+      ":bytea"
+    ],
+    "postgis_lib_version": [
+      "args:?"
+    ],
+    "cleanup_old_admin_login_attempts": [
+      "args:?"
+    ],
+    "_normalize_operator_email": [
+      "p_email:text"
+    ],
+    "delete_empty_leg_alert_delivery": [
+      "p_delivery_id:uuid"
+    ],
+    "st_disjoint": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_union": [
+      "geom1:public.geometry",
+      "geom2:public.geometry",
+      "gridsize:double precision"
+    ],
+    "st_coveredby": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_containsproperly": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "apply_referral_code": [
+      "p_code:text",
+      "p_referee_client_id:uuid"
+    ],
+    "_st_overlaps": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_st_maxdistance": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "tier_rank": [
+      "t:public.client_privilege_tier"
+    ],
+    "postgis_scripts_released": [
+      "args:?"
+    ],
+    "st_asencodedpolyline": [
+      "geom:public.geometry",
+      "nprecision:integer"
+    ],
+    "st_astext": [
+      ":text"
+    ],
+    "st_intersection": [
+      "geom1:public.geometry",
+      "geom2:public.geometry",
+      "gridsize:double precision"
+    ],
+    "list_operator_aircraft": [
+      "p_operator_id:uuid"
+    ],
+    "st_square": [
+      "cell_i:integer",
+      "cell_j:integer",
+      "origin:public.geometry",
+      "size:double precision"
+    ],
+    "st_contains": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "update_operator_crew": [
+      "p_crew_id:uuid",
+      "p_operator_id:uuid",
+      "p_payload:jsonb"
+    ],
+    "st_multilinefromwkb": [
+      ":bytea"
+    ],
+    "st_difference": [
+      "geom1:public.geometry",
+      "geom2:public.geometry",
+      "gridsize:double precision"
+    ],
+    "st_curvetoline": [
+      "flags:integer",
+      "geom:public.geometry",
+      "tol:double precision",
+      "toltype:integer"
+    ],
+    "st_minimumboundingradius": [
+      ":public.geometry"
+    ],
+    "st_geomfromwkb": [
+      ":bytea"
+    ],
+    "postgis_full_version": [
+      "args:?"
+    ],
+    "safe_parse_date": [
+      "p_text:text"
+    ],
+    "geomfromewkb": [
+      ":bytea"
+    ],
+    "st_linestringfromwkb": [
+      ":bytea"
+    ],
+    "confirm_empty_leg_reservation": [
+      "p_leg_id:uuid",
+      "p_token_hash:character varying"
+    ],
+    "admin_reject_operator": [
+      "p_operator_id:uuid",
+      "p_reason:text"
+    ],
+    "set_operator_crew_availability": [
+      "p_crew_id:uuid",
+      "p_is_available:boolean",
+      "p_operator_id:uuid"
+    ],
+    "backfill_booking_from_offer": [
+      "p_trip_id:uuid"
+    ],
+    "st_mpointfromwkb": [
+      ":bytea"
+    ],
+    "st_covers": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_st_dfullywithin": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_addpoint": [
+      ":integer",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "postgis_scripts_installed": [
+      "args:?"
+    ],
+    "st_concavehull": [
+      "param_allow_holes:boolean",
+      "param_geom:public.geometry",
+      "param_pctconvex:double precision"
+    ],
+    "_st_equals": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_crew_text_array": [
+      "p_value:jsonb"
+    ],
+    "submit_phase4_operator_offer": [
+      "p_aircraft_category:public.aircraft_category",
+      "p_aircraft_registration:text",
+      "p_aircraft_type:text",
+      "p_departure_eta:timestamp with time zone",
+      "p_notes:text",
+      "p_operator_email:text",
+      "p_operator_name:text",
+      "p_operator_phone:text",
+      "p_token_nonce:text",
+      "p_token_trip_id:uuid",
+      "p_total_price_sar:numeric",
+      "p_validity_hours:integer"
+    ],
+    "geometry_eq": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "postgis_liblwgeom_version": [
+      "args:?"
+    ],
+    "retire_operator_aircraft": [
+      "p_aircraft_id:uuid",
+      "p_operator_id:uuid"
+    ],
+    "st_makeline": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "cleanup_expired_client_password_reset_tokens": [
+      "args:?"
+    ],
+    "client_logout": [
+      "p_session_token_hash:text"
+    ],
+    "st_linecrossingdirection": [
+      "line1:public.geometry",
+      "line2:public.geometry"
+    ],
+    "create_operator_crew": [
+      "p_operator_id:uuid",
+      "p_payload:jsonb"
+    ],
+    "withdraw_medevac_offer": [
+      "p_actor_operator_id:uuid",
+      "p_offer_id:uuid",
+      "p_reason:text"
+    ],
+    "geometry_overleft": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_maxdistance": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_angle": [
+      "pt1:public.geometry",
+      "pt2:public.geometry",
+      "pt3:public.geometry",
+      "pt4:public.geometry"
+    ],
+    "postgis_transform_geometry": [
+      ":integer",
+      "geom:public.geometry"
+    ],
+    "postgis_type_name": [
+      "coord_dimension:integer",
+      "geomname:character varying",
+      "use_new_name:boolean"
+    ],
+    "_st_3ddwithin": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_asewkt": [
+      ":text"
+    ],
+    "st_geomcollfromtext": [
+      ":text"
+    ],
+    "st_3dmakebox": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_symmetricdifference": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "confirm_empty_leg_reservation_for_client": [
+      "p_admin_user_id:uuid",
+      "p_leg_id:uuid"
+    ],
+    "geometry_same": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_simplifypolygonhull": [
+      "geom:public.geometry",
+      "is_outer:boolean",
+      "vertex_fraction:double precision"
+    ],
+    "st_removerepeatedpoints": [
+      "geom:public.geometry",
+      "tolerance:double precision"
+    ],
+    "evaluate_client_privilege_tier": [
+      "p_client_id:uuid",
+      "p_source_booking_id:uuid"
+    ],
+    "st_mlinefromtext": [
+      ":text"
+    ],
+    "st_3dlongestline": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "accept_offer": [
+      "p_offer_id:uuid",
+      "p_source:text"
+    ],
+    "geometry_gist_same_2d": [
+      ":internal",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "client_signup": [
+      "p_email:text",
+      "p_full_name:text",
+      "p_ip:inet",
+      "p_marketing_opt_in:boolean",
+      "p_password_hash:text",
+      "p_phone:text"
+    ],
+    "submit_phase5_operator_offer": [
+      "p_aircraft_category:public.aircraft_category",
+      "p_aircraft_registration:text",
+      "p_aircraft_type:text",
+      "p_departure_eta:timestamp with time zone",
+      "p_notes:text",
+      "p_operator_email:text",
+      "p_operator_name:text",
+      "p_operator_phone:text",
+      "p_target_id:uuid",
+      "p_target_nonce:text",
+      "p_total_price_sar:numeric",
+      "p_validity_hours:integer"
+    ],
+    "st_force3dz": [
+      "geom:public.geometry",
+      "zvalue:double precision"
+    ],
+    "list_operator_crew": [
+      "p_operator_id:uuid"
+    ],
+    "admin_update_support_ticket": [
+      "p_resolution:text",
+      "p_status:public.support_status",
+      "p_ticket_id:uuid"
+    ],
+    "publish_medevac_dispatch_event": [
+      "p_event_type:text",
+      "p_medevac_request_id:uuid"
+    ],
+    "geometry_left": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_length": [
+      "geog:public.geography",
+      "use_spheroid:boolean"
+    ],
+    "postgis_libxml_version": [
+      "args:?"
+    ],
+    "st_touches": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_linefromwkb": [
+      ":bytea"
+    ],
+    "_st_orderingequals": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "accept_cargo_offer": [
+      "p_actor_admin_user_id:uuid",
+      "p_actor_client_id:uuid",
+      "p_offer_id:uuid"
+    ],
+    "verify_operator_password_reset": [
+      "p_new_password_hash:text",
+      "p_token_hash:character varying"
+    ],
+    "cleanup_expired_password_reset_tokens": [
+      "args:?"
+    ],
+    "cleanup_old_admin_mfa_challenge_attempts": [
+      "args:?"
+    ],
+    "st_mlinefromwkb": [
+      ":bytea"
+    ],
+    "create_support_ticket": [
+      "p_booking_id:uuid",
+      "p_category:public.support_category",
+      "p_client_id:uuid",
+      "p_description:text",
+      "p_subject:text"
+    ],
+    "_st_voronoi": [
+      "clip:public.geometry",
+      "g1:public.geometry",
+      "return_polygons:boolean",
+      "tolerance:double precision"
+    ],
+    "admin_approve_operator": [
+      "p_operator_id:uuid",
+      "p_welcome_token_expires_at:timestamp with time zone",
+      "p_welcome_token_hash:character varying"
+    ],
+    "st_overlaps": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "updategeometrysrid": [
+      "catalogn_name:character varying",
+      "column_name:character varying",
+      "new_srid_in:integer",
+      "schema_name:character varying",
+      "table_name:character varying"
+    ],
+    "_st_intersects": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_st_containsproperly": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "convert_phase7_stub_to_operator": [
+      "p_operator_id:uuid",
+      "p_stub_id:uuid"
+    ],
+    "st_perimeter": [
+      "geog:public.geography",
+      "use_spheroid:boolean"
+    ],
+    "equals": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_st_linecrossingdirection": [
+      "line1:public.geometry",
+      "line2:public.geometry"
+    ],
+    "st_asgeojson": [
+      "geom_column:text",
+      "maxdecimaldigits:integer",
+      "pretty_bool:boolean",
+      "r:record"
+    ],
+    "st_hausdorffdistance": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_normalize": [
+      "geom:public.geometry"
+    ],
+    "cancel_cargo_request": [
+      "p_actor_admin_user_id:uuid",
+      "p_actor_client_id:uuid",
+      "p_reason:text",
+      "p_request_id:uuid"
+    ],
+    "record_trip_request_recovery_reminder": [
+      "p_channel:text",
+      "p_trip_request_id:uuid"
+    ],
+    "schedule_diamond_shield_revoke": [
+      "p_change_log_id:uuid",
+      "p_client_id:uuid"
+    ],
+    "postgis_version": [
+      "args:?"
+    ],
+    "cleanup_old_public_action_attempts": [
+      "args:?"
+    ],
+    "accept_phase4_offer": [
+      "p_offer_id:uuid"
+    ],
+    "st_wkttosql": [
+      ":text"
+    ],
+    "st_locatebetween": [
+      "frommeasure:double precision",
+      "geometry:public.geometry",
+      "leftrightoffset:double precision",
+      "tomeasure:double precision"
+    ],
+    "admin_unsuspend_operator": [
+      "p_operator_id:uuid"
+    ],
+    "st_crosses": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "geometry_overabove": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "get_or_create_referral_code": [
+      "p_client_id:uuid"
+    ],
+    "st_geomfromewkb": [
+      ":bytea"
+    ],
+    "st_geomfromkml": [
+      ":text"
+    ],
+    "st_hexagongrid": [
+      "bounds:public.geometry",
+      "size:double precision"
+    ],
+    "geometry_ge": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "postgis_scripts_build_date": [
+      "args:?"
+    ],
+    "publish_empty_leg_event": [
+      "p_event_type:text",
+      "p_leg_id:uuid"
+    ],
+    "st_area": [
+      "geog:public.geography",
+      "use_spheroid:boolean"
+    ],
+    "geometry_contains": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_geomfromgeojson": [
+      ":text"
+    ],
+    "st_pointz": [
+      "srid:integer",
+      "xcoordinate:double precision",
+      "ycoordinate:double precision",
+      "zcoordinate:double precision"
+    ],
+    "geometry_overright": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_pointfromwkb": [
+      ":bytea"
+    ],
+    "st_locatealong": [
+      "geometry:public.geometry",
+      "leftrightoffset:double precision",
+      "measure:double precision"
+    ],
+    "decline_medevac_offer": [
+      "p_actor_admin_user_id:uuid",
+      "p_actor_client_id:uuid",
+      "p_offer_id:uuid",
+      "p_reason:text"
+    ],
+    "st_dfullywithin": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_polyfromwkb": [
+      ":bytea"
+    ],
+    "st_mpolyfromwkb": [
+      ":bytea"
+    ],
+    "admin_analytics_summary": [
+      "p_from:timestamp with time zone",
+      "p_to:timestamp with time zone"
+    ],
+    "publish_cargo_dispatch_event": [
+      "p_cargo_request_id:uuid",
+      "p_event_type:text"
+    ],
+    "st_segmentize": [
+      "geog:public.geography",
+      "max_segment_length:double precision"
+    ],
+    "set_client_empty_leg_alert_active": [
+      "p_active:boolean",
+      "p_alert_id:uuid",
+      "p_client_id:uuid"
+    ],
+    "update_empty_leg_price": [
+      "p_leg_id:uuid",
+      "p_new_price:numeric"
+    ],
+    "st_askml": [
+      "geom:public.geometry",
+      "maxdecimaldigits:integer",
+      "nprefix:text"
+    ],
+    "geometry": [
+      ":text"
+    ],
+    "st_equals": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "addgeometrycolumn": [
+      "catalog_name:character varying",
+      "column_name:character varying",
+      "new_dim:integer",
+      "new_srid_in:integer",
+      "new_type:character varying",
+      "schema_name:character varying",
+      "table_name:character varying",
+      "use_typmod:boolean"
+    ],
+    "reserve_empty_leg": [
+      "p_customer_name:character varying",
+      "p_customer_phone:character varying",
+      "p_expires_at:timestamp with time zone",
+      "p_leg_id:uuid",
+      "p_token_hash:character varying"
+    ],
+    "create_operator_aircraft": [
+      "p_operator_id:uuid",
+      "p_payload:jsonb"
+    ],
+    "cleanup_old_admin_user_sessions": [
+      "args:?"
+    ],
+    "st_geohash": [
+      "geom:public.geometry",
+      "maxchars:integer"
+    ],
+    "st_distancesphere": [
+      "geom1:public.geometry",
+      "geom2:public.geometry",
+      "radius:double precision"
+    ],
+    "st_project": [
+      "azimuth:double precision",
+      "distance:double precision",
+      "geog:public.geography"
+    ],
+    "mint_operator_password_reset_token": [
+      "p_email:text",
+      "p_expires_at:timestamp with time zone",
+      "p_ip:inet",
+      "p_token_hash:character varying"
+    ],
+    "st_multipointfromtext": [
+      ":text"
+    ],
+    "geography": [
+      ":bytea"
+    ],
+    "publish_empty_leg": [
+      "p_aircraft_id:uuid",
+      "p_aircraft_text:text",
+      "p_arrival_airport_freeform:text",
+      "p_arrival_airport_iata:text",
+      "p_auction_curve:text",
+      "p_auction_floor_discount_pct:numeric",
+      "p_auction_initial_discount_pct:numeric",
+      "p_auction_window_lead_hours:integer",
+      "p_departure_airport_freeform:text",
+      "p_departure_airport_iata:text",
+      "p_departure_window_end:timestamp with time zone",
+      "p_departure_window_start:timestamp with time zone",
+      "p_flexibility_hours:integer",
+      "p_max_passengers:integer",
+      "p_operator_email:text",
+      "p_operator_id:uuid",
+      "p_operator_name:text",
+      "p_operator_phone:text",
+      "p_operator_stub_id:uuid",
+      "p_original_price:numeric",
+      "p_parent_booking_id:uuid",
+      "p_suppress_notifications:boolean"
+    ],
+    "create_medevac_request_guest": [
+      "p_ip:inet",
+      "p_payload:jsonb"
+    ],
+    "st_asmarc21": [
+      "format:text",
+      "geom:public.geometry"
+    ],
+    "st_polygonfromtext": [
+      ":text"
+    ],
+    "st_centroid": [
+      ":public.geography",
+      "use_spheroid:boolean"
+    ],
+    "auto_grant_diamond_shield_subscription": [
+      "p_change_log_id:uuid",
+      "p_client_id:uuid"
+    ],
+    "admin_suspend_operator": [
+      "p_operator_id:uuid",
+      "p_reason:text"
+    ],
+    "tick_empty_leg_dutch_auction": [
+      "p_leg_id:uuid"
+    ],
+    "st_force3d": [
+      "geom:public.geometry",
+      "zvalue:double precision"
+    ],
+    "st_linefromtext": [
+      ":text"
+    ],
+    "st_within": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_point": [
+      ":double precision",
+      "srid:integer"
+    ],
+    "list_rewardable_referrals": [
+      "p_limit:integer"
+    ],
+    "geometry_contains_3d": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_st_crosses": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "reserve_empty_leg_authenticated": [
+      "p_client_id:uuid",
+      "p_ip:inet",
+      "p_leg_id:uuid"
+    ],
+    "st_generatepoints": [
+      "area:public.geometry",
+      "npoints:integer",
+      "seed:integer"
+    ],
+    "st_3ddistance": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_geomfrommarc21": [
+      "marc21xml:text"
+    ],
+    "admin_read_medevac_request_detail": [
+      "p_request_id:uuid",
+      "p_session_metadata:jsonb"
+    ],
+    "gettransactionid": [
+      "args:?"
+    ],
+    "operator_login_create_session": [
+      "p_ip:inet",
+      "p_operator_id:uuid",
+      "p_remember_me:boolean",
+      "p_session_token_hash:text",
+      "p_user_agent:text"
+    ],
+    "update_booking_addon_quantity": [
+      "p_booking_addon_id:uuid",
+      "p_quantity:integer"
+    ],
+    "admin_cancel_booking_addon": [
+      "p_booking_addon_id:uuid"
+    ],
+    "_st_3ddfullywithin": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "geometry_within": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "geometry_le": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_multipolygonfromtext": [
+      ":text"
+    ],
+    "postgis_geos_version": [
+      "args:?"
+    ],
+    "st_geographyfromtext": [
+      ":text"
+    ],
+    "_is_sha256_hex": [
+      "p_hash:text"
+    ],
+    "st_astwkb": [
+      "geom:public.geometry[]",
+      "ids:bigint[]",
+      "prec:integer",
+      "prec_m:integer",
+      "prec_z:integer",
+      "with_boxes:boolean",
+      "with_sizes:boolean"
+    ],
+    "st_force4d": [
+      "geom:public.geometry",
+      "mvalue:double precision",
+      "zvalue:double precision"
+    ],
+    "st_hasarc": [
+      "geometry:public.geometry"
+    ],
+    "withdraw_cargo_offer": [
+      "p_offer_id:uuid",
+      "p_operator_id:uuid",
+      "p_reason:text"
+    ],
+    "submit_cargo_offer": [
+      "p_cargo_request_id:uuid",
+      "p_operator_id:uuid",
+      "p_payload:jsonb"
+    ],
+    "postgis_constraint_dims": [
+      "geomcolumn:text",
+      "geomschema:text",
+      "geomtable:text"
+    ],
+    "create_review": [
+      "p_aircraft_rating:integer",
+      "p_booking_id:uuid",
+      "p_client_id:uuid",
+      "p_comment:text",
+      "p_crew_rating:integer",
+      "p_overall_rating:integer",
+      "p_service_rating:integer"
+    ],
+    "st_force3dm": [
+      "geom:public.geometry",
+      "mvalue:double precision"
+    ],
+    "st_clipbybox2d": [
+      "box:public.box2d",
+      "geom:public.geometry"
+    ],
+    "geometry_overlaps": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "admin_activate_subscription": [
+      "p_subscription_id:uuid"
+    ],
+    "list_recoverable_trip_requests": [
+      "p_limit:integer",
+      "p_stale_before:timestamp with time zone"
+    ],
+    "st_asgml": [
+      "geom:public.geometry",
+      "id:text",
+      "maxdecimaldigits:integer",
+      "nprefix:text",
+      "options:integer",
+      "version:integer"
+    ],
+    "st_reduceprecision": [
+      "geom:public.geometry",
+      "gridsize:double precision"
+    ],
+    "cargo_operator_last_dispatch_map": [
+      "p_operator_ids:uuid[]"
+    ],
+    "confirm_checkout_prep": [
+      "p_booking_id:uuid"
+    ],
+    "st_geomcollfromwkb": [
+      ":bytea"
+    ],
+    "cleanup_old_client_login_attempts": [
+      "args:?"
+    ],
+    "st_geomfromtext": [
+      ":text"
+    ],
+    "_recompute_empty_leg_price": [
+      "p_leg_id:uuid"
+    ],
+    "client_verify_password_reset": [
+      "p_new_password_hash:text",
+      "p_token_hash:text"
+    ],
+    "expire_empty_leg_reservation": [
+      "p_leg_id:uuid"
+    ],
+    "accept_medevac_offer": [
+      "p_actor_admin_user_id:uuid",
+      "p_actor_client_id:uuid",
+      "p_offer_id:uuid"
+    ],
+    "st_unaryunion": [
+      ":public.geometry",
+      "gridsize:double precision"
+    ],
+    "postgis_constraint_type": [
+      "geomcolumn:text",
+      "geomschema:text",
+      "geomtable:text"
+    ],
+    "st_node": [
+      "g:public.geometry"
+    ],
+    "st_geomfromtwkb": [
+      ":bytea"
+    ],
+    "st_tileenvelope": [
+      "bounds:public.geometry",
+      "margin:double precision",
+      "x:integer",
+      "y:integer",
+      "zoom:integer"
+    ],
+    "client_login_lookup": [
+      "p_email:text"
+    ],
+    "submit_medevac_offer": [
+      "p_operator_id:uuid",
+      "p_payload:jsonb"
+    ],
+    "cleanup_old_operator_login_attempts": [
+      "args:?"
+    ],
+    "st_intersects": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_voronoipolygons": [
+      "extend_to:public.geometry",
+      "g1:public.geometry",
+      "tolerance:double precision"
+    ],
+    "geometry_right": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_asx3d": [
+      "geom:public.geometry",
+      "maxdecimaldigits:integer",
+      "options:integer"
+    ],
+    "st_snap": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "postgis_constraint_srid": [
+      "geomcolumn:text",
+      "geomschema:text",
+      "geomtable:text"
+    ],
+    "promote_lead_to_trip_request": [
+      "p_aircraft_category:public.aircraft_category",
+      "p_lead_id:uuid",
+      "p_lead_trip_type:text",
+      "p_legs:jsonb",
+      "p_preferences:jsonb",
+      "p_special_requests:text"
+    ],
+    "_postgis_selectivity": [
+      "att_name:text",
+      "geom:public.geometry",
+      "mode:text",
+      "tbl:regclass"
+    ],
+    "_normalize_client_email": [
+      "p_email:text"
+    ],
+    "admin_force_privilege_tier": [
+      "p_client_id:uuid",
+      "p_lock_until:date",
+      "p_new_tier:public.client_privilege_tier",
+      "p_reason:text",
+      "p_session_metadata:jsonb"
+    ],
+    "populate_geometry_columns": [
+      "tbl_oid:oid",
+      "use_typmod:boolean"
+    ],
+    "st_3ddwithin": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_longestline": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_lineinterpolatepoints": [
+      ":double precision",
+      "repeat:boolean"
+    ],
+    "st_3dshortestline": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_3dintersects": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "reward_referral": [
+      "p_referee_reward_sar:numeric",
+      "p_referral_id:uuid",
+      "p_referrer_reward_sar:numeric"
+    ],
+    "geometry_contained_3d": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "calculate_client_qualified_spend_12m": [
+      "p_client_id:uuid"
+    ],
+    "update_operator_aircraft": [
+      "p_aircraft_id:uuid",
+      "p_operator_id:uuid",
+      "p_payload:jsonb"
+    ],
+    "claim_cargo_dispatch_events": [
+      "p_claim_id:uuid",
+      "p_limit:integer"
+    ],
+    "st_sharedpaths": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_st_dwithin": [
+      "geog1:public.geography",
+      "geog2:public.geography",
+      "tolerance:double precision",
+      "use_spheroid:boolean"
+    ],
+    "delete_trip_request_recovery_reminder": [
+      "p_reminder_id:uuid"
+    ],
+    "medevac_operator_last_dispatch_map": [
+      "p_operator_ids:uuid[]"
+    ],
+    "_postgis_pgsql_version": [
+      "args:?"
+    ],
+    "st_mpointfromtext": [
+      ":text"
+    ],
+    "postgis_libjson_version": [
+      "args:?"
+    ],
+    "create_authenticated_trip_request": [
+      "p_aircraft_pref:text",
+      "p_arrival_iata:text",
+      "p_client_id:uuid",
+      "p_departure_date:timestamp with time zone",
+      "p_departure_iata:text",
+      "p_legs:jsonb",
+      "p_passengers:integer",
+      "p_return_date:timestamp with time zone",
+      "p_special_requests:text",
+      "p_trip_type:text"
+    ],
+    "generate_request_number": [
+      "prefix:text"
+    ],
+    "geometry_above": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "consume_operator_welcome_token": [
+      "p_ip:inet",
+      "p_remember_me:boolean",
+      "p_session_token_hash:character varying",
+      "p_token_hash:character varying",
+      "p_user_agent:text"
+    ],
+    "st_3dmaxdistance": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_locatebetweenelevations": [
+      "fromelevation:double precision",
+      "geometry:public.geometry",
+      "toelevation:double precision"
+    ],
+    "st_interpolatepoint": [
+      "line:public.geometry",
+      "point:public.geometry"
+    ],
+    "operator_logout": [
+      "p_session_token_hash:text"
+    ],
+    "record_operator_cron_tick": [
+      "p_deleted_count:integer",
+      "p_error_label:text",
+      "p_job_name:text",
+      "p_success:boolean"
+    ],
+    "st_split": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_relate": [
+      ":text",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_transform": [
+      "from_proj:text",
+      "geom:public.geometry",
+      "to_srid:integer"
+    ],
+    "_recompute_booking_totals": [
+      "p_booking_id:uuid"
+    ],
+    "st_makevalid": [
+      "geom:public.geometry",
+      "params:text"
+    ],
+    "st_symdifference": [
+      "geom1:public.geometry",
+      "geom2:public.geometry",
+      "gridsize:double precision"
+    ],
+    "st_geogfromwkb": [
+      ":bytea"
+    ],
+    "st_wkbtosql": [
+      "wkb:bytea"
+    ],
+    "st_boundingdiagonal": [
+      "fits:boolean",
+      "geom:public.geometry"
+    ],
+    "st_forcesfs": [
+      ":public.geometry",
+      "version:text"
+    ],
+    "postgis_lib_build_date": [
+      "args:?"
+    ],
+    "operator_session_validate": [
+      "p_token_hash:text"
+    ],
+    "geomfromewkt": [
+      ":text"
+    ],
+    "st_subdivide": [
+      "geom:public.geometry",
+      "gridsize:double precision",
+      "maxvertices:integer"
+    ],
+    "cancel_empty_leg": [
+      "p_leg_id:uuid",
+      "p_reason:text"
+    ],
+    "_st_coveredby": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "st_shortestline": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "redeem_cashback_for_booking": [
+      "p_booking_id:uuid",
+      "p_client_id:uuid",
+      "p_redemption_amount:numeric"
+    ],
+    "redispatch_stale_trip_requests": [
+      "p_stale_hours:numeric"
+    ],
+    "_st_within": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "cleanup_old_client_signup_attempts": [
+      "args:?"
+    ],
+    "st_setsrid": [
+      "geom:public.geometry",
+      "srid:integer"
+    ],
+    "add_support_ticket_message": [
+      "p_author_id:uuid",
+      "p_author_role:public.user_role",
+      "p_body:text",
+      "p_ticket_id:uuid"
+    ],
+    "_postgis_scripts_pgsql_version": [
+      "args:?"
+    ],
+    "st_linefromencodedpolyline": [
+      "nprecision:integer",
+      "txtin:text"
+    ],
+    "st_multipolyfromwkb": [
+      ":bytea"
+    ],
+    "st_mpolyfromtext": [
+      ":text"
+    ],
+    "enablelongtransactions": [
+      "args:?"
+    ],
+    "admin_release_empty_leg_reservation": [
+      "p_leg_id:uuid"
+    ],
+    "st_geogfromtext": [
+      ":text"
+    ],
+    "consume_aeris_shield_event": [
+      "p_client_id:uuid",
+      "p_patient_member_dob:date",
+      "p_patient_member_name:text",
+      "p_payload:jsonb",
+      "p_subscription_id:uuid"
+    ],
+    "st_hexagon": [
+      "cell_i:integer",
+      "cell_j:integer",
+      "origin:public.geometry",
+      "size:double precision"
+    ],
+    "_postgis_stats": [
+      ":text",
+      "att_name:text",
+      "tbl:regclass"
+    ],
+    "st_coorddim": [
+      "geometry:public.geometry"
+    ],
+    "st_3ddfullywithin": [
+      ":double precision",
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "release_empty_leg_reservation_for_client": [
+      "p_client_id:uuid",
+      "p_leg_id:uuid"
+    ],
+    "reconcile_client_cashback_balance": [
+      "p_client_id:uuid"
+    ],
+    "postgis_wagyu_version": [
+      "args:?"
+    ],
+    "geometry_overlaps_3d": [
+      "geom1:public.geometry",
+      "geom2:public.geometry"
+    ],
+    "_postgis_index_extent": [
+      "col:text",
+      "tbl:regclass"
+    ],
+    "postgis_svn_version": [
+      "args:?"
+    ],
+    "admin_reset_operator_password": [
+      "p_new_password_hash:text",
+      "p_operator_id:uuid"
+    ],
+    "st_pointfromtext": [
+      ":text"
+    ],
+    "cleanup_old_signup_attempts": [
+      "args:?"
+    ]
+  }
+}

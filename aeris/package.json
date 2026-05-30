@@ -10,6 +10,8 @@
     "lint": "eslint .",
     "lint:strict": "eslint . --max-warnings 0",
     "type-check": "tsc --noEmit",
+    "audit:db": "node scripts/audit-columns.cjs --ci",
+    "introspect:db": "node scripts/live-introspect.cjs",
     "test:addons": "tsx lib/addons/__tests__/catalog-vs-seed.test.ts",
     "test:checkout-whatsapp": "tsx lib/checkout/__tests__/whatsapp-message.test.ts",
     "test:checkout-site-url": "tsx lib/checkout/__tests__/site-url.test.ts",
