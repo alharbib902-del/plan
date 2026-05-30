@@ -69,7 +69,9 @@ export async function listActiveAlertsWithClient(
   if (error) {
     throw new Error(error.message);
   }
-  return (data ?? []) as ActiveAlertWithClient[];
+  // PostgREST types the `clients(...)` embed as an array; for the to-one
+  // alerts.client_id -> clients FK it is a single object at runtime.
+  return (data ?? []) as unknown as ActiveAlertWithClient[];
 }
 
 /**

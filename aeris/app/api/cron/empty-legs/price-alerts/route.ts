@@ -11,6 +11,7 @@ import {
   listDeliveredLegIds,
 } from '@/lib/empty-legs/alerts';
 import { sendClientEmptyLegMatchEmail } from '@/lib/notifications/client-empty-leg-email';
+import type { EmptyLegRow } from '@/lib/empty-legs/types';
 
 /**
  * Empty Legs price-alerts cron.
@@ -62,8 +63,8 @@ export async function GET(req: NextRequest): Promise<Response> {
     const client = alert.clients;
     if (!client) continue;
 
-    let legs;
-    let delivered;
+    let legs: EmptyLegRow[] = [];
+    let delivered: Set<string> = new Set();
     try {
       [legs, delivered] = await Promise.all([
         findMatchingAvailableLegs(alert),
