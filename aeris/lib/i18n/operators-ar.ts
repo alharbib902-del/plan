@@ -472,6 +472,7 @@ export const operatorsAr = {
       year_invalid: 'سنة الصنع غير صالحة.',
       max_range_invalid: 'المدى الأقصى غير صالح.',
       status_invalid: 'الحالة غير صالحة.',
+      invalid_number_format: 'صيغة رقمية غير صالحة في أحد الحقول.',
       not_found_or_not_owned: 'الطائرة غير موجودة أو لا تخصّ حسابك.',
       unknown: 'حدث خطأ غير متوقّع. حاول مرة أخرى أو راجع السجلّ.',
     },

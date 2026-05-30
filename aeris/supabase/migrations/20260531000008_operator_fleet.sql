@@ -128,6 +128,12 @@ BEGIN
   END;
 
   RETURN jsonb_build_object('ok', true, 'aircraft_id', v_aircraft_id);
+EXCEPTION
+  -- Defence-in-depth: if a non-numeric / out-of-range value ever reaches
+  -- the casts above (Zod guards the form path), return a clean error
+  -- instead of a raw SQL fault.
+  WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'invalid_number_format');
 END;
 $$;
 
@@ -217,6 +223,9 @@ BEGIN
   END IF;
 
   RETURN jsonb_build_object('ok', true);
+EXCEPTION
+  WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'invalid_number_format');
 END;
 $$;
 
@@ -247,7 +256,41 @@ BEGIN
 END;
 $$;
 
--- ---- §5 Grants — service_role ONLY ------------------------------------------
+-- ---- §5 Retire enforcement: block NEW offers on a retired aircraft ----------
+-- "Retired" must be meaningful: a retired aircraft cannot be offered on a new
+-- cargo/medevac request. Rather than rewrite the large, separately-reviewed
+-- submit_cargo_offer / submit_medevac_offer RPCs (and risk the shared offer
+-- flows), enforce the invariant at the DB with a BEFORE INSERT trigger on each
+-- offer table — path-independent and atomic (a RAISE rolls back the offer's
+-- transaction). The operator UI also pre-filters retired aircraft from the
+-- selection lists; this trigger is the authoritative backstop. (maintenance is
+-- intentionally still offerable; only 'retired' is hard-blocked.)
+CREATE OR REPLACE FUNCTION reject_retired_aircraft_offer()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM aircraft WHERE id = NEW.aircraft_id AND status = 'retired'
+  ) THEN
+    RAISE EXCEPTION 'aircraft_retired'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE TRIGGER trg_cargo_offers_reject_retired
+  BEFORE INSERT ON cargo_offers
+  FOR EACH ROW EXECUTE FUNCTION reject_retired_aircraft_offer();
+
+CREATE OR REPLACE TRIGGER trg_medevac_offers_reject_retired
+  BEFORE INSERT ON medevac_offers
+  FOR EACH ROW EXECUTE FUNCTION reject_retired_aircraft_offer();
+
+-- ---- §6 Grants — service_role ONLY ------------------------------------------
 REVOKE ALL ON FUNCTION list_operator_aircraft(UUID)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION list_operator_aircraft(UUID)

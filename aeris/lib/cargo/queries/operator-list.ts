@@ -164,7 +164,7 @@ export async function listCapableAircraftForOperator(
   // page hotfix.
   const { data: acData, error: acError } = await admin
     .from('aircraft')
-    .select('id, registration, manufacturer, model')
+    .select('id, registration, manufacturer, model, status')
     .eq('operator_id', operatorId);
 
   if (acError) {
@@ -177,8 +177,14 @@ export async function listCapableAircraftForOperator(
     registration?: string | null;
     manufacturer?: string | null;
     model?: string | null;
+    status?: string | null;
   }
-  const aircraft = (acData ?? []) as RawAircraft[];
+  // Phase 14 — a retired aircraft must not be offerable on a new cargo
+  // request (the offer-table trigger is the DB backstop; this drops it
+  // from the operator's selection list too).
+  const aircraft = ((acData ?? []) as RawAircraft[]).filter(
+    (a) => a.status !== 'retired'
+  );
   if (aircraft.length === 0) return [];
 
   // Step 2: capability rows that include the cargo_type column.
