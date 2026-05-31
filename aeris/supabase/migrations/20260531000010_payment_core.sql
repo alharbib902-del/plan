@@ -29,7 +29,10 @@ ALTER TABLE payments
   -- Single-flight guard: only the request that wins this claim calls the
   -- gateway, so concurrent inits with the same idempotency key cannot each
   -- create an (orphan) external checkout. A stale claim is re-claimable.
-  ADD COLUMN IF NOT EXISTS checkout_claimed_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS checkout_claimed_at TIMESTAMPTZ,
+  -- Per-claim token: attach/release accept ONLY the current claim owner, so a
+  -- late call from a superseded (stale-reclaimed) claim cannot taint the row.
+  ADD COLUMN IF NOT EXISTS checkout_creation_token TEXT;
 
 -- payment_method is unknown at COPYandPAY initiation (the widget collects it);
 -- it is set at confirmation from the gateway-reported brand. Relax NOT NULL.
@@ -192,7 +195,8 @@ $$;
 -- ---- §3b RPC: attach_payment_checkout (after gateway checkout created) -------
 CREATE OR REPLACE FUNCTION attach_payment_checkout(
   p_payment_id  UUID,
-  p_checkout_id TEXT
+  p_checkout_id TEXT,
+  p_token       TEXT
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -201,17 +205,24 @@ SET search_path = public
 AS $$
 DECLARE
   v_checkout TEXT;
+  v_token    TEXT;
   v_rows INT;
 BEGIN
   v_checkout := NULLIF(BTRIM(COALESCE(p_checkout_id, '')), '');
   IF v_checkout IS NULL THEN
     RETURN jsonb_build_object('ok', false, 'error', 'checkout_id_required');
   END IF;
+  v_token := NULLIF(BTRIM(COALESCE(p_token, '')), '');
+  IF v_token IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'claim_token_required');
+  END IF;
 
-  -- Only attach to a still-initiated attempt that has no checkout yet.
+  -- Attach ONLY for the current claim owner (token match) to a still-initiated
+  -- attempt with no checkout yet — a stale/superseded claim's late attach fails.
   UPDATE payments
     SET checkout_id = v_checkout
-  WHERE id = p_payment_id AND status = 'initiated' AND checkout_id IS NULL;
+  WHERE id = p_payment_id AND status = 'initiated' AND checkout_id IS NULL
+    AND checkout_creation_token = v_token;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   IF v_rows = 0 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'attach_not_allowed');
@@ -235,10 +246,15 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_token TEXT;
   v_rows INT;
 BEGIN
+  v_token := uuid_generate_v4()::text;
+  -- A stale-reclaim issues a NEW token, invalidating the prior claimer's
+  -- attach/release (token mismatch) — so a late call can't taint the row.
   UPDATE payments
-    SET checkout_claimed_at = now()
+    SET checkout_claimed_at = now(),
+        checkout_creation_token = v_token
   WHERE id = p_payment_id
     AND status = 'initiated'
     AND checkout_id IS NULL
@@ -248,7 +264,7 @@ BEGIN
   IF v_rows = 0 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'checkout_claim_unavailable');
   END IF;
-  RETURN jsonb_build_object('ok', true);
+  RETURN jsonb_build_object('ok', true, 'token', v_token);
 END;
 $$;
 
@@ -256,7 +272,8 @@ $$;
 -- Frees a claim so a retry can re-create the checkout (idempotent no-op once a
 -- checkout is attached or the attempt is no longer 'initiated').
 CREATE OR REPLACE FUNCTION release_payment_checkout_claim(
-  p_payment_id UUID
+  p_payment_id UUID,
+  p_token      TEXT
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -264,9 +281,13 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  -- Release ONLY one's own claim (token match); a no-op once a checkout is
+  -- attached, the attempt is terminal, or another claimer took over.
   UPDATE payments
-    SET checkout_claimed_at = NULL
-  WHERE id = p_payment_id AND status = 'initiated' AND checkout_id IS NULL;
+    SET checkout_claimed_at = NULL,
+        checkout_creation_token = NULL
+  WHERE id = p_payment_id AND status = 'initiated' AND checkout_id IS NULL
+    AND checkout_creation_token = NULLIF(BTRIM(COALESCE(p_token, '')), '');
   RETURN jsonb_build_object('ok', true);
 END;
 $$;
@@ -439,15 +460,137 @@ BEGIN
 END;
 $$;
 
+-- ---- §6b Freeze cashback redemption while a payment is in flight ------------
+-- Re-creates redeem_cashback_for_booking (orig: 20260519000043 §4.4) VERBATIM
+-- plus ONE guard: refuse when an 'initiated' payment attempt exists for the
+-- booking. Without it, a redemption that lands AFTER a checkout was created for
+-- the old net would change the booking net under an in-flight checkout, so
+-- confirmation fails provider_amount_mismatch AFTER the client already paid.
+-- (Not a paid-state trigger; the paid-state machinery is untouched.)
+CREATE OR REPLACE FUNCTION redeem_cashback_for_booking(
+  p_client_id          UUID,
+  p_booking_id         UUID,
+  p_redemption_amount  DECIMAL
+)
+RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_current_balance  DECIMAL(14,2);
+  v_total_amount     DECIMAL(14,2);
+  v_paid_at          TIMESTAMPTZ;
+  v_new_balance      DECIMAL(14,2);
+  v_ledger_id        UUID;
+BEGIN
+  IF p_redemption_amount IS NULL OR p_redemption_amount <= 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'redemption_amount_invalid');
+  END IF;
+
+  -- F28 idempotency: one redemption per booking (no lock, just
+  -- an early-exit check).
+  IF EXISTS (
+    SELECT 1 FROM client_loyalty_ledger
+    WHERE booking_id = p_booking_id AND event_type = 'redeem'
+  ) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'already_redeemed_for_booking');
+  END IF;
+
+  -- Round 7 PR #80 F15 fix (P1) + Round 5 F3 fix:
+  -- Lock order: BOOKING FIRST, THEN CLIENT.
+  SELECT total_amount, paid_at INTO v_total_amount, v_paid_at
+  FROM bookings
+  WHERE id = p_booking_id AND client_id = p_client_id
+  FOR UPDATE;
+  IF v_total_amount IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_not_owned');
+  END IF;
+
+  -- D29: redemption must happen BEFORE payment confirmation.
+  IF v_paid_at IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_already_paid');
+  END IF;
+
+  -- Phase payments PR1: redemption must NOT change the net once a checkout is
+  -- in flight — an active attempt freezes the amount.
+  IF EXISTS (
+    SELECT 1 FROM payments
+    WHERE booking_id = p_booking_id AND status = 'initiated'
+  ) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_has_active_payment');
+  END IF;
+
+  -- F27 race fix: NOW lock the clients row (second in the order).
+  SELECT cashback_balance_sar INTO v_current_balance
+  FROM clients WHERE id = p_client_id FOR UPDATE;
+
+  IF v_current_balance IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'client_not_found');
+  END IF;
+
+  IF v_current_balance < p_redemption_amount THEN
+    RETURN jsonb_build_object(
+      'ok', false, 'error', 'insufficient_balance',
+      'current_balance', v_current_balance, 'requested', p_redemption_amount
+    );
+  END IF;
+
+  -- D7 cap 1: redemption <= 50% of total_amount
+  IF p_redemption_amount > v_total_amount * 0.5 THEN
+    RETURN jsonb_build_object(
+      'ok', false, 'error', 'redemption_exceeds_cap',
+      'max_allowed', v_total_amount * 0.5
+    );
+  END IF;
+  -- D7 cap 2: at least 1 SAR cash remains
+  IF (v_total_amount - p_redemption_amount) < 1 THEN
+    RETURN jsonb_build_object(
+      'ok', false, 'error', 'redemption_leaves_no_cash_payment'
+    );
+  END IF;
+
+  v_new_balance := v_current_balance - p_redemption_amount;
+
+  -- F28 layer 3+4: BEGIN/EXCEPTION on UNIQUE INDEX
+  BEGIN
+    INSERT INTO client_loyalty_ledger (
+      client_id, event_type, amount_sar, balance_after_sar, booking_id
+    ) VALUES (
+      p_client_id, 'redeem', -p_redemption_amount, v_new_balance, p_booking_id
+    ) RETURNING id INTO v_ledger_id;
+  EXCEPTION WHEN unique_violation THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'already_redeemed_for_booking_race');
+  END;
+
+  UPDATE clients SET cashback_balance_sar = v_new_balance
+    WHERE id = p_client_id;
+  UPDATE bookings SET cashback_redemption_sar = p_redemption_amount
+    WHERE id = p_booking_id;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'ledger_id', v_ledger_id,
+    'redeemed_sar', p_redemption_amount,
+    'new_balance_sar', v_new_balance,
+    'booking_id', p_booking_id
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION redeem_cashback_for_booking(UUID, UUID, DECIMAL)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION redeem_cashback_for_booking(UUID, UUID, DECIMAL)
+  TO service_role;
+
 -- ---- §7 Grants — service_role ONLY ------------------------------------------
 REVOKE ALL ON FUNCTION create_payment_attempt(UUID, UUID, TEXT, TEXT)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION create_payment_attempt(UUID, UUID, TEXT, TEXT)
   TO service_role;
 
-REVOKE ALL ON FUNCTION attach_payment_checkout(UUID, TEXT)
+REVOKE ALL ON FUNCTION attach_payment_checkout(UUID, TEXT, TEXT)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION attach_payment_checkout(UUID, TEXT)
+GRANT EXECUTE ON FUNCTION attach_payment_checkout(UUID, TEXT, TEXT)
   TO service_role;
 
 REVOKE ALL ON FUNCTION claim_payment_checkout_creation(UUID)
@@ -455,9 +598,9 @@ REVOKE ALL ON FUNCTION claim_payment_checkout_creation(UUID)
 GRANT EXECUTE ON FUNCTION claim_payment_checkout_creation(UUID)
   TO service_role;
 
-REVOKE ALL ON FUNCTION release_payment_checkout_claim(UUID)
+REVOKE ALL ON FUNCTION release_payment_checkout_claim(UUID, TEXT)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION release_payment_checkout_claim(UUID)
+GRANT EXECUTE ON FUNCTION release_payment_checkout_claim(UUID, TEXT)
   TO service_role;
 
 REVOKE ALL ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB)

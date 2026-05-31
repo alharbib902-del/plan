@@ -72,7 +72,14 @@ export async function startCheckout(input: {
     });
     if (error) return { ok: false, error: 'rpc_failed' };
     const r = data as { ok: boolean; error?: string };
-    if (!r.ok && r.error !== 'already_redeemed_for_booking') {
+    // Tolerate "already settled": redemption is already applied
+    // (already_redeemed_for_booking) or frozen by an active attempt we'll reuse
+    // (booking_has_active_payment). Other errors (caps, balance) stay fatal.
+    if (
+      !r.ok &&
+      r.error !== 'already_redeemed_for_booking' &&
+      r.error !== 'booking_has_active_payment'
+    ) {
       return { ok: false, error: r.error ?? 'redeem_failed' };
     }
   }
@@ -100,26 +107,29 @@ export async function startCheckout(input: {
     };
   }
 
-  // 3) Single-flight claim — only the winner calls the gateway, so concurrent
-  //    inits with the same key can't each create an orphan external checkout.
+  // 3) Single-flight claim — only the winner (holding the returned token) calls
+  //    the gateway, so concurrent inits can't each create an orphan checkout.
   const claim = await claimPaymentCheckoutCreation({ paymentId: attempt.payment_id });
   if (!claim.ok) return { ok: false, error: 'checkout_pending' };
+  const token = claim.token;
 
-  // 4) Create the gateway checkout for the DERIVED amount, then attach its id.
-  //    On gateway failure, release the claim so a retry can re-create it.
+  // 4) Create the gateway checkout for the DERIVED amount, then attach its id
+  //    under OUR token. On gateway failure, release our claim so a retry can
+  //    re-create it (a stale-superseded token's attach/release no-ops safely).
   const checkout = await provider.createCheckout({
     merchantRef: attempt.booking_number,
     amount: attempt.amount,
     currency: 'SAR',
   });
   if (!checkout.ok) {
-    await releasePaymentCheckoutClaim({ paymentId: attempt.payment_id });
+    await releasePaymentCheckoutClaim({ paymentId: attempt.payment_id, token });
     return { ok: false, error: checkout.error };
   }
 
   const attach = await attachPaymentCheckout({
     paymentId: attempt.payment_id,
     checkoutId: checkout.checkoutId,
+    token,
   });
   if (!attach.ok) return { ok: false, error: attach.error };
 
