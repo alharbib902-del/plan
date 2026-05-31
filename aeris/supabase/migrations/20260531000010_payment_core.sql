@@ -35,8 +35,25 @@ ALTER TABLE payments ALTER COLUMN payment_method DROP NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_one_success_per_booking
   ON payments (booking_id) WHERE status = 'success';
 
+-- Caller-supplied idempotency key (a per-checkout-intent uuid): dedups
+-- rapid duplicate initiations; a fresh retry uses a fresh key.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_idempotency_key
+  ON payments (idempotency_key) WHERE idempotency_key IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_payments_checkout_id
   ON payments (checkout_id) WHERE checkout_id IS NOT NULL;
+
+-- Constrain provider to the known set (idempotent add).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payments_provider_check'
+  ) THEN
+    ALTER TABLE payments
+      ADD CONSTRAINT payments_provider_check
+      CHECK (provider IN ('hyperpay', 'moyasar'));
+  END IF;
+END $$;
 
 REVOKE ALL ON payments FROM anon, authenticated;
 
@@ -65,15 +82,17 @@ ALTER TABLE payment_events ENABLE ROW LEVEL SECURITY;
 -- Intentionally NO policies: deny-all for anon/authenticated. Service-role only.
 REVOKE ALL ON payment_events FROM anon, authenticated;
 
--- ---- §3 RPC: create_payment_attempt -----------------------------------------
--- Opens an attempt for an owned, unpaid booking. Amount is DERIVED from the
--- booking (total − cashback redemption) — never trusted from the client — so
--- it always reconciles. Returns the amount for the gateway checkout call.
+-- ---- §3 RPC: create_payment_attempt (idempotent, attempt-first) -------------
+-- Opens (or reuses) an attempt for an owned, unpaid booking BEFORE any gateway
+-- call, so a failed gateway create never orphans an external checkout. Amount
+-- is DERIVED from the booking (total − cashback redemption), never trusted.
+-- The caller passes a per-intent idempotency key (uuid): a duplicate init with
+-- the same key returns the existing 'initiated' attempt (+ its checkout_id, if
+-- already attached) instead of creating a second one.
 CREATE OR REPLACE FUNCTION create_payment_attempt(
   p_booking_id      UUID,
   p_client_id       UUID,
   p_provider        TEXT,
-  p_checkout_id     TEXT,
   p_idempotency_key TEXT
 )
 RETURNS JSONB
@@ -88,19 +107,29 @@ DECLARE
   v_total      DECIMAL(12,2);
   v_redeem     DECIMAL(12,2);
   v_amount     DECIMAL(12,2);
+  v_booking_number TEXT;
+  v_key        TEXT;
   v_payment_id UUID;
+  v_ex_id      UUID;
+  v_ex_booking UUID;
+  v_ex_status  payment_status;
+  v_ex_amount  DECIMAL(12,2);
+  v_ex_checkout TEXT;
 BEGIN
-  SELECT client_id, payment_status, paid_at, total_amount, cashback_redemption_sar
-    INTO v_client, v_status, v_paid_at, v_total, v_redeem
+  v_key := NULLIF(trim(COALESCE(p_idempotency_key, '')), '');
+  IF v_key IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'idempotency_key_required');
+  END IF;
+
+  SELECT client_id, payment_status, paid_at, total_amount, cashback_redemption_sar, booking_number
+    INTO v_client, v_status, v_paid_at, v_total, v_redeem, v_booking_number
   FROM bookings
   WHERE id = p_booking_id
   FOR UPDATE;
 
-  IF v_client IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found');
-  END IF;
-  IF v_client <> p_client_id THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'not_owner');
+  -- Opaque: never distinguish missing vs not-owned.
+  IF v_client IS NULL OR v_client <> p_client_id THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'booking_not_found_or_not_owned');
   END IF;
   IF v_paid_at IS NOT NULL OR v_status = 'paid' THEN
     RETURN jsonb_build_object('ok', false, 'error', 'already_paid');
@@ -112,16 +141,57 @@ BEGIN
   END IF;
 
   INSERT INTO payments (
-    booking_id, amount, currency, provider, checkout_id, idempotency_key, status
+    booking_id, amount, currency, provider, idempotency_key, status
   ) VALUES (
     p_booking_id, v_amount, 'SAR',
-    COALESCE(NULLIF(trim(p_provider), ''), 'hyperpay'),
-    NULLIF(trim(COALESCE(p_checkout_id, '')), ''),
-    NULLIF(trim(COALESCE(p_idempotency_key, '')), ''),
-    'initiated'
-  ) RETURNING id INTO v_payment_id;
+    COALESCE(NULLIF(trim(p_provider), ''), 'hyperpay'), v_key, 'initiated'
+  )
+  ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+  RETURNING id INTO v_payment_id;
 
-  RETURN jsonb_build_object('ok', true, 'payment_id', v_payment_id, 'amount', v_amount);
+  IF v_payment_id IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', true, 'payment_id', v_payment_id,
+      'amount', v_amount, 'booking_number', v_booking_number,
+      'checkout_id', NULL, 'reused', false);
+  END IF;
+
+  -- Key already used → reuse the existing attempt if it's still reusable.
+  SELECT id, booking_id, status, amount, checkout_id
+    INTO v_ex_id, v_ex_booking, v_ex_status, v_ex_amount, v_ex_checkout
+  FROM payments WHERE idempotency_key = v_key;
+
+  IF v_ex_booking IS DISTINCT FROM p_booking_id OR v_ex_status <> 'initiated' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'idempotency_key_conflict');
+  END IF;
+
+  RETURN jsonb_build_object('ok', true, 'payment_id', v_ex_id,
+    'amount', v_ex_amount, 'booking_number', v_booking_number,
+    'checkout_id', v_ex_checkout, 'reused', true);
+END;
+$$;
+
+-- ---- §3b RPC: attach_payment_checkout (after gateway checkout created) -------
+CREATE OR REPLACE FUNCTION attach_payment_checkout(
+  p_payment_id  UUID,
+  p_checkout_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_rows INT;
+BEGIN
+  -- Only attach to a still-initiated attempt that has no checkout yet.
+  UPDATE payments
+    SET checkout_id = NULLIF(trim(COALESCE(p_checkout_id, '')), '')
+  WHERE id = p_payment_id AND status = 'initiated' AND checkout_id IS NULL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'attach_not_allowed');
+  END IF;
+  RETURN jsonb_build_object('ok', true);
 END;
 $$;
 
@@ -132,11 +202,13 @@ $$;
 -- the booking to 'paid' (paid_at NULL → the immutability guard allows this
 -- first transition; the paid-state triggers then cascade cashback/tier).
 CREATE OR REPLACE FUNCTION confirm_booking_payment(
-  p_payment_id     UUID,
-  p_provider_txn   TEXT,
-  p_provider_status TEXT,
-  p_method         TEXT,
-  p_raw            JSONB
+  p_payment_id        UUID,
+  p_provider_txn      TEXT,
+  p_provider_status   TEXT,
+  p_method            TEXT,
+  p_provider_amount   NUMERIC,
+  p_provider_currency TEXT,
+  p_raw               JSONB
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -183,6 +255,15 @@ BEGIN
   -- Net-payable invariant must still hold (redemption could have changed).
   IF v_pay_amount <> (v_total - COALESCE(v_redeem, 0)) THEN
     RETURN jsonb_build_object('ok', false, 'error', 'amount_mismatch');
+  END IF;
+
+  -- The gateway-reported amount/currency MUST reconcile with our authoritative
+  -- net — a success for a different amount/currency must NOT flip the booking.
+  IF upper(COALESCE(p_provider_currency, '')) <> 'SAR' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'currency_mismatch');
+  END IF;
+  IF p_provider_amount IS NULL OR p_provider_amount <> v_pay_amount THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'provider_amount_mismatch');
   END IF;
 
   v_method := CASE
@@ -274,14 +355,19 @@ END;
 $$;
 
 -- ---- §7 Grants — service_role ONLY ------------------------------------------
-REVOKE ALL ON FUNCTION create_payment_attempt(UUID, UUID, TEXT, TEXT, TEXT)
+REVOKE ALL ON FUNCTION create_payment_attempt(UUID, UUID, TEXT, TEXT)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION create_payment_attempt(UUID, UUID, TEXT, TEXT, TEXT)
+GRANT EXECUTE ON FUNCTION create_payment_attempt(UUID, UUID, TEXT, TEXT)
   TO service_role;
 
-REVOKE ALL ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, JSONB)
+REVOKE ALL ON FUNCTION attach_payment_checkout(UUID, TEXT)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, JSONB)
+GRANT EXECUTE ON FUNCTION attach_payment_checkout(UUID, TEXT)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, JSONB)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, JSONB)
   TO service_role;
 
 REVOKE ALL ON FUNCTION fail_payment_attempt(UUID, TEXT, JSONB)

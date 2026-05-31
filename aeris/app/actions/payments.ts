@@ -6,6 +6,7 @@ import { requireClientSession } from '@/lib/clients/auth';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import {
   createPaymentAttempt,
+  attachPaymentCheckout,
   confirmBookingPayment,
   failPaymentAttempt,
   findPaymentByCheckoutId,
@@ -14,11 +15,14 @@ import {
 /**
  * Phase: payments PR1 — client checkout Server Actions.
  *
- * startCheckout: (optional cashback redeem, pre-payment) → derive net amount →
- * gateway createCheckout → record the attempt (persists checkout_id).
+ * startCheckout: (optional cashback redeem, pre-payment) → open/reuse the
+ * INTERNAL attempt FIRST (derives + validates net amount, owns idempotency via
+ * a caller uuid) → only then create the gateway checkout and attach its id, so
+ * a gateway failure can never orphan an external checkout.
  * confirmCheckout: status-lookup-first — the gateway's server-side status is
- * the source of truth; on success we call confirm_booking_payment which flips
- * the booking to paid (existing triggers cascade cashback/tier/referral).
+ * the source of truth; on success confirm_booking_payment re-checks the
+ * gateway amount/currency and flips the booking to paid (existing triggers
+ * cascade cashback/tier/referral).
  *
  * Gated by ENABLE_PAYMENTS (fail-closed) — stays off until live credentials +
  * the webhook verifier are wired.
@@ -46,17 +50,20 @@ export type StartCheckoutResult =
 
 export async function startCheckout(input: {
   booking_id: string;
+  idempotency_key: string;
   cashback_redemption_sar?: number;
 }): Promise<StartCheckoutResult> {
   if (isPaymentsDisabled()) return { ok: false, error: 'flag_disabled' };
+  if (!input.idempotency_key?.trim()) {
+    return { ok: false, error: 'idempotency_key_required' };
+  }
   const session = await requireClientSession();
-  const admin = looseAdmin();
 
   // Optional cashback redemption — must happen BEFORE payment. Idempotent per
   // booking: a retry where redemption was already applied is treated as OK.
   const redeem = input.cashback_redemption_sar ?? 0;
   if (redeem > 0) {
-    const { data, error } = await admin.rpc('redeem_cashback_for_booking', {
+    const { data, error } = await looseAdmin().rpc('redeem_cashback_for_booking', {
       p_client_id: session.client_id,
       p_booking_id: input.booking_id,
       p_redemption_amount: redeem,
@@ -68,46 +75,42 @@ export async function startCheckout(input: {
     }
   }
 
-  const { data: bk, error: bkErr } = await admin
-    .from('bookings')
-    .select(
-      'client_id, payment_status, paid_at, total_amount, cashback_redemption_sar, booking_number'
-    )
-    .eq('id', input.booking_id)
-    .maybeSingle();
-  if (bkErr || !bk) return { ok: false, error: 'booking_not_found' };
-  const b = bk as {
-    client_id: string;
-    payment_status: string;
-    paid_at: string | null;
-    total_amount: number | string;
-    cashback_redemption_sar: number | string | null;
-    booking_number: string;
-  };
-  if (b.client_id !== session.client_id) return { ok: false, error: 'not_owner' };
-  if (b.paid_at || b.payment_status === 'paid') {
-    return { ok: false, error: 'already_paid' };
-  }
-  const amount = Number(b.total_amount) - Number(b.cashback_redemption_sar ?? 0);
-  if (!(amount > 0)) return { ok: false, error: 'nothing_to_pay' };
-
   const provider = getPaymentProvider();
-  const checkout = await provider.createCheckout({
-    merchantRef: b.booking_number,
-    amount,
-    currency: 'SAR',
-  });
-  if (!checkout.ok) return { ok: false, error: checkout.error };
 
-  // Authoritative re-validation + persists checkout_id on the payment row.
+  // 1) Open/reuse the INTERNAL attempt first — validates ownership + unpaid,
+  //    derives the net amount, and owns idempotency. No gateway call yet.
   const attempt = await createPaymentAttempt({
     bookingId: input.booking_id,
     clientId: session.client_id,
     provider: provider.name,
-    checkoutId: checkout.checkoutId,
-    idempotencyKey: null,
+    idempotencyKey: input.idempotency_key,
   });
   if (!attempt.ok) return { ok: false, error: attempt.error };
+
+  // 2) A reused attempt that already has a checkout → return its widget (dedup
+  //    a duplicate init; no second external checkout).
+  if (attempt.checkout_id) {
+    return {
+      ok: true,
+      checkoutId: attempt.checkout_id,
+      widget: provider.widgetConfig(attempt.checkout_id),
+      amount: attempt.amount,
+    };
+  }
+
+  // 3) Create the gateway checkout for the DERIVED amount, then attach its id.
+  const checkout = await provider.createCheckout({
+    merchantRef: attempt.booking_number,
+    amount: attempt.amount,
+    currency: 'SAR',
+  });
+  if (!checkout.ok) return { ok: false, error: checkout.error };
+
+  const attach = await attachPaymentCheckout({
+    paymentId: attempt.payment_id,
+    checkoutId: checkout.checkoutId,
+  });
+  if (!attach.ok) return { ok: false, error: attach.error };
 
   return {
     ok: true,
@@ -152,6 +155,8 @@ export async function confirmCheckout(input: {
       providerTxn: status.providerTxn,
       providerStatus: status.resultCode,
       method: status.method,
+      providerAmount: status.amount,
+      providerCurrency: status.currency,
       raw: status.raw,
     });
     if (!r.ok) return { ok: false, error: r.error };

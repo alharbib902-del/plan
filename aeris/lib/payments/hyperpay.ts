@@ -53,6 +53,15 @@ const BRAND_TO_METHOD: Record<string, string> = {
   STC_PAY: 'stc_pay',
 };
 
+const WIDGET_BRANDS = ['VISA', 'MASTER', 'MADA', 'APPLEPAY'];
+
+function widgetFor(base: string, checkoutId: string) {
+  return {
+    scriptUrl: `${base}/v1/paymentWidgets.js?checkoutId=${encodeURIComponent(checkoutId)}`,
+    brands: WIDGET_BRANDS,
+  };
+}
+
 export class HyperPayProvider implements PaymentProvider {
   readonly name = 'hyperpay';
 
@@ -85,18 +94,15 @@ export class HyperPayProvider implements PaymentProvider {
       if (!data.id || classify(code) === 'failed') {
         return { ok: false, error: `checkout_failed:${code ?? 'no_code'}` };
       }
-      return {
-        ok: true,
-        checkoutId: data.id,
-        widget: {
-          scriptUrl: `${base}/v1/paymentWidgets.js?checkoutId=${encodeURIComponent(data.id)}`,
-          brands: ['VISA', 'MASTER', 'MADA', 'APPLEPAY'],
-        },
-      };
+      return { ok: true, checkoutId: data.id, widget: widgetFor(base, data.id) };
     } catch (err) {
       console.error('[hyperpay.createCheckout] error', err);
       return { ok: false, error: 'gateway_unreachable' };
     }
+  }
+
+  widgetConfig(checkoutId: string): { scriptUrl: string; brands: string[] } {
+    return widgetFor(cfg().base, checkoutId);
   }
 
   async getPaymentStatus(checkoutId: string): Promise<StatusResult> {

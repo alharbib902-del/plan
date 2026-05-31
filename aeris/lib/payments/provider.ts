@@ -51,6 +51,9 @@ export type WebhookVerifyResult = {
 export interface PaymentProvider {
   readonly name: string;
   createCheckout(req: CheckoutRequest): Promise<CheckoutResult>;
+  /** Rebuild the hosted-widget config for an already-created checkout id
+   *  (no API call) — used when an idempotent retry reuses an open attempt. */
+  widgetConfig(checkoutId: string): { scriptUrl: string; brands: string[] };
   /** Server-side authoritative status lookup (the confirmation source). */
   getPaymentStatus(checkoutId: string): Promise<StatusResult>;
   /**

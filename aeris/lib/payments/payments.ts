@@ -33,21 +33,49 @@ export async function createPaymentAttempt(args: {
   bookingId: string;
   clientId: string;
   provider: string;
-  checkoutId: string;
-  idempotencyKey: string | null;
-}): Promise<RpcResult<{ payment_id: string; amount: number }>> {
+  idempotencyKey: string;
+}): Promise<
+  RpcResult<{
+    payment_id: string;
+    amount: number;
+    booking_number: string;
+    checkout_id: string | null;
+    reused: boolean;
+  }>
+> {
   const { data, error } = await looseRpc().rpc('create_payment_attempt', {
     p_booking_id: args.bookingId,
     p_client_id: args.clientId,
     p_provider: args.provider,
-    p_checkout_id: args.checkoutId,
     p_idempotency_key: args.idempotencyKey,
   });
   if (error) {
     console.error('[payments.createPaymentAttempt] rpc error', error);
     return { ok: false, error: 'rpc_failed' };
   }
-  return data as RpcResult<{ payment_id: string; amount: number }>;
+  return data as RpcResult<{
+    payment_id: string;
+    amount: number;
+    booking_number: string;
+    checkout_id: string | null;
+    reused: boolean;
+  }>;
+}
+
+/** Attaches the gateway checkout id to a still-initiated attempt. */
+export async function attachPaymentCheckout(args: {
+  paymentId: string;
+  checkoutId: string;
+}): Promise<RpcResult> {
+  const { data, error } = await looseRpc().rpc('attach_payment_checkout', {
+    p_payment_id: args.paymentId,
+    p_checkout_id: args.checkoutId,
+  });
+  if (error) {
+    console.error('[payments.attachPaymentCheckout] rpc error', error);
+    return { ok: false, error: 'rpc_failed' };
+  }
+  return data as RpcResult;
 }
 
 export async function confirmBookingPayment(args: {
@@ -55,6 +83,8 @@ export async function confirmBookingPayment(args: {
   providerTxn: string | null;
   providerStatus: string | null;
   method: string | null;
+  providerAmount: number | null;
+  providerCurrency: string | null;
   raw: unknown;
 }): Promise<RpcResult<{ booking_id: string; already?: boolean }>> {
   const { data, error } = await looseRpc().rpc('confirm_booking_payment', {
@@ -62,6 +92,8 @@ export async function confirmBookingPayment(args: {
     p_provider_txn: args.providerTxn,
     p_provider_status: args.providerStatus,
     p_method: args.method,
+    p_provider_amount: args.providerAmount,
+    p_provider_currency: args.providerCurrency,
     p_raw: args.raw,
   });
   if (error) {
