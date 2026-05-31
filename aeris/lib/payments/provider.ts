@@ -35,7 +35,7 @@ export type StatusResult =
       outcome: PaymentOutcome;
       providerTxn: string | null;
       method: string | null; // mapped to our payment_method enum, or null
-      amount: number | null;
+      amount: string | null; // RAW gateway amount string → cast to NUMERIC in DB
       currency: string | null;
       resultCode: string | null;
       raw: unknown;

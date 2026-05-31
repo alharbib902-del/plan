@@ -6,6 +6,8 @@ import { requireClientSession } from '@/lib/clients/auth';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import {
   createPaymentAttempt,
+  claimPaymentCheckoutCreation,
+  releasePaymentCheckoutClaim,
   attachPaymentCheckout,
   confirmBookingPayment,
   failPaymentAttempt,
@@ -98,13 +100,22 @@ export async function startCheckout(input: {
     };
   }
 
-  // 3) Create the gateway checkout for the DERIVED amount, then attach its id.
+  // 3) Single-flight claim — only the winner calls the gateway, so concurrent
+  //    inits with the same key can't each create an orphan external checkout.
+  const claim = await claimPaymentCheckoutCreation({ paymentId: attempt.payment_id });
+  if (!claim.ok) return { ok: false, error: 'checkout_pending' };
+
+  // 4) Create the gateway checkout for the DERIVED amount, then attach its id.
+  //    On gateway failure, release the claim so a retry can re-create it.
   const checkout = await provider.createCheckout({
     merchantRef: attempt.booking_number,
     amount: attempt.amount,
     currency: 'SAR',
   });
-  if (!checkout.ok) return { ok: false, error: checkout.error };
+  if (!checkout.ok) {
+    await releasePaymentCheckoutClaim({ paymentId: attempt.payment_id });
+    return { ok: false, error: checkout.error };
+  }
 
   const attach = await attachPaymentCheckout({
     paymentId: attempt.payment_id,

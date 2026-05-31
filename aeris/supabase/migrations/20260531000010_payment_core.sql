@@ -25,7 +25,11 @@ ALTER TABLE payments
   ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'hyperpay',
   ADD COLUMN IF NOT EXISTS checkout_id TEXT,
   ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
-  ADD COLUMN IF NOT EXISTS provider_status TEXT;
+  ADD COLUMN IF NOT EXISTS provider_status TEXT,
+  -- Single-flight guard: only the request that wins this claim calls the
+  -- gateway, so concurrent inits with the same idempotency key cannot each
+  -- create an (orphan) external checkout. A stale claim is re-claimable.
+  ADD COLUMN IF NOT EXISTS checkout_claimed_at TIMESTAMPTZ;
 
 -- payment_method is unknown at COPYandPAY initiation (the widget collects it);
 -- it is set at confirmation from the gateway-reported brand. Relax NOT NULL.
@@ -181,16 +185,73 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_checkout TEXT;
   v_rows INT;
 BEGIN
+  v_checkout := NULLIF(BTRIM(COALESCE(p_checkout_id, '')), '');
+  IF v_checkout IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'checkout_id_required');
+  END IF;
+
   -- Only attach to a still-initiated attempt that has no checkout yet.
   UPDATE payments
-    SET checkout_id = NULLIF(trim(COALESCE(p_checkout_id, '')), '')
+    SET checkout_id = v_checkout
   WHERE id = p_payment_id AND status = 'initiated' AND checkout_id IS NULL;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   IF v_rows = 0 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'attach_not_allowed');
   END IF;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+-- ---- §3c RPC: claim_payment_checkout_creation (single-flight) ----------------
+-- Atomically claims the right to create the gateway checkout for an attempt.
+-- Exactly one concurrent caller wins (the UPDATE row-locks); losers get
+-- 'checkout_claim_unavailable' and retry (a later create_payment_attempt
+-- returns the now-attached checkout_id → reuse). A claim older than 15 minutes
+-- (an abandoned/crashed attempt) is re-claimable so nothing wedges forever.
+CREATE OR REPLACE FUNCTION claim_payment_checkout_creation(
+  p_payment_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_rows INT;
+BEGIN
+  UPDATE payments
+    SET checkout_claimed_at = now()
+  WHERE id = p_payment_id
+    AND status = 'initiated'
+    AND checkout_id IS NULL
+    AND (checkout_claimed_at IS NULL
+         OR checkout_claimed_at < now() - INTERVAL '15 minutes');
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'checkout_claim_unavailable');
+  END IF;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+-- ---- §3d RPC: release_payment_checkout_claim (on gateway failure) ------------
+-- Frees a claim so a retry can re-create the checkout (idempotent no-op once a
+-- checkout is attached or the attempt is no longer 'initiated').
+CREATE OR REPLACE FUNCTION release_payment_checkout_claim(
+  p_payment_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE payments
+    SET checkout_claimed_at = NULL
+  WHERE id = p_payment_id AND status = 'initiated' AND checkout_id IS NULL;
   RETURN jsonb_build_object('ok', true);
 END;
 $$;
@@ -206,7 +267,7 @@ CREATE OR REPLACE FUNCTION confirm_booking_payment(
   p_provider_txn      TEXT,
   p_provider_status   TEXT,
   p_method            TEXT,
-  p_provider_amount   NUMERIC,
+  p_provider_amount   TEXT,
   p_provider_currency TEXT,
   p_raw               JSONB
 )
@@ -224,6 +285,7 @@ DECLARE
   v_total     DECIMAL(12,2);
   v_redeem    DECIMAL(12,2);
   v_method    payment_method;
+  v_provider_amount NUMERIC;
 BEGIN
   SELECT booking_id, status, amount
     INTO v_booking, v_pay_status, v_pay_amount
@@ -262,7 +324,15 @@ BEGIN
   IF upper(COALESCE(p_provider_currency, '')) <> 'SAR' THEN
     RETURN jsonb_build_object('ok', false, 'error', 'currency_mismatch');
   END IF;
-  IF p_provider_amount IS NULL OR p_provider_amount <> v_pay_amount THEN
+
+  -- Parse the gateway amount from raw text → NUMERIC inside the DB (avoids any
+  -- JS float edge); a non-numeric/absent value fails closed as a mismatch.
+  BEGIN
+    v_provider_amount := NULLIF(BTRIM(COALESCE(p_provider_amount, '')), '')::NUMERIC;
+  EXCEPTION WHEN others THEN
+    v_provider_amount := NULL;
+  END;
+  IF v_provider_amount IS NULL OR v_provider_amount <> v_pay_amount THEN
     RETURN jsonb_build_object('ok', false, 'error', 'provider_amount_mismatch');
   END IF;
 
@@ -365,9 +435,19 @@ REVOKE ALL ON FUNCTION attach_payment_checkout(UUID, TEXT)
 GRANT EXECUTE ON FUNCTION attach_payment_checkout(UUID, TEXT)
   TO service_role;
 
-REVOKE ALL ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, JSONB)
+REVOKE ALL ON FUNCTION claim_payment_checkout_creation(UUID)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, NUMERIC, TEXT, JSONB)
+GRANT EXECUTE ON FUNCTION claim_payment_checkout_creation(UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION release_payment_checkout_claim(UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION release_payment_checkout_claim(UUID)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION confirm_booking_payment(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB)
   TO service_role;
 
 REVOKE ALL ON FUNCTION fail_payment_attempt(UUID, TEXT, JSONB)

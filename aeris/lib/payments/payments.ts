@@ -62,6 +62,34 @@ export async function createPaymentAttempt(args: {
   }>;
 }
 
+/** Single-flight: atomically claims the right to create the gateway checkout. */
+export async function claimPaymentCheckoutCreation(args: {
+  paymentId: string;
+}): Promise<RpcResult> {
+  const { data, error } = await looseRpc().rpc('claim_payment_checkout_creation', {
+    p_payment_id: args.paymentId,
+  });
+  if (error) {
+    console.error('[payments.claimPaymentCheckoutCreation] rpc error', error);
+    return { ok: false, error: 'rpc_failed' };
+  }
+  return data as RpcResult;
+}
+
+/** Releases a checkout-creation claim after a gateway failure (idempotent). */
+export async function releasePaymentCheckoutClaim(args: {
+  paymentId: string;
+}): Promise<RpcResult> {
+  const { data, error } = await looseRpc().rpc('release_payment_checkout_claim', {
+    p_payment_id: args.paymentId,
+  });
+  if (error) {
+    console.error('[payments.releasePaymentCheckoutClaim] rpc error', error);
+    return { ok: false, error: 'rpc_failed' };
+  }
+  return data as RpcResult;
+}
+
 /** Attaches the gateway checkout id to a still-initiated attempt. */
 export async function attachPaymentCheckout(args: {
   paymentId: string;
@@ -83,7 +111,7 @@ export async function confirmBookingPayment(args: {
   providerTxn: string | null;
   providerStatus: string | null;
   method: string | null;
-  providerAmount: number | null;
+  providerAmount: string | null;
   providerCurrency: string | null;
   raw: unknown;
 }): Promise<RpcResult<{ booking_id: string; already?: boolean }>> {

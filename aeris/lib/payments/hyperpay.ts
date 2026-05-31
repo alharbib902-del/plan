@@ -130,7 +130,7 @@ export class HyperPayProvider implements PaymentProvider {
         method: data.paymentBrand
           ? (BRAND_TO_METHOD[data.paymentBrand.toUpperCase()] ?? null)
           : null,
-        amount: data.amount ? Number(data.amount) : null,
+        amount: data.amount ?? null, // raw text; cast to NUMERIC in DB at confirm
         currency: data.currency ?? null,
         resultCode: code,
         raw: data,
