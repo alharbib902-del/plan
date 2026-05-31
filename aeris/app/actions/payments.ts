@@ -141,15 +141,12 @@ export async function confirmCheckout(input: {
   if (isPaymentsDisabled()) return { ok: false, error: 'flag_disabled' };
   const session = await requireClientSession();
 
-  // Source of truth: server-side status lookup (NOT a webhook payload).
-  const provider = getPaymentProvider();
-  const status = await provider.getPaymentStatus(input.checkout_id);
-  if (!status.ok) return { ok: false, error: status.error };
-
+  // 1) Resolve the checkout to an INTERNAL payment and verify ownership BEFORE
+  //    hitting the gateway — an authenticated client must not be able to force
+  //    a status lookup for a checkout it does not own.
   const pay = await findPaymentByCheckoutId(input.checkout_id);
   if (!pay) return { ok: false, error: 'payment_not_found' };
 
-  // Ownership re-check before any confirmation.
   const admin = looseAdmin();
   const { data: bk } = await admin
     .from('bookings')
@@ -159,6 +156,11 @@ export async function confirmCheckout(input: {
   if (!bk || (bk as { client_id: string }).client_id !== session.client_id) {
     return { ok: false, error: 'not_owner' };
   }
+
+  // 2) Source of truth: server-side status lookup (NOT a webhook payload).
+  const provider = getPaymentProvider();
+  const status = await provider.getPaymentStatus(input.checkout_id);
+  if (!status.ok) return { ok: false, error: status.error };
 
   if (status.outcome === 'success') {
     const r = await confirmBookingPayment({

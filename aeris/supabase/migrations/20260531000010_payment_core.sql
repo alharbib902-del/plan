@@ -39,6 +39,11 @@ ALTER TABLE payments ALTER COLUMN payment_method DROP NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_one_success_per_booking
   ON payments (booking_id) WHERE status = 'success';
 
+-- At most ONE active (initiated) attempt per booking — a fresh idempotency key
+-- must NOT spawn a second live checkout for the same booking (create reuses it).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_one_initiated_per_booking
+  ON payments (booking_id) WHERE status = 'initiated';
+
 -- Caller-supplied idempotency key (a per-checkout-intent uuid): dedups
 -- rapid duplicate initiations; a fresh retry uses a fresh key.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_idempotency_key
@@ -115,8 +120,6 @@ DECLARE
   v_key        TEXT;
   v_payment_id UUID;
   v_ex_id      UUID;
-  v_ex_booking UUID;
-  v_ex_status  payment_status;
   v_ex_amount  DECIMAL(12,2);
   v_ex_checkout TEXT;
 BEGIN
@@ -125,6 +128,8 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'idempotency_key_required');
   END IF;
 
+  -- Lock the booking → serialises ALL attempt creation for this booking, so at
+  -- most one active (initiated) attempt / one live checkout can ever exist.
   SELECT client_id, payment_status, paid_at, total_amount, cashback_redemption_sar, booking_number
     INTO v_client, v_status, v_paid_at, v_total, v_redeem, v_booking_number
   FROM bookings
@@ -144,33 +149,43 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'nothing_to_pay');
   END IF;
 
-  INSERT INTO payments (
-    booking_id, amount, currency, provider, idempotency_key, status
-  ) VALUES (
-    p_booking_id, v_amount, 'SAR',
-    COALESCE(NULLIF(trim(p_provider), ''), 'hyperpay'), v_key, 'initiated'
-  )
-  ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
-  RETURNING id INTO v_payment_id;
+  -- Reuse the single active attempt for this booking if one exists — a fresh
+  -- idempotency key must NOT open a SECOND live checkout for the same booking.
+  SELECT id, amount, checkout_id
+    INTO v_ex_id, v_ex_amount, v_ex_checkout
+  FROM payments
+  WHERE booking_id = p_booking_id AND status = 'initiated'
+  FOR UPDATE;
 
-  IF v_payment_id IS NOT NULL THEN
-    RETURN jsonb_build_object('ok', true, 'payment_id', v_payment_id,
-      'amount', v_amount, 'booking_number', v_booking_number,
-      'checkout_id', NULL, 'reused', false);
+  IF v_ex_id IS NOT NULL THEN
+    -- Keep the net in sync if redemption changed and no checkout is bound yet.
+    IF v_ex_checkout IS NULL AND v_ex_amount <> v_amount THEN
+      UPDATE payments SET amount = v_amount WHERE id = v_ex_id;
+      v_ex_amount := v_amount;
+    END IF;
+    RETURN jsonb_build_object('ok', true, 'payment_id', v_ex_id,
+      'amount', v_ex_amount, 'booking_number', v_booking_number,
+      'checkout_id', v_ex_checkout, 'reused', true);
   END IF;
 
-  -- Key already used → reuse the existing attempt if it's still reusable.
-  SELECT id, booking_id, status, amount, checkout_id
-    INTO v_ex_id, v_ex_booking, v_ex_status, v_ex_amount, v_ex_checkout
-  FROM payments WHERE idempotency_key = v_key;
-
-  IF v_ex_booking IS DISTINCT FROM p_booking_id OR v_ex_status <> 'initiated' THEN
+  -- No active attempt → open one. A reused idempotency key from a TERMINAL
+  -- attempt (no active one to reuse) is a conflict the caller resolves with a
+  -- fresh key. (The booking lock + one-initiated index make this the only race.)
+  BEGIN
+    INSERT INTO payments (
+      booking_id, amount, currency, provider, idempotency_key, status
+    ) VALUES (
+      p_booking_id, v_amount, 'SAR',
+      COALESCE(NULLIF(trim(p_provider), ''), 'hyperpay'), v_key, 'initiated'
+    )
+    RETURNING id INTO v_payment_id;
+  EXCEPTION WHEN unique_violation THEN
     RETURN jsonb_build_object('ok', false, 'error', 'idempotency_key_conflict');
-  END IF;
+  END;
 
-  RETURN jsonb_build_object('ok', true, 'payment_id', v_ex_id,
-    'amount', v_ex_amount, 'booking_number', v_booking_number,
-    'checkout_id', v_ex_checkout, 'reused', true);
+  RETURN jsonb_build_object('ok', true, 'payment_id', v_payment_id,
+    'amount', v_amount, 'booking_number', v_booking_number,
+    'checkout_id', NULL, 'reused', false);
 END;
 $$;
 
