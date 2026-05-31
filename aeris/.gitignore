@@ -59,6 +59,11 @@ test-results/
 public/sitemap*.xml
 public/robots.txt
 
+# DB-compat audit — commit only the compact snapshot; the raw OpenAPI dump
+# (~1.3MB) and the per-run candidates report are generated artifacts.
+reports/live-schema.json
+reports/audit-candidates.json
+
 # Temporary
 tmp/
 temp/

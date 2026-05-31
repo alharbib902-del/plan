@@ -49,6 +49,16 @@ jobs:
       - name: Catalog parity
         run: npm run test:addons
 
+      # Phase 14 — app<->DB compatibility gate. Static: scans every
+      # .from()/.rpc()/.eq()/.select()/.insert()/.update() in the app and
+      # asserts the referenced tables/columns/RPC params/enum values exist
+      # in the committed reports/live-schema-compact.json snapshot. No DB /
+      # no secrets in CI — the snapshot is refreshed manually after each
+      # migration (npm run introspect:db, reads .env.local locally). Fails
+      # the build on any drift so column/RPC mismatches can't land silently.
+      - name: DB compatibility (app<->schema)
+        run: npm run audit:db
+
       # Phase 6.2 PR 2c: WhatsApp confirm-message builder.
       # Pure-function unit tests, zero deps beyond Node's
       # built-in assert + tsx. Static — no DB, no network.
