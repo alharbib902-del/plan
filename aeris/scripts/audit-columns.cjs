@@ -359,10 +359,10 @@ console.log('rpc-param checks performed: ' + stats.rpcChecks + ' across ' + stat
 fs.writeFileSync(path.join(ROOT, 'reports', 'audit-candidates.json'), JSON.stringify(findings, null, 2));
 
 // ---- CI gate -------------------------------------------------------------
-// A finding here means app code references a column / RPC param / enum value
-// that the live schema snapshot does NOT have → a silent runtime break
-// waiting to happen. Tables/RPCs absent from the snapshot are skipped above
-// (coverage gap, not a false alarm), so every finding is a real mismatch.
+// Any finding means app code references a table / RPC / column / RPC param /
+// enum value the live schema snapshot does NOT have → a silent runtime break
+// waiting to happen. Missing tables/RPCs are flagged too (missingRpc /
+// missingTable), so every finding here is a real mismatch — none are skipped.
 function sig(type, f) {
   if (type === 'missingRpc') return `missingRpc|${f.rel}|${f.fn}`;
   if (type === 'missingTable') return `missingTable|${f.rel}|${f.table}`;
