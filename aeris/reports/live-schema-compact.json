@@ -29,7 +29,13 @@
       "refund_reason": "text",
       "refunded_at": "timestamp with time zone",
       "created_at": "timestamp with time zone",
-      "updated_at": "timestamp with time zone"
+      "updated_at": "timestamp with time zone",
+      "provider": "text",
+      "checkout_id": "text",
+      "idempotency_key": "text",
+      "provider_status": "text",
+      "checkout_claimed_at": "timestamp with time zone",
+      "checkout_creation_token": "text"
     },
     "spatial_ref_sys": {
       "srid": "integer [PK]",
@@ -942,6 +948,19 @@
       "ip_address": "inet",
       "created_at": "timestamp with time zone"
     },
+    "payment_events": {
+      "id": "uuid [PK]",
+      "provider": "text",
+      "provider_event_key": "text",
+      "provider_event_id": "text",
+      "payment_id": "uuid [FK->payments.id]",
+      "booking_id": "uuid [FK->bookings.id]",
+      "event_type": "text",
+      "raw_payload": "jsonb",
+      "signature_verified": "boolean",
+      "processed_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone"
+    },
     "cargo_dispatch_events_outbox": {
       "id": "uuid [PK]",
       "cargo_request_id": "uuid [FK->cargo_requests.id]",
@@ -1191,6 +1210,11 @@
     "unlockrows": [
       ":text"
     ],
+    "fail_payment_attempt": [
+      "p_payment_id:uuid",
+      "p_provider_status:text",
+      "p_raw:jsonb"
+    ],
     "open_phase5_dispatch_round": [
       "p_targets:jsonb",
       "p_trip_id:uuid"
@@ -1213,6 +1237,15 @@
       "p_expires_at:timestamp with time zone",
       "p_ip:inet",
       "p_token_hash:text"
+    ],
+    "confirm_booking_payment": [
+      "p_method:text",
+      "p_payment_id:uuid",
+      "p_provider_amount:text",
+      "p_provider_currency:text",
+      "p_provider_status:text",
+      "p_provider_txn:text",
+      "p_raw:jsonb"
     ],
     "st_azimuth": [
       "geom1:public.geometry",
@@ -1251,6 +1284,11 @@
     ],
     "addauth": [
       ":text"
+    ],
+    "attach_payment_checkout": [
+      "p_checkout_id:text",
+      "p_payment_id:uuid",
+      "p_token:text"
     ],
     "st_expand": [
       "dm:double precision",
@@ -1479,6 +1517,12 @@
     "step_down_one": [
       "t:public.client_privilege_tier"
     ],
+    "create_payment_attempt": [
+      "p_booking_id:uuid",
+      "p_client_id:uuid",
+      "p_idempotency_key:text",
+      "p_provider:text"
+    ],
     "dropgeometrycolumn": [
       "catalog_name:character varying",
       "column_name:character varying",
@@ -1545,6 +1589,16 @@
     ],
     "postgis_lib_version": [
       "args:?"
+    ],
+    "record_payment_event": [
+      "p_booking_id:uuid",
+      "p_event_type:text",
+      "p_payment_id:uuid",
+      "p_provider:text",
+      "p_provider_event_id:text",
+      "p_provider_event_key:text",
+      "p_raw:jsonb",
+      "p_signature_verified:boolean"
     ],
     "cleanup_old_admin_login_attempts": [
       "args:?"
@@ -1853,6 +1907,9 @@
       "geom:public.geometry",
       "zvalue:double precision"
     ],
+    "claim_payment_checkout_creation": [
+      "p_payment_id:uuid"
+    ],
     "list_operator_crew": [
       "p_operator_id:uuid"
     ],
@@ -2078,6 +2135,10 @@
       ":double precision",
       "geom1:public.geometry",
       "geom2:public.geometry"
+    ],
+    "release_payment_checkout_claim": [
+      "p_payment_id:uuid",
+      "p_token:text"
     ],
     "st_polyfromwkb": [
       ":bytea"
