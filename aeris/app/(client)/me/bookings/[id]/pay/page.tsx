@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
 
 import { requireClientSession } from '@/lib/clients/auth';
-import { getBookingForClient } from '@/lib/clients/queries/me-bookings';
+import {
+  getBookingForClient,
+  bookingHasActivePaymentAttempt,
+} from '@/lib/clients/queries/me-bookings';
 import { loadAcceptCashbackContext } from '@/lib/privilege/accept-context';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { CheckoutClient } from '@/components/clients/checkout-client';
@@ -51,6 +54,8 @@ export default async function ClientCheckoutPage({ params }: PageProps) {
     (booking as { cashback_redemption_sar?: number | string | null })
       .cashback_redemption_sar ?? 0
   );
+  // An active attempt freezes redemption → lock the input (no misleading net).
+  const paymentLocked = await bookingHasActivePaymentAttempt(id);
 
   return (
     <section className="space-y-6">
@@ -69,6 +74,7 @@ export default async function ClientCheckoutPage({ params }: PageProps) {
         cashbackEnabled={cashback.enabled}
         cashbackBalanceSar={cashback.cashback_balance_sar}
         alreadyRedeemedSar={alreadyRedeemed}
+        paymentLocked={paymentLocked}
       />
     </section>
   );

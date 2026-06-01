@@ -280,6 +280,8 @@ export const clientsAr = {
   paymentMissingCheckout: 'لا توجد عملية دفع لعرضها.',
   paymentProceed: 'تابع للدفع',
   paymentRedeemAppliedLabel: 'الاسترداد المستخدَم',
+  paymentActiveLockNote:
+    'توجد عملية دفع جارية لهذا الحجز؛ لا يمكن استخدام رصيد الاسترداد الآن.',
 
   // ------------------------------------------------------------
   // Error translation map (RPC error codes → Arabic strings)

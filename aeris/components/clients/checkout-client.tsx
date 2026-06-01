@@ -39,22 +39,36 @@ export function CheckoutClient({
   cashbackEnabled,
   cashbackBalanceSar,
   alreadyRedeemedSar,
+  paymentLocked,
 }: {
   bookingId: string;
   bookingTotalSar: number;
   cashbackEnabled: boolean;
   cashbackBalanceSar: number;
   alreadyRedeemedSar: number;
+  paymentLocked: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>('compose');
   const [error, setError] = useState<string | null>(null);
   const [widget, setWidget] = useState<Widget | null>(null);
   const [redemption, setRedemption] = useState<number>(0);
 
-  const locked = alreadyRedeemedSar > 0;
-  const effectiveRedemption = locked ? alreadyRedeemedSar : redemption;
+  // A new redemption can be chosen ONLY when nothing freezes it: no active
+  // attempt, none already applied, privilege on, and a balance to spend.
+  const canRedeemNew =
+    !paymentLocked &&
+    alreadyRedeemedSar === 0 &&
+    cashbackEnabled &&
+    cashbackBalanceSar > 0;
+  const effectiveRedemption =
+    alreadyRedeemedSar > 0
+      ? alreadyRedeemedSar
+      : canRedeemNew
+        ? redemption
+        : 0;
   const netPreview = Math.max(0, bookingTotalSar - effectiveRedemption);
-  const showRedeemInput = !locked && cashbackEnabled && cashbackBalanceSar > 0;
+  // Active attempt with no redemption yet → redemption frozen; explain why.
+  const showActiveLockNote = paymentLocked && alreadyRedeemedSar === 0;
 
   const onProceed = () => {
     setError(null);
@@ -64,7 +78,7 @@ export function CheckoutClient({
         booking_id: bookingId,
         idempotency_key: crypto.randomUUID(),
         // Only send a NEW redemption; a locked one already sits on the booking.
-        ...(!locked && redemption > 0
+        ...(canRedeemNew && redemption > 0
           ? { cashback_redemption_sar: redemption }
           : {}),
       });
@@ -128,7 +142,7 @@ export function CheckoutClient({
         </p>
       ) : null}
 
-      {showRedeemInput ? (
+      {canRedeemNew ? (
         <CashbackRedeemInput
           bookingTotalSar={bookingTotalSar}
           currentBalanceSar={cashbackBalanceSar}
@@ -136,6 +150,10 @@ export function CheckoutClient({
           onChange={setRedemption}
           disabled={busy}
         />
+      ) : null}
+
+      {showActiveLockNote ? (
+        <ClientBanner kind="info">{clientsAr.paymentActiveLockNote}</ClientBanner>
       ) : null}
 
       <p className="font-ar text-xs text-ink-muted">
