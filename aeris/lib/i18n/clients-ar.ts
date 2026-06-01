@@ -251,6 +251,7 @@ export const clientsAr = {
   bookingDetailNotFound:
     'هذا الحجز غير موجود أو لا يخصّ حسابك.',
   bookingPaymentPending: 'في انتظار الدفع',
+  bookingPaymentPendingOffline: 'بانتظار الدفع',
   bookingPaymentPaid: 'مدفوع',
   bookingPaymentRefunded: 'مسترجع',
   bookingFlightConfirmed: 'مؤكّد',
@@ -259,11 +260,47 @@ export const clientsAr = {
   bookingFlightCompleted: 'مكتمل',
   bookingFlightCancelled: 'ملغى',
 
+  // Payment checkout surface (Phase payments PR #120 — client checkout UI).
+  payNow: 'ادفع الآن',
+  paymentCheckoutHeading: 'إتمام الدفع',
+  paymentAmountLabel: 'المبلغ المستحق',
+  paymentSecureNote:
+    'الدفع عبر بوّابة آمنة؛ لا تُخزَّن بيانات بطاقتك على خوادمنا.',
+  paymentStarting: 'جارٍ تجهيز بوّابة الدفع…',
+  paymentResultChecking: 'جارٍ التحقّق من حالة الدفع…',
+  paymentSuccessTitle: 'تم الدفع بنجاح',
+  paymentSuccessBody: 'استلمنا دفعتك وتم تأكيد حجزك.',
+  paymentPendingTitle: 'دفعتك قيد المعالجة',
+  paymentPendingBody:
+    'قد يستغرق التأكيد لحظات. يمكنك تحديث الحالة من صفحة الحجز لاحقاً.',
+  paymentFailedTitle: 'تعذّر إتمام الدفع',
+  paymentRetry: 'إعادة المحاولة',
+  paymentRefreshStatus: 'تحديث حالة الدفع',
+  paymentBackToBooking: 'العودة إلى الحجز',
+  paymentMissingCheckout: 'لا توجد عملية دفع لعرضها.',
+
   // ------------------------------------------------------------
   // Error translation map (RPC error codes → Arabic strings)
   // ------------------------------------------------------------
   errors: {
     flag_disabled: 'بوابة العملاء غير مفعّلة حالياً.',
+    // Payment checkout (Phase payments PR #120).
+    payment_not_configured: 'بوّابة الدفع غير مهيّأة بعد. تواصل مع الدعم.',
+    payment_failed: 'تعذّر إتمام الدفع. حاول مرة أخرى.',
+    payment_not_found: 'لم نعثر على عملية الدفع.',
+    checkout_pending:
+      'هناك عملية دفع جارية لهذا الحجز. انتظر لحظات ثم حاول مجدداً.',
+    already_paid: 'هذا الحجز مدفوع بالفعل.',
+    booking_mismatch: 'عملية الدفع هذه تخصّ حجزاً آخر.',
+    nothing_to_pay: 'لا يوجد مبلغ مستحق على هذا الحجز.',
+    gateway_unreachable: 'تعذّر الوصول لبوّابة الدفع. حاول لاحقاً.',
+    not_owner: 'هذا الحجز لا يخصّ حسابك.',
+    booking_not_found_or_not_owned: 'هذا الحجز غير موجود أو لا يخصّ حسابك.',
+    booking_has_active_payment:
+      'هناك عملية دفع جارية لهذا الحجز؛ لا يمكن تعديل الرصيد الآن.',
+    idempotency_key_required: 'تعذّر بدء الدفع. حدّث الصفحة وحاول مجدداً.',
+    currency_mismatch: 'عدم تطابق في عملة الدفع. تواصل مع الدعم.',
+    provider_amount_mismatch: 'عدم تطابق في مبلغ الدفع. تواصل مع الدعم.',
     validation_failed: 'يرجى مراجعة الحقول وتصحيح الأخطاء.',
     bcrypt_failed: 'تعذّر تشفير كلمة المرور. حاول مرة أخرى.',
     rpc_failed: 'حدث خطأ في الخادم. حاول مرة أخرى لاحقاً.',

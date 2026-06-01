@@ -147,6 +147,10 @@ export type ConfirmCheckoutResult =
 
 export async function confirmCheckout(input: {
   checkout_id: string;
+  /** When set, the checkout MUST belong to this booking — guards a result page
+   *  for booking A from confirming/announcing a checkout that is for booking B
+   *  (same client, different booking). */
+  expected_booking_id?: string;
 }): Promise<ConfirmCheckoutResult> {
   if (isPaymentsDisabled()) return { ok: false, error: 'flag_disabled' };
   const session = await requireClientSession();
@@ -156,6 +160,11 @@ export async function confirmCheckout(input: {
   //    a status lookup for a checkout it does not own.
   const pay = await findPaymentByCheckoutId(input.checkout_id);
   if (!pay) return { ok: false, error: 'payment_not_found' };
+
+  // The checkout must belong to the booking the caller is acting on.
+  if (input.expected_booking_id && pay.booking_id !== input.expected_booking_id) {
+    return { ok: false, error: 'booking_mismatch' };
+  }
 
   const admin = looseAdmin();
   const { data: bk } = await admin
