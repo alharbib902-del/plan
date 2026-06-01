@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { unstable_noStore as noStore } from 'next/cache';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isUuid } from '@/lib/utils/uuid';
@@ -64,4 +65,36 @@ export async function getBookingForClient(
     throw new Error(`getBookingForClient failed: ${error.message}`);
   }
   return (data ?? null) as BookingRow | null;
+}
+
+/**
+ * Phase payments PR #120 — the checkout id of the single ACTIVE (initiated)
+ * payment attempt for a booking, if one exists. Used to offer a "refresh
+ * payment status" re-confirm on the booking page when a client paid but
+ * abandoned before the gateway redirect (the webhook verifier is deferred, so
+ * the server-side status lookup is the only confirmation path). At most one row
+ * exists per booking (uq_payments_one_initiated_per_booking). `payments` is not
+ * in the hand-maintained Database type → loose service-role read; the caller
+ * has already asserted booking ownership, and confirmCheckout re-checks it.
+ */
+export async function getActiveCheckoutForBooking(
+  bookingId: string
+): Promise<string | null> {
+  noStore();
+  if (!isUuid(bookingId)) return null;
+
+  const admin = createAdminClient() as unknown as SupabaseClient;
+  const { data, error } = await admin
+    .from('payments')
+    .select('checkout_id')
+    .eq('booking_id', bookingId)
+    .eq('status', 'initiated')
+    .not('checkout_id', 'is', null)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[me-bookings.activeCheckout] read failed', error);
+    return null;
+  }
+  return (data as { checkout_id: string | null } | null)?.checkout_id ?? null;
 }

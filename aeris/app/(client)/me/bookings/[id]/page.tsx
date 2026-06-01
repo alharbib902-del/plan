@@ -2,8 +2,12 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { requireClientSession } from '@/lib/clients/auth';
-import { getBookingForClient } from '@/lib/clients/queries/me-bookings';
+import {
+  getBookingForClient,
+  getActiveCheckoutForBooking,
+} from '@/lib/clients/queries/me-bookings';
 import { clientsAr } from '@/lib/i18n/clients-ar';
+import { BookingPaymentActions } from '@/components/clients/booking-payment-actions';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,6 +23,7 @@ interface PageProps {
 
 const PAYMENT_STATUS_LABEL: Record<string, string> = {
   pending: clientsAr.bookingPaymentPending,
+  pending_offline: clientsAr.bookingPaymentPendingOffline,
   paid: clientsAr.bookingPaymentPaid,
   refunded: clientsAr.bookingPaymentRefunded,
 };
@@ -99,6 +104,15 @@ export default async function ClientMeBookingDetailPage({
     booking.flight_status ??
     '—';
 
+  // Phase payments PR #120 — pay / refresh-status actions, gated by
+  // ENABLE_PAYMENTS (fail-closed) and only for a payable booking.
+  const paymentsEnabled = process.env.ENABLE_PAYMENTS === 'true';
+  const payable = booking.payment_status === 'pending_offline';
+  const activeCheckoutId =
+    paymentsEnabled && payable
+      ? await getActiveCheckoutForBooking(id)
+      : null;
+
   return (
     <section className="space-y-6">
       <header>
@@ -141,6 +155,13 @@ export default async function ClientMeBookingDetailPage({
           </Field>
         </dl>
       </div>
+
+      {paymentsEnabled && payable ? (
+        <BookingPaymentActions
+          bookingId={id}
+          activeCheckoutId={activeCheckoutId}
+        />
+      ) : null}
     </section>
   );
 }
