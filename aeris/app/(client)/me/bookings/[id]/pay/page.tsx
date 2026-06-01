@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { requireClientSession } from '@/lib/clients/auth';
 import { getBookingForClient } from '@/lib/clients/queries/me-bookings';
+import { loadAcceptCashbackContext } from '@/lib/privilege/accept-context';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { CheckoutClient } from '@/components/clients/checkout-client';
 
@@ -39,6 +40,18 @@ export default async function ClientCheckoutPage({ params }: PageProps) {
     redirect(`/me/bookings/${id}`);
   }
 
+  // Cashback-at-checkout (PR #121): the redeem input shows only when privilege
+  // is on + the client has a balance. `alreadyRedeemedSar` (from the booking)
+  // means a redemption is locked for this booking → the input is read-only.
+  const cashback = await loadAcceptCashbackContext(session.client_id);
+  const total = Number(booking.total_amount ?? 0);
+  // cashback_redemption_sar is not in the hand-maintained BookingRow type
+  // (loose-client pattern) — present at runtime via select('*').
+  const alreadyRedeemed = Number(
+    (booking as { cashback_redemption_sar?: number | string | null })
+      .cashback_redemption_sar ?? 0
+  );
+
   return (
     <section className="space-y-6">
       <header>
@@ -50,7 +63,13 @@ export default async function ClientCheckoutPage({ params }: PageProps) {
         </p>
       </header>
 
-      <CheckoutClient bookingId={id} />
+      <CheckoutClient
+        bookingId={id}
+        bookingTotalSar={total}
+        cashbackEnabled={cashback.enabled}
+        cashbackBalanceSar={cashback.cashback_balance_sar}
+        alreadyRedeemedSar={alreadyRedeemed}
+      />
     </section>
   );
 }
