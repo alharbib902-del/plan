@@ -278,6 +278,10 @@ export const clientsAr = {
   paymentRefreshStatus: 'تحديث حالة الدفع',
   paymentBackToBooking: 'العودة إلى الحجز',
   paymentMissingCheckout: 'لا توجد عملية دفع لعرضها.',
+  paymentProceed: 'تابع للدفع',
+  paymentRedeemAppliedLabel: 'الاسترداد المستخدَم',
+  paymentActiveLockNote:
+    'توجد عملية دفع جارية لهذا الحجز؛ لا يمكن استخدام رصيد الاسترداد الآن.',
 
   // ------------------------------------------------------------
   // Error translation map (RPC error codes → Arabic strings)
@@ -293,6 +297,13 @@ export const clientsAr = {
     already_paid: 'هذا الحجز مدفوع بالفعل.',
     booking_mismatch: 'عملية الدفع هذه تخصّ حجزاً آخر.',
     nothing_to_pay: 'لا يوجد مبلغ مستحق على هذا الحجز.',
+    // Cashback redemption at checkout (PR #121).
+    redemption_amount_invalid: 'قيمة الاسترداد غير صالحة.',
+    insufficient_balance: 'رصيد الاسترداد غير كافٍ.',
+    redemption_exceeds_cap: 'الاسترداد يتجاوز الحدّ (50% من قيمة الحجز).',
+    redemption_leaves_no_cash_payment:
+      'يجب أن يبقى مبلغ نقدي (١ ريال على الأقل).',
+    redeem_failed: 'تعذّر استخدام رصيد الاسترداد.',
     gateway_unreachable: 'تعذّر الوصول لبوّابة الدفع. حاول لاحقاً.',
     not_owner: 'هذا الحجز لا يخصّ حسابك.',
     booking_not_found_or_not_owned: 'هذا الحجز غير موجود أو لا يخصّ حسابك.',

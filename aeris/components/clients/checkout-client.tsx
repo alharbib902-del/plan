@@ -1,23 +1,28 @@
 'use client';
 
-import Link from 'next/link';
 import Script from 'next/script';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { startCheckout } from '@/app/actions/payments';
 import { clientsAr } from '@/lib/i18n/clients-ar';
+import { CashbackRedeemInput } from '@/components/privilege/cashback-redeem-input';
 import { ClientBanner, clientErrorMessage } from './error-banner';
 import { formatSARLabel } from './offer-format';
 
 /**
- * Phase payments PR #120 — mounts the HyperPay COPYandPAY hosted widget.
+ * Phase payments PR #120 + #121 — compose → pay checkout.
  *
- * On mount it calls startCheckout (idempotent per booking — a re-entry reuses
- * the active attempt + its checkout), then injects the gateway's
- * paymentWidgets.js and the `.paymentWidgets` form. The form `action` is OUR
- * same-origin result page; HyperPay redirects there with `?id=<checkoutId>`
- * after payment, where confirmCheckout settles it via a server-side status
- * lookup. No card data ever touches our servers (hosted widget, PCI SAQ-A).
+ * Step 1 (compose): review the amount, optionally redeem cashback (must happen
+ * BEFORE payment), then "تابع للدفع".
+ * Step 2 (pay): startCheckout (idempotent per booking; the action redeems then
+ * derives the net) → mount the HyperPay COPYandPAY hosted widget. HyperPay
+ * redirects to our same-origin result page (?id=<checkoutId>) where
+ * confirmCheckout settles via a server-side status lookup. No card data ever
+ * touches our servers (hosted widget, PCI SAQ-A).
+ *
+ * Redemption is once-per-booking and frozen once an attempt exists: when
+ * `alreadyRedeemedSar > 0` the redeem input is locked (read-only) and the new
+ * redemption is NOT re-sent (the booking already carries it).
  */
 
 type Widget = {
@@ -26,25 +31,60 @@ type Widget = {
   amount: number;
 };
 
-export function CheckoutClient({ bookingId }: { bookingId: string }) {
-  const [status, setStatus] = useState<'starting' | 'ready' | 'error'>(
-    'starting'
-  );
+type Phase = 'compose' | 'starting' | 'ready';
+
+export function CheckoutClient({
+  bookingId,
+  bookingTotalSar,
+  cashbackEnabled,
+  cashbackBalanceSar,
+  alreadyRedeemedSar,
+  paymentLocked,
+}: {
+  bookingId: string;
+  bookingTotalSar: number;
+  cashbackEnabled: boolean;
+  cashbackBalanceSar: number;
+  alreadyRedeemedSar: number;
+  paymentLocked: boolean;
+}) {
+  const [phase, setPhase] = useState<Phase>('compose');
   const [error, setError] = useState<string | null>(null);
   const [widget, setWidget] = useState<Widget | null>(null);
-  const started = useRef(false);
+  const [redemption, setRedemption] = useState<number>(0);
 
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+  // A new redemption can be chosen ONLY when nothing freezes it: no active
+  // attempt, none already applied, privilege on, and a balance to spend.
+  const canRedeemNew =
+    !paymentLocked &&
+    alreadyRedeemedSar === 0 &&
+    cashbackEnabled &&
+    cashbackBalanceSar > 0;
+  const effectiveRedemption =
+    alreadyRedeemedSar > 0
+      ? alreadyRedeemedSar
+      : canRedeemNew
+        ? redemption
+        : 0;
+  const netPreview = Math.max(0, bookingTotalSar - effectiveRedemption);
+  // Active attempt with no redemption yet → redemption frozen; explain why.
+  const showActiveLockNote = paymentLocked && alreadyRedeemedSar === 0;
+
+  const onProceed = () => {
+    setError(null);
+    setPhase('starting');
     void (async () => {
       const result = await startCheckout({
         booking_id: bookingId,
         idempotency_key: crypto.randomUUID(),
+        // Only send a NEW redemption; a locked one already sits on the booking.
+        ...(canRedeemNew && redemption > 0
+          ? { cashback_redemption_sar: redemption }
+          : {}),
       });
       if (!result.ok) {
         setError(result.error);
-        setStatus('error');
+        setPhase('compose');
         return;
       }
       setWidget({
@@ -52,39 +92,38 @@ export function CheckoutClient({ bookingId }: { bookingId: string }) {
         brands: result.widget.brands,
         amount: result.amount,
       });
-      setStatus('ready');
+      setPhase('ready');
     })();
-  }, [bookingId]);
+  };
 
-  if (status === 'starting') {
-    return (
-      <div className="rounded-xl border border-border bg-navy-card/40 p-6">
-        <p className="font-ar text-sm text-ink-muted">
-          {clientsAr.paymentStarting}
-        </p>
-      </div>
-    );
-  }
-
-  if (status === 'error' || !widget) {
+  if (phase === 'ready' && widget) {
+    // Client-only (set from a click handler) → window is safe.
+    const resultUrl = `${window.location.origin}/me/bookings/${bookingId}/pay/result`;
     return (
       <div className="space-y-4 rounded-xl border border-border bg-navy-card/40 p-6">
-        <ClientBanner kind="error">
-          {clientErrorMessage(error ?? 'rpc_failed')}
-        </ClientBanner>
-        <Link
-          href={`/me/bookings/${bookingId}`}
-          className="font-ar inline-block rounded-lg border border-border bg-navy-secondary/60 px-4 py-2 text-sm text-ink-primary transition-colors hover:bg-navy-secondary"
-        >
-          {clientsAr.paymentBackToBooking}
-        </Link>
+        <div className="flex items-baseline justify-between">
+          <span className="font-ar text-sm text-ink-muted">
+            {clientsAr.paymentAmountLabel}
+          </span>
+          <span className="font-ar text-lg text-gold-light">
+            {formatSARLabel(widget.amount)}
+          </span>
+        </div>
+        <p className="font-ar text-xs text-ink-muted">
+          {clientsAr.paymentSecureNote}
+        </p>
+
+        <Script src={widget.scriptUrl} strategy="afterInteractive" />
+        <form
+          action={resultUrl}
+          className="paymentWidgets"
+          data-brands={widget.brands.join(' ')}
+        />
       </div>
     );
   }
 
-  // Client-only (status flips to 'ready' from a client effect) → window is safe.
-  const resultUrl = `${window.location.origin}/me/bookings/${bookingId}/pay/result`;
-
+  const busy = phase === 'starting';
   return (
     <div className="space-y-4 rounded-xl border border-border bg-navy-card/40 p-6">
       <div className="flex items-baseline justify-between">
@@ -92,19 +131,47 @@ export function CheckoutClient({ bookingId }: { bookingId: string }) {
           {clientsAr.paymentAmountLabel}
         </span>
         <span className="font-ar text-lg text-gold-light">
-          {formatSARLabel(widget.amount)}
+          {formatSARLabel(netPreview)}
         </span>
       </div>
+      {effectiveRedemption > 0 ? (
+        <p className="font-ar text-xs text-ink-muted">
+          {clientsAr.paymentRedeemAppliedLabel}:{' '}
+          {formatSARLabel(effectiveRedemption)} ·{' '}
+          {clientsAr.bookingDetailTotalLabel}: {formatSARLabel(bookingTotalSar)}
+        </p>
+      ) : null}
+
+      {canRedeemNew ? (
+        <CashbackRedeemInput
+          bookingTotalSar={bookingTotalSar}
+          currentBalanceSar={cashbackBalanceSar}
+          value={redemption}
+          onChange={setRedemption}
+          disabled={busy}
+        />
+      ) : null}
+
+      {showActiveLockNote ? (
+        <ClientBanner kind="info">{clientsAr.paymentActiveLockNote}</ClientBanner>
+      ) : null}
+
       <p className="font-ar text-xs text-ink-muted">
         {clientsAr.paymentSecureNote}
       </p>
 
-      <Script src={widget.scriptUrl} strategy="afterInteractive" />
-      <form
-        action={resultUrl}
-        className="paymentWidgets"
-        data-brands={widget.brands.join(' ')}
-      />
+      {error ? (
+        <ClientBanner kind="error">{clientErrorMessage(error)}</ClientBanner>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={onProceed}
+        disabled={busy}
+        className="font-ar w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-4 py-2 text-sm font-medium text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:opacity-60"
+      >
+        {busy ? clientsAr.paymentStarting : clientsAr.paymentProceed}
+      </button>
     </div>
   );
 }

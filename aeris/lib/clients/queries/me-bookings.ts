@@ -98,3 +98,32 @@ export async function getActiveCheckoutForBooking(
   }
   return (data as { checkout_id: string | null } | null)?.checkout_id ?? null;
 }
+
+/**
+ * Phase payments PR #121 — does an ACTIVE (initiated) payment attempt exist for
+ * this booking? Once one does, the booking's cashback redemption is frozen
+ * (redeem_cashback_for_booking rejects with booking_has_active_payment and
+ * create_payment_attempt reuses the existing attempt), so the checkout page
+ * must lock the redeem input rather than preview a net that won't apply. At
+ * most one such row exists (uq_payments_one_initiated_per_booking).
+ */
+export async function bookingHasActivePaymentAttempt(
+  bookingId: string
+): Promise<boolean> {
+  noStore();
+  if (!isUuid(bookingId)) return false;
+
+  const admin = createAdminClient() as unknown as SupabaseClient;
+  const { data, error } = await admin
+    .from('payments')
+    .select('id')
+    .eq('booking_id', bookingId)
+    .eq('status', 'initiated')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[me-bookings.hasActiveAttempt] read failed', error);
+    return false;
+  }
+  return data != null;
+}
