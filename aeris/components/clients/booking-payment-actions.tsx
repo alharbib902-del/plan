@@ -35,7 +35,10 @@ export function BookingPaymentActions({
     setError(null);
     setInfo(null);
     startCheck(async () => {
-      const result = await confirmCheckout({ checkout_id: activeCheckoutId });
+      const result = await confirmCheckout({
+        checkout_id: activeCheckoutId,
+        expected_booking_id: bookingId,
+      });
       if (!result.ok) {
         setError(result.error);
         return;

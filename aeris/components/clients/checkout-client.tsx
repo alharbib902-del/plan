@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { startCheckout } from '@/app/actions/payments';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { ClientBanner, clientErrorMessage } from './error-banner';
+import { formatSARLabel } from './offer-format';
 
 /**
  * Phase payments PR #120 — mounts the HyperPay COPYandPAY hosted widget.
@@ -24,12 +25,6 @@ type Widget = {
   brands: string[];
   amount: number;
 };
-
-function formatSar(value: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(
-    value
-  );
-}
 
 export function CheckoutClient({ bookingId }: { bookingId: string }) {
   const [status, setStatus] = useState<'starting' | 'ready' | 'error'>(
@@ -97,7 +92,7 @@ export function CheckoutClient({ bookingId }: { bookingId: string }) {
           {clientsAr.paymentAmountLabel}
         </span>
         <span className="font-ar text-lg text-gold-light">
-          {formatSar(widget.amount)} ريال
+          {formatSARLabel(widget.amount)}
         </span>
       </div>
       <p className="font-ar text-xs text-ink-muted">

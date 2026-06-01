@@ -35,7 +35,10 @@ export function PaymentResultClient({
     if (!checkoutId || ran.current) return;
     ran.current = true;
     void (async () => {
-      const result = await confirmCheckout({ checkout_id: checkoutId });
+      const result = await confirmCheckout({
+        checkout_id: checkoutId,
+        expected_booking_id: bookingId,
+      });
       if (!result.ok) {
         setError(result.error);
         setState('failed');
@@ -43,7 +46,7 @@ export function PaymentResultClient({
       }
       setState(result.outcome === 'success' ? 'success' : 'pending');
     })();
-  }, [checkoutId]);
+  }, [checkoutId, bookingId]);
 
   const backLink = (
     <Link

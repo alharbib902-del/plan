@@ -291,6 +291,7 @@ export const clientsAr = {
     checkout_pending:
       'هناك عملية دفع جارية لهذا الحجز. انتظر لحظات ثم حاول مجدداً.',
     already_paid: 'هذا الحجز مدفوع بالفعل.',
+    booking_mismatch: 'عملية الدفع هذه تخصّ حجزاً آخر.',
     nothing_to_pay: 'لا يوجد مبلغ مستحق على هذا الحجز.',
     gateway_unreachable: 'تعذّر الوصول لبوّابة الدفع. حاول لاحقاً.',
     not_owner: 'هذا الحجز لا يخصّ حسابك.',
