@@ -1,215 +1,122 @@
 # ✈️ Aeris — Smart Private Aviation Platform
 
-> منصة ذكية متكاملة للطيران الخاص في المملكة العربية السعودية
+> منصة ذكية متكاملة للطيران الخاص في المملكة العربية السعودية — سوق ثنائي الجانب يربط العملاء بالمشغّلين وفريق Aeris.
 
-**Target Launch:** 60 days from kickoff
-**Tech Stack:** Next.js 14 + Supabase + TypeScript + Tailwind
+**Stack:** Next.js 16 (App Router) + React 19 + TypeScript (strict) + TailwindCSS + Supabase (Postgres/PostgREST). Arabic-first (RTL). Hosting: Vercel.
+
+> Full engineering context for contributors (and Claude Code) lives in **[`CLAUDE.md`](CLAUDE.md)** — read it first; it documents the auth/data-access model, migration discipline, and the feature-flag map.
 
 ---
 
-## 🚀 Quick Start
+## 🧩 Service lines
 
-### Prerequisites
-- Node.js 20+
-- npm 10+
-- Supabase account
-- Claude Code Opus 4.7 Max subscription
+| Line | What | Status |
+|---|---|---|
+| **Charter** | request → admin dispatch → operator offers → client accepts → booking | ✅ built |
+| **Empty Legs** | operator-published discounted legs + Dutch-auction price tick | ✅ built (some surfaces flag-gated) |
+| **Privilege** | 4-tier loyalty + cashback ledger | ✅ built (`ENABLE_PRIVILEGE`) |
+| **MedEvac + Shield** | medevac requests + coverage subscription | ✅ **live in prod** |
+| **Cargo** | horses / luxury cars / valuables | ✅ **live in prod** |
+| Payments | HyperPay COPYandPAY checkout (core + client UI + cashback-at-checkout) | 🚧 **built, OFF** (`ENABLE_PAYMENTS`; needs live creds + webhook verifier) |
+| ZATCA · payouts · refunds · Moyasar | tax/settlement layer | ⏸️ **deferred** (not built) |
 
-### Setup Steps
+Money is collected **offline today**: admin issues a signed checkout link → client confirms add-ons → bank transfer / WhatsApp.
 
-#### 1. Clone & Install
+---
+
+## 🚀 Quick start (local)
+
 ```bash
-cd D:/Plan/aeris
+cd aeris
 npm install
+cp .env.example .env.local   # then fill values (see CLAUDE.md flag/secret notes)
+npm run dev                  # http://localhost:3000
 ```
 
-#### 2. Environment Variables
-```bash
-cp .env.example .env.local
-# Fill in the values from your service accounts
-```
-
-#### 3. Database Setup
-1. Create a Supabase project at https://supabase.com
-2. Copy your project URL and anon key to `.env.local`
-3. Run the migrations in order via Supabase Dashboard → SQL Editor:
-   - `supabase/migrations/20260422000001_initial_schema.sql`
-   - `supabase/migrations/20260425000002_lead_inquiries.sql` (Phase 2 — guest leads + admin inbox)
-
-#### 4. Generate TypeScript Types
-```bash
-# Install Supabase CLI first (one time)
-npm install -g supabase
-
-# Login
-supabase login
-
-# Generate types (replace YOUR_PROJECT_ID)
-supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts
-```
-
-#### 5. Admin Inbox (Phase 2)
-
-For local access to `/admin/leads` set both env vars in `.env.local`:
-
-```bash
-ADMIN_INBOX_PASSWORD=pick-any-strong-password
-ADMIN_AUTH_SECRET=$(openssl rand -hex 32)
-```
-
-Optionally enable founder email notifications when a new lead lands:
-
-```bash
-RESEND_API_KEY=re_xxxx
-RESEND_FROM_EMAIL=noreply@aeris.sa
-LEAD_NOTIFICATION_TO=you@example.com  # falls back to RESEND_FROM_EMAIL
-```
-
-`/admin/login` is the only public admin route. Everything under `/admin/leads` is gated by a signed HttpOnly cookie (7-day expiry) and protected at both the layout and Server Action level.
-
-#### 6. Run Development Server
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) 🎉
+**Notes that differ from a vanilla Supabase app:**
+- **Auth is custom** (not Supabase Auth) — three cookie-session systems (client/admin/operator). The only Supabase client is the **service-role** admin client; there is no anon/browser client.
+- **`types/database.ts` is hand-maintained** (the `db:types` script still points at a `YOUR_PROJECT_ID` placeholder). New tables/columns are reached via the loose-client pattern; the `audit:db` gate guards drift.
+- **Migrations** in `supabase/migrations/` are forward-only/idempotent and applied to prod via the runner in `D:\Plan\migration-runner` over the session pooler (**never `supabase db push`**). After applying, run `npm run introspect:db` and commit the refreshed `reports/live-schema-compact.json`.
+- **Feature flags** are fail-closed (`=== 'true'`). Most customer surfaces are off by default — see the flag map in `CLAUDE.md`. For a full local/demo run you must set them explicitly (e.g. `ENABLE_CLIENT_PORTAL`, `ENABLE_OPERATOR_PORTAL=true`, `ENABLE_PRIVILEGE`, empty-legs flags) plus each surface's HMAC secret.
+- **Admin bootstrap:** set `ADMIN_FOUNDER_EMAIL` + `ADMIN_INBOX_PASSWORD` + `ADMIN_AUTH_SECRET`, then log in at `/admin/login` — the founder row is auto-seeded once (then you must set a new password + can enroll MFA).
 
 ---
 
-## 📁 Project Structure
+## 📁 Structure
 
 ```
 aeris/
-├── app/                      # Next.js 14 App Router
-│   ├── (auth)/              # Authentication pages
-│   ├── (client)/            # Customer-facing pages
-│   ├── operator/            # Operator portal
-│   ├── admin/               # Admin panel
-│   └── api/                 # API routes
-├── components/              # React components
-├── lib/                     # Business logic
-│   ├── supabase/           # Database clients
-│   ├── hyperpay/           # Payment integration
-│   ├── zatca/              # E-invoicing
-│   ├── notifications/      # Email/SMS
-│   ├── automation/         # Inngest workflows
-│   └── utils/              # Helpers
-├── types/                   # TypeScript types
-├── supabase/
-│   └── migrations/         # SQL migrations
-└── CLAUDE.md               # Claude Code context
+├── app/
+│   ├── (public)/            # marketing, /request lead form, /signup, /login, public empty-legs
+│   ├── (client)/me/         # authenticated client portal
+│   ├── (admin)/admin/        # admin panel (login + (protected) group)
+│   ├── (checkout)/           # tokenized offline checkout-prep
+│   ├── operator/             # operator portal (authed) + tokenized /operator/offer/[token]
+│   └── api/                  # webhooks + cron routes
+├── components/               # UI (clients/ admin/ operator/ privilege/ cargo/ medevac/ ...)
+├── lib/                      # auth, queries, payments, notifications, privilege, i18n, validators
+├── supabase/migrations/      # forward-only SQL migrations
+├── scripts/                  # audit-columns.cjs (audit:db) + live-introspect.cjs (introspect:db)
+├── reports/                  # live-schema-compact.json (DB-compat snapshot)
+└── types/database.ts         # hand-maintained DB types (loose-client pattern fills the gaps)
 ```
 
 ---
 
-## 🛠️ Development Commands
+## 🛠️ Commands
 
 ```bash
-# Development
-npm run dev              # Start dev server
-
-# Build
-npm run build            # Production build
-npm run start            # Run production server
-
-# Quality
-npm run lint             # Lint code
-npm run type-check       # Check TypeScript
-npm run format           # Format with Prettier
-
-# Database
-npm run db:types         # Regenerate types from Supabase
+npm run dev            # dev server
+npm run build          # production build
+npm run start          # run production build
+npm run type-check     # tsc --noEmit
+npm run lint:strict    # eslint . --max-warnings 0  (CI gate)
+npm run audit:db       # app↔live-schema compatibility gate (CI)
+npm run introspect:db  # refresh reports/live-schema-compact.json from live schema (service-role key)
 ```
 
 ---
 
-## 🎨 Design System
+## 🎨 Design tokens
 
-### Colors
-- **Gold:** `#C9A961` (primary)
-- **Navy:** `#0A1628` (background)
-- **Ink:** `#FAFAFA` (text)
-
-### Fonts
-- **Arabic:** IBM Plex Sans Arabic
-- **English Display:** Playfair Display
-- **English Body:** Inter
-
-### Usage
-Always use Tailwind theme tokens:
-```tsx
-<div className="bg-navy text-ink border-gold/20">
-  <h1 className="text-gold font-display">Title</h1>
-</div>
-```
+Use Tailwind theme tokens (don't hardcode hex): `navy` (`DEFAULT/secondary/tertiary/card`), `gold` (`DEFAULT/light/dark`), `ink` (`primary/secondary/muted`), `border`. Arabic font: `font-ar` (IBM Plex Sans Arabic). RTL-first — use logical classes (`ms-`/`me-`/`text-start`), Western digits, currency "ريال".
 
 ---
 
-## 🔐 Security Checklist
+## 🔐 Security checklist
 
-- [ ] Never commit `.env.local`
-- [ ] Always validate input with Zod
-- [ ] Use Row Level Security (RLS) on all tables
-- [ ] Use parameterized queries (Supabase handles automatically)
-- [ ] Admin routes check role before execution
-- [ ] Webhooks verify signatures
-
----
-
-## 📚 Key Documents
-
-- **`CLAUDE.md`** — Full project context for Claude Code
-- **`D:/Plan/advisor-doc/`** — Business study documents
-- **`supabase/migrations/`** — Database schema
+- [ ] Never commit `.env.local` (gitignored — holds the service-role key + admin bootstrap).
+- [ ] Validate all input with Zod.
+- [ ] New tables: RLS deny-all; new RPCs: `SECURITY DEFINER` + `search_path` + REVOKE anon/authenticated + GRANT service_role only.
+- [ ] Enforce ownership inside RPCs (identity from the session, never from input).
+- [ ] Webhooks verify signatures (payment webhook is fail-closed until its verifier lands).
+- [ ] Audit-log sensitive admin/PII reads.
 
 ---
 
-## ✅ Production Checklists
+## ✅ Production checklists
 
 Manual operational lists run before every production deploy. Index:
-[`docs/checklists/README.md`](docs/checklists/README.md). Each list
-follows the same shape (Purpose → When to run → Steps → Pass criteria
-→ If it fails) so it can be executed top-to-bottom.
+[`docs/checklists/README.md`](docs/checklists/README.md). Each follows
+Purpose → When to run → Steps → Pass criteria → If it fails.
 
-- [`production-readiness.md`](docs/checklists/production-readiness.md) — master pre-deploy gate; aggregates the others.
-- [`ci-pipeline.md`](docs/checklists/ci-pipeline.md) — GitHub Actions workflow shape (triggers, Node 20, `npm ci`, type-check, build, `lint:strict`), no-secrets discipline, branch protection, and a green `main`.
-- [`admin-inbox-smoke-test.md`](docs/checklists/admin-inbox-smoke-test.md) — login, list, detail, status, notes, sign-out, cookie-tamper UI check, Phase 4 promote button.
-- [`operator-flow-smoke-test.md`](docs/checklists/operator-flow-smoke-test.md) — Phase 4 end-to-end (promote → dispatch → operator submits → admin accepts), with race-guard / expired-offer / tampered-token probes.
-- [`pwa-audit.md`](docs/checklists/pwa-audit.md) — Phase 4.2 PWA installability audit: manifest, service worker, `beforeinstallprompt`, offline behavior. No Lighthouse score required. Regenerate icons via `npm run generate:icons` from `public/icons/icon-source.svg`.
-- [`supabase-migration-verification.md`](docs/checklists/supabase-migration-verification.md) — enums, columns, indexes, trigger, RLS on, zero policies on `lead_inquiries`, anon REST probes denied.
-- [`resend-email-test.md`](docs/checklists/resend-email-test.md) — founder notification email: valid key, missing key (silent no-op), invalid key (controlled failure).
-- [`env-vars-vercel-supabase.md`](docs/checklists/env-vars-vercel-supabase.md) — required/optional matrix per environment + Vercel & Supabase scopes.
-- [`security-hardening.md`](docs/checklists/security-hardening.md) — secret scan, RLS coverage, admin password/secret strength, no static admin routes, no public PII, cookie flags, HTTPS, incident response.
+- [`production-readiness.md`](docs/checklists/production-readiness.md) — master pre-deploy gate.
+- [`ci-pipeline.md`](docs/checklists/ci-pipeline.md) — GitHub Actions shape, no-secrets discipline, green `main`.
+- [`supabase-migration-verification.md`](docs/checklists/supabase-migration-verification.md) — enums/columns/indexes/RLS-on/anon-denied probes.
+- [`env-vars-vercel-supabase.md`](docs/checklists/env-vars-vercel-supabase.md) — required/optional matrix + scopes.
+- [`security-hardening.md`](docs/checklists/security-hardening.md) — secret scan, RLS coverage, cookie flags, incident response.
+- (+ admin-inbox, operator-flow, pwa-audit, resend-email smoke tests.)
 
-Dependency risk for the current lockfile is tracked in
-[`docs/security/npm-audit-triage.md`](docs/security/npm-audit-triage.md).
-A local convenience wrapper for the CI quality gates (type-check +
-build + `lint:strict`) lives at
-[`scripts/preflight.ps1`](scripts/preflight.ps1) — run with
-`pwsh aeris/scripts/preflight.ps1`.
+For demoing to partners, see **[`docs/PARTNER-DEMO-RUNBOOK.md`](docs/PARTNER-DEMO-RUNBOOK.md)**.
 
 ---
 
 ## 🌍 Deployment
 
-### Vercel (Recommended)
-1. Push to GitHub
-2. Import project at vercel.com
-3. Add environment variables
-4. Deploy
-
-### Custom Domain
-Configure `aeris.sa` in Vercel dashboard.
-
----
+Vercel (push → import → set env vars → deploy); custom domain `aeris.sa`. Requires Vercel Pro (the cron schedule in `vercel.json` exceeds Hobby limits).
 
 ## 📞 Support
-
-- **WhatsApp:** +966558048004
-- **Email:** support@aeris.sa
-
----
+WhatsApp **+966558048004** · support@aeris.sa
 
 ## 📝 License
-
 Proprietary — All rights reserved © 2026 Aeris
