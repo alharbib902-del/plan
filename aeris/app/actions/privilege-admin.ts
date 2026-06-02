@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import { forceAdminClientPrivilegeTier } from '@/lib/privilege/admin-pii';
 import { isUuid } from '@/lib/utils/uuid';
 import type { AdminForceTierResult } from '@/lib/privilege/types';
@@ -43,7 +44,7 @@ export async function forceTierChangeAction(input: {
   lock_until: string | null;
 }): Promise<ForceTierActionResult> {
   // Admin session guard. Throws/redirects if cookie invalid.
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const parsed = ForceTierInputSchema.safeParse(input);
   if (!parsed.success) {

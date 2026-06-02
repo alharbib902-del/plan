@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   adminCreateOperatorStubSchema,
@@ -71,7 +72,7 @@ export async function adminCreatePhase7OperatorStub(input: {
   contact_phone: string;
   notes?: string | null;
 }): Promise<AdminCreatePhase7OperatorStubActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminCreateOperatorStubSchema.safeParse(input);
@@ -132,7 +133,7 @@ const PORTAL_URL_PREFIX = '/operator/empty-legs/';
 export async function adminMintOperatorSession(input: {
   operator_stub_id: string;
 }): Promise<AdminMintOperatorSessionActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminMintOperatorSessionSchema.safeParse(input);

@@ -56,6 +56,7 @@
     "test:privilege-cashback-expiry-fifo": "tsx lib/privilege/__tests__/cashback-expiry-fifo.test.ts",
     "test:privilege-cron-auth": "tsx app/api/cron/privilege/__tests__/cron-auth.test.ts",
     "test:admin-login-rate-limit": "tsx lib/admin/__tests__/login-rate-limit.test.ts",
+    "test:admin-rbac": "tsx lib/admin/__tests__/rbac.test.ts",
     "test:public-action-rate-limit": "tsx lib/rate-limit/__tests__/public-action.test.ts",
     "test:admin-user-credentials": "tsx lib/admin/users/__tests__/credentials.test.ts",
     "test:admin-mfa-totp": "tsx lib/admin/mfa/__tests__/totp.test.ts",

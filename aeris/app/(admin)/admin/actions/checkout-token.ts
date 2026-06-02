@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   CustomerTokenEnvError,
@@ -65,7 +66,7 @@ export type IssueCheckoutLinkActionResult =
 export async function issueCheckoutLink(input: {
   booking_id: string;
 }): Promise<IssueCheckoutLinkActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const parsed = issueCheckoutLinkSchema.safeParse(input);
   if (!parsed.success) {

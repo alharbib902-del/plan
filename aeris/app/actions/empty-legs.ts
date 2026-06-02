@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createHash } from 'crypto';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fireAndForgetMatchTrigger } from '@/lib/empty-legs/match-trigger-fire';
 import {
@@ -120,7 +121,7 @@ export async function adminPublishEmptyLeg(input: {
   auction_window_lead_hours?: number | null;
   suppress_notifications?: boolean | null;
 }): Promise<AdminPublishEmptyLegActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminPublishEmptyLegSchema.safeParse(input);
@@ -200,7 +201,7 @@ export async function adminUpdatePrice(input: {
   leg_id: string;
   new_price: number;
 }): Promise<AdminUpdatePriceActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminUpdatePriceSchema.safeParse(input);
@@ -249,7 +250,7 @@ export async function adminCancel(input: {
   leg_id: string;
   reason?: string | null;
 }): Promise<AdminCancelActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminCancelSchema.safeParse(input);
@@ -293,7 +294,7 @@ export async function adminMarkSoldManual(input: {
   customer_name: string;
   customer_phone: string;
 }): Promise<AdminMarkSoldManualActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminMarkSoldManualSchema.safeParse(input);
@@ -341,7 +342,7 @@ export async function adminConfirmReservation(input: {
   leg_id: string;
   token: string;
 }): Promise<AdminConfirmReservationActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminConfirmReservationSchema.safeParse(input);
@@ -389,7 +390,7 @@ export type AdminReleaseReservationActionResult =
 export async function adminReleaseReservation(input: {
   leg_id: string;
 }): Promise<AdminReleaseReservationActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminReleaseReservationSchema.safeParse(input);
@@ -445,7 +446,7 @@ export type AdminConfirmReservationForClientActionResult =
 export async function adminConfirmReservationForClient(input: {
   leg_id: string;
 }): Promise<AdminConfirmReservationForClientActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminReleaseReservationSchema.safeParse(input);
@@ -514,7 +515,7 @@ export type MarkOutreachSentActionResult =
 export async function markOutreachSent(input: {
   notification_id: string;
 }): Promise<MarkOutreachSentActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = markOutreachSentSchema.safeParse(input);

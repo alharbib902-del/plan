@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import {
   acceptOfferSchema,
   declineOfferSchema,
@@ -104,7 +105,7 @@ export async function upsertCargoAircraftCapability(
   // NEXT_REDIRECT to /admin/login if the cookie is missing/
   // invalid (Phase 8 ADMIN_INBOX_PASSWORD), aborting the
   // caller before any flag check or DB write.
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
@@ -176,7 +177,7 @@ export type AdminAcceptCargoOfferResult =
 export async function adminAcceptCargoOfferOnBehalf(input: {
   offer_id: string;
 }): Promise<AdminAcceptCargoOfferResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = acceptOfferSchema.safeParse(input);
@@ -236,7 +237,7 @@ export async function adminDeclineCargoOfferOnBehalf(input: {
   offer_id: string;
   reason?: string;
 }): Promise<AdminDeclineCargoOfferResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = declineOfferSchema.safeParse(input);
@@ -292,7 +293,7 @@ export async function adminCancelCargoRequestOnBehalf(input: {
   request_id: string;
   reason?: string;
 }): Promise<AdminCancelCargoRequestResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = cancelRequestSchema.safeParse(input);
@@ -366,7 +367,7 @@ export type AdminManualDispatchResult =
 export async function adminManualDispatchCargoRequest(
   input: AdminManualDispatchInput
 ): Promise<AdminManualDispatchResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   // Reuse the existing UUID guard from cancelRequestSchema —
