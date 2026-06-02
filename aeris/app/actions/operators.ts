@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomInt } from 'crypto';
 import bcrypt from 'bcryptjs';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   mintWelcomeToken,
@@ -124,7 +125,7 @@ export type AdminApproveOperatorResult =
 export async function adminApproveOperator(input: {
   operator_id: string;
 }): Promise<AdminApproveOperatorResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminApproveOperatorSchema.safeParse(input);
@@ -266,7 +267,7 @@ export async function adminRejectOperator(input: {
   operator_id: string;
   reason: string;
 }): Promise<AdminRejectOperatorResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminRejectOperatorSchema.safeParse(input);
@@ -320,7 +321,7 @@ export async function adminSuspendOperator(input: {
   operator_id: string;
   reason: string;
 }): Promise<AdminSuspendOperatorResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminSuspendOperatorSchema.safeParse(input);
@@ -367,7 +368,7 @@ export type AdminUnsuspendOperatorResult =
 export async function adminUnsuspendOperator(input: {
   operator_id: string;
 }): Promise<AdminUnsuspendOperatorResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminUnsuspendOperatorSchema.safeParse(input);
@@ -408,7 +409,7 @@ export async function adminSetOperatorDocuments(input: {
   gaca_license?: string | null;
   license_expiry?: string | null;
 }): Promise<AdminSetOperatorDocumentsResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminSetOperatorDocumentsSchema.safeParse(input);
@@ -469,7 +470,7 @@ export async function adminResetOperatorPassword(input: {
   operator_id: string;
   new_password: string;
 }): Promise<AdminResetOperatorPasswordResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminResetOperatorPasswordSchema.safeParse(input);
@@ -614,7 +615,7 @@ export async function adminMintOperatorOtp(input: {
   operator_id: string;
   purpose: 'login' | 'recovery';
 }): Promise<AdminMintOperatorOtpResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminMintOperatorOtpSchema.safeParse(input);
@@ -752,7 +753,7 @@ export type AdminUploadOperatorDocumentResult =
 export async function adminUploadOperatorDocument(
   formData: FormData
 ): Promise<AdminUploadOperatorDocumentResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const operator_id = formData.get('operator_id');
@@ -919,7 +920,7 @@ export async function adminConvertPhase7Stub(input: {
   stub_id: string;
   operator_id: string;
 }): Promise<AdminConvertPhase7StubResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isAdminFlagDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = adminConvertPhase7StubSchema.safeParse(input);

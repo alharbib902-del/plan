@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isUuid } from '@/lib/utils/uuid';
 import {
@@ -92,7 +93,7 @@ export async function upsertMedicalCertification(
   input: UpsertMedicalCertificationInput
 ): Promise<UpsertMedicalCertificationResult> {
   // 1. Admin auth gate (Phase 11 round 1 PR #65 P1 #1 discipline)
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   // 2. Flag gate (fail-closed)
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
@@ -239,7 +240,7 @@ export type AdminAcceptMedevacOfferResult =
 export async function adminAcceptMedevacOfferOnBehalf(input: {
   offer_id: string;
 }): Promise<AdminAcceptMedevacOfferResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = acceptOfferSchema.safeParse(input);
@@ -299,7 +300,7 @@ export async function adminDeclineMedevacOfferOnBehalf(input: {
   offer_id: string;
   reason?: string;
 }): Promise<AdminDeclineMedevacOfferResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = declineOfferSchema.safeParse(input);
@@ -356,7 +357,7 @@ export async function adminCancelMedevacRequestOnBehalf(input: {
   request_id: string;
   reason?: string;
 }): Promise<AdminCancelMedevacRequestResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = cancelRequestSchema.safeParse(input);
@@ -422,7 +423,7 @@ export type AdminActivateSubscriptionResult =
 export async function adminActivateSubscription(input: {
   subscription_id: string;
 }): Promise<AdminActivateSubscriptionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = activateSubscriptionSchema.safeParse(input);
@@ -494,7 +495,7 @@ export type AdminManualDispatchResult =
 export async function adminManualDispatchMedevacRequest(
   input: AdminManualDispatchInput
 ): Promise<AdminManualDispatchResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   if (!input.request_id || !isUuid(input.request_id)) {
@@ -545,7 +546,7 @@ export type AdminUpsertShieldConfigResult =
 export async function adminUpsertShieldConfig(
   input: UpsertShieldConfigInput
 ): Promise<AdminUpsertShieldConfigResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   if (

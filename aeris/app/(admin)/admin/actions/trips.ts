@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import {
   issueOperatorToken,
   issueOperatorTokenV2,
@@ -50,7 +51,7 @@ export type PromoteResult =
     };
 
 export async function promoteLead(formData: FormData): Promise<PromoteResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   // Phase 6.1 PR 2: read the preferences JSON blob the
   // admin form serializes from its preference fields.
@@ -210,7 +211,7 @@ export type DispatchResult =
     };
 
 export async function dispatchTrip(formData: FormData): Promise<DispatchResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const parsed = dispatchTripSchema.safeParse({
     trip_request_id: formData.get('trip_request_id'),
@@ -280,7 +281,7 @@ export type AcceptResult =
     };
 
 export async function acceptOffer(formData: FormData): Promise<AcceptResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const offerId = formData.get('offer_id');
   if (typeof offerId !== 'string' || !/^[0-9a-f-]{36}$/i.test(offerId)) {
@@ -369,7 +370,7 @@ export type DispatchTripV2Result =
  * The DB RPC re-checks both as defense-in-depth.
  */
 export async function dispatchTripV2(formData: FormData): Promise<DispatchTripV2Result> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   // 1. Parse + validate inputs.
   const phonesRaw = formData.getAll('phones').filter((v): v is string => typeof v === 'string');
@@ -492,7 +493,7 @@ export type AcceptOfferV2Result =
  * has no UI caller.
  */
 export async function acceptOfferV2(formData: FormData): Promise<AcceptOfferV2Result> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const offerId = formData.get('offer_id');
   const offerSource = formData.get('offer_source');

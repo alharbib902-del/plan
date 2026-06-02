@@ -10,6 +10,7 @@ import {
   validateAdminUserSessionToken,
 } from '@/lib/admin/users/sessions';
 import type { AdminUserRole } from '@/lib/admin/users/queries';
+import { adminRoleAllowed } from '@/lib/admin/rbac';
 
 /**
  * Admin auth module — Option B Phase 1b (login cutover).
@@ -180,6 +181,13 @@ export async function requireAdminSession(opts: {
    * is redirected to /admin/login/mfa before anything else.
    */
   allowMfaPending?: boolean;
+  /**
+   * Least-privilege gate (SEC-01). When set, an authenticated admin
+   * whose role is NOT in this list is redirected to /admin/forbidden.
+   * Pass ADMIN_WRITE_ROLES on sensitive write actions; omit on reads
+   * and self-account actions (all admin roles allowed).
+   */
+  roles?: readonly AdminUserRole[];
 } = {}): Promise<AdminSessionInfo> {
   requireAdminEnv();
 
@@ -228,6 +236,13 @@ export async function requireAdminSession(opts: {
     opts.allowMustChangePassword !== true
   ) {
     redirect('/admin/account/password');
+  }
+
+  // Least-privilege role gate (SEC-01). Defense-in-depth: the UI also
+  // hides controls a support admin can't use, but a direct POST to a
+  // gated Server Action lands here and is bounced to /admin/forbidden.
+  if (opts.roles && !adminRoleAllowed(userInfo.role, opts.roles)) {
+    redirect('/admin/forbidden');
   }
 
   if (opts.touchSession !== false) {

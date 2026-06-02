@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireAdminSession } from '@/lib/admin/auth';
+import { ADMIN_WRITE_ROLES } from '@/lib/admin/rbac';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { adminAttachAddonSchema } from '@/lib/validators/booking-addons';
 import type {
@@ -58,7 +59,7 @@ export async function attachAddon(input: {
   quantity?: number | null;
   note?: string | null;
 }): Promise<AttachAddonActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   // Zod parse first — defense in depth alongside the SQL
   // function's own range / subtype checks.
@@ -130,7 +131,7 @@ export async function detachAddon(input: {
   booking_addon_id: string;
   trip_request_id: string;
 }): Promise<DetachAddonActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const parsed = detachAddonSchema.safeParse(input);
   if (!parsed.success) {
@@ -190,7 +191,7 @@ export async function updateAddonQuantity(input: {
   quantity: number;
   trip_request_id: string;
 }): Promise<UpdateAddonQuantityActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const parsed = updateAddonQuantitySchema.safeParse(input);
   if (!parsed.success) {
@@ -249,7 +250,7 @@ export type BackfillBookingActionResult =
 export async function backfillBookingFromAcceptedOffer(input: {
   trip_request_id: string;
 }): Promise<BackfillBookingActionResult> {
-  await requireAdminSession();
+  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
 
   const parsed = backfillBookingSchema.safeParse(input);
   if (!parsed.success) {
