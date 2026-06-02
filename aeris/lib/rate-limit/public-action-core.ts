@@ -22,14 +22,17 @@ export type PublicAction =
   | 'flight_request'
   | 'empty_leg_reserve'
   | 'cargo_intake'
-  | 'medevac_intake';
+  | 'medevac_intake'
+  | 'client_login'
+  | 'operator_login';
 
 export type PublicActionAttemptOutcome =
   | 'success'
   | 'rate_limited'
   | 'validation_failed'
   | 'rpc_error'
-  | 'honeypot';
+  | 'honeypot'
+  | 'auth_failed';
 
 export interface PublicActionAttemptRow {
   outcome: PublicActionAttemptOutcome;
@@ -97,6 +100,22 @@ export const PUBLIC_ACTION_LIMITS: Record<
     maxFailures: 5,
     attemptWindowMs: 60 * 60 * 1000,
     maxAttempts: 20,
+  },
+  // SEC-02 — public login forms. Stricter than intake: a legitimate
+  // user rarely fails 5 times in 15 min, but this throttles
+  // credential-stuffing / brute-force. `auth_failed` (bad credentials)
+  // counts toward the failure cap like any non-success outcome.
+  client_login: {
+    failureWindowMs: 15 * 60 * 1000,
+    maxFailures: 5,
+    attemptWindowMs: 60 * 60 * 1000,
+    maxAttempts: 10,
+  },
+  operator_login: {
+    failureWindowMs: 15 * 60 * 1000,
+    maxFailures: 5,
+    attemptWindowMs: 60 * 60 * 1000,
+    maxAttempts: 10,
   },
 };
 

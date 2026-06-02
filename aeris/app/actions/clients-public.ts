@@ -31,6 +31,10 @@ import {
   clientChangePasswordSchema,
   clientUpdateProfileSchema,
 } from '@/lib/validators/clients';
+import {
+  checkPublicActionRateLimit,
+  recordPublicActionAttempt,
+} from '@/lib/rate-limit/public-action';
 
 /**
  * Phase 9 PR 1 — public + authed client portal Server Actions.
@@ -238,6 +242,19 @@ export async function clientLogin(input: {
 }): Promise<ClientLoginResult> {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
+  // SEC-02 — per-IP login rate-limit (credential stuffing / brute force).
+  const rl = await checkPublicActionRateLimit('client_login');
+  if (!rl.ok) {
+    if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
+      await recordPublicActionAttempt(
+        'client_login',
+        rl.actorFingerprint,
+        'rate_limited'
+      );
+    }
+    return { ok: false, error: 'rate_limited' };
+  }
+
   const parsed = clientLoginSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -269,9 +286,19 @@ export async function clientLogin(input: {
 
   if (!lookup.ok) {
     // Opaque — never leak whether email exists
+    await recordPublicActionAttempt(
+      'client_login',
+      rl.actorFingerprint,
+      'auth_failed'
+    );
     return { ok: false, error: 'invalid_credentials' };
   }
   if (lookup.signup_status !== 'active') {
+    await recordPublicActionAttempt(
+      'client_login',
+      rl.actorFingerprint,
+      'auth_failed'
+    );
     return { ok: false, error: 'account_not_active' };
   }
 
@@ -280,6 +307,11 @@ export async function clientLogin(input: {
     lookup.password_hash
   );
   if (!passwordOk) {
+    await recordPublicActionAttempt(
+      'client_login',
+      rl.actorFingerprint,
+      'auth_failed'
+    );
     return { ok: false, error: 'invalid_credentials' };
   }
 
@@ -310,6 +342,11 @@ export async function clientLogin(input: {
   }
 
   await setClientSessionCookie(minted.raw_token, parsed.data.remember_me);
+  await recordPublicActionAttempt(
+    'client_login',
+    rl.actorFingerprint,
+    'success'
+  );
   return { ok: true, client_id: lookup.client_id };
 }
 

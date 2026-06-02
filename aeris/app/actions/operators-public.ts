@@ -36,6 +36,10 @@ import {
   operatorUpdateProfileSchema,
   operatorWelcomeConsumeSchema,
 } from '@/lib/validators/operators';
+import {
+  checkPublicActionRateLimit,
+  recordPublicActionAttempt,
+} from '@/lib/rate-limit/public-action';
 
 /**
  * Phase 8 PR 2c — public + authed operator portal Server
@@ -225,6 +229,19 @@ export async function operatorLogin(input: {
 }): Promise<OperatorLoginResult> {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
+  // SEC-02 — per-IP login rate-limit (credential stuffing / brute force).
+  const rl = await checkPublicActionRateLimit('operator_login');
+  if (!rl.ok) {
+    if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
+      await recordPublicActionAttempt(
+        'operator_login',
+        rl.actorFingerprint,
+        'rate_limited'
+      );
+    }
+    return { ok: false, error: 'rate_limited' };
+  }
+
   const parsed = operatorLoginSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -253,14 +270,28 @@ export async function operatorLogin(input: {
         password_must_change: boolean;
       }
     | { ok: false; error: string };
-  if (!lookup.ok) return { ok: false, error: lookup.error ?? 'invalid_credentials' };
+  if (!lookup.ok) {
+    await recordPublicActionAttempt(
+      'operator_login',
+      rl.actorFingerprint,
+      'auth_failed'
+    );
+    return { ok: false, error: lookup.error ?? 'invalid_credentials' };
+  }
 
   // Step 2: bcrypt compare in Node
   const matches = await verifyOperatorPassword(
     parsed.data.password,
     lookup.password_hash
   );
-  if (!matches) return { ok: false, error: 'invalid_credentials' };
+  if (!matches) {
+    await recordPublicActionAttempt(
+      'operator_login',
+      rl.actorFingerprint,
+      'auth_failed'
+    );
+    return { ok: false, error: 'invalid_credentials' };
+  }
 
   // Step 3: create session
   const minted = mintOperatorSessionToken(parsed.data.remember_me ?? false);
@@ -289,6 +320,11 @@ export async function operatorLogin(input: {
     parsed.data.remember_me ?? false
   );
 
+  await recordPublicActionAttempt(
+    'operator_login',
+    rl.actorFingerprint,
+    'success'
+  );
   return {
     ok: true,
     operator_id: lookup.operator_id,
