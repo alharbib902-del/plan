@@ -80,6 +80,13 @@ export function ClientOfferCard({
     showActions && privilegeEnabled && cashbackBalanceSar > 0;
 
   const onAccept = () => {
+    if (
+      !confirm(
+        'هل أنت متأكد من قبول هذا العرض؟ سيتم رفض جميع العروض الأخرى تلقائيًا.'
+      )
+    ) {
+      return;
+    }
     setErrorCode(null);
     setRedeemWarning(null);
     startAccept(async () => {
@@ -104,6 +111,9 @@ export function ClientOfferCard({
   };
 
   const onDecline = () => {
+    if (!confirm('هل أنت متأكد من رفض هذا العرض؟')) {
+      return;
+    }
     setErrorCode(null);
     startDecline(async () => {
       const result = await clientDeclineOffer({
