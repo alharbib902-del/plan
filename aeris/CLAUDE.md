@@ -1,481 +1,106 @@
 # CLAUDE.md — Aeris Project Context
 
-> **This file is automatically loaded by Claude Code. It contains everything needed to work effectively on the Aeris project.**
+> Auto-loaded by Claude Code. Describes the project **as it actually is today**, not the original plan. Keep it in sync with reality when things change.
 
 ---
 
-## 🎯 Project Overview
+## 🎯 What Aeris is
 
-**Aeris** is a smart integrated platform for private aviation services in Saudi Arabia and the GCC region. It's a **two-sided marketplace** connecting:
-- **Clients** (private aviation customers)
-- **Operators** (aircraft owners/charter companies)
-- **Admin** (Aeris platform team)
+A two-sided **private-aviation marketplace** for Saudi Arabia / GCC, connecting **clients**, **operators** (charter companies / aircraft owners), and the **Aeris admin** team. Arabic-first (RTL).
 
-### Core Products (5 Business Units)
-1. **Aeris Charter** — Private flight booking with rich add-ons
-2. **Aeris Empty Legs** — AI-matched empty return flights at discount
-3. **Aeris Privilege** — 4-tier loyalty program (Silver/Gold/Platinum/Diamond)
-4. **Aeris MedEvac** — Medical evacuation flights + Aeris Shield subscriptions
-5. **Aeris Cargo** — Specialized cargo (horses, luxury cars, valuables)
+**Five service lines:**
+1. **Charter** — request → admin dispatch → operator offers → client accepts → booking.
+2. **Empty Legs** — operator-published discounted return legs + a Dutch-auction price tick.
+3. **Privilege** — 4-tier loyalty (Silver/Gold/Platinum/Diamond) + cashback ledger.
+4. **MedEvac + Aeris Shield** — medical-evacuation requests + a coverage subscription.
+5. **Cargo** — specialized cargo (horses, luxury cars, valuables).
 
-### Scale Target
-- **60-day MVP** with full automation
-- **1,000+ customers** in first 6 months
-- **54M SAR revenue** in year 1
+Plus: referrals, reviews, support tickets, admin analytics.
+
+**Current status (2026-06):** Cargo + MedEvac are **live in prod**. The **payment core + client checkout UI are built but OFF** behind `ENABLE_PAYMENTS` (HyperPay COPYandPAY; live creds + webhook verifier still pending). **ZATCA e-invoicing, operator payouts, refunds, and Moyasar are DEFERRED** (not built). Money is collected **offline today** (admin issues a signed checkout link → client confirms add-ons → bank transfer / WhatsApp).
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Tech stack (actual)
 
-### Core
-- **Framework:** Next.js 14 (App Router)
-- **Language:** TypeScript (strict mode)
-- **UI:** TailwindCSS + shadcn/ui + Radix UI
-- **Animations:** Framer Motion
-- **Forms:** React Hook Form + Zod validation
-- **Data:** TanStack Query
-- **Icons:** Lucide React
+- **Next.js 16 (App Router) + React 19**, TypeScript **strict** (honored — no `any`/`@ts-ignore`/TODO in prod code). The Next 16 `middleware`→`proxy` rename is in use (`proxy.ts`).
+- **Server Components by default**; mutations via **Server Actions** in `app/actions/`; `'use client'` only where needed; `'server-only'` guards on server libs.
+- **TailwindCSS** with a custom navy/gold/ink theme (see Design tokens); **Zod** for validation (`lib/validators/`, `lib/*/validators/`).
+- **Supabase** Postgres + **PostgREST**. Hosting: **Vercel** (+ Vercel Cron). Email: **Resend**. WhatsApp: **wasenderapi** (transactional) + `wa.me` deep-links.
 
-### Backend & Data
-- **Database:** PostgreSQL (via Supabase)
-- **Auth:** Supabase Auth (OTP + Email/Password)
-- **Storage:** Supabase Storage
-- **Realtime:** Supabase Realtime (for live updates)
-- **API:** Next.js API Routes + Server Actions
-
-### Automation Engines
-- **Workflow Orchestration:** Inngest
-- **Scheduled Jobs:** Vercel Cron + Supabase Edge Functions
-- **AI:** Claude API (Anthropic) — for matching, pricing, content
-
-### External Services
-- **Payment:** HyperPay (primary), Moyasar (backup)
-- **Email:** Resend
-- **SMS:** Unifonic
-- **WhatsApp:** wa.me links (NO API — human reply)
-- **Compliance:** ZATCA E-Invoice API
-- **Maps:** Mapbox GL JS
-- **Flight Data:** Flightradar24 API
-- **Weather:** AccuWeather API
-
-### Infrastructure
-- **Hosting:** Vercel (Next.js + Edge Functions)
-- **Database:** Supabase Cloud
-- **CDN:** Cloudflare
-- **Monitoring:** Sentry (errors) + PostHog (analytics) + UptimeRobot (uptime)
+> **NOT in use (don't assume):** Supabase Auth (we roll our own — see below), `shadcn`/Radix, Inngest (dead dependency, zero imports), Sentry (referenced in env only, not wired), Unifonic SMS (env exists, no call sites), TanStack Query. There is **no standard test runner** — tests are hand-rolled `tsx` scripts; only ~8 + `audit:db` run in CI.
 
 ---
 
-## 🌐 Project Configuration
+## 🔐 Auth & data-access model (READ THIS FIRST — most-misunderstood part)
 
-### Language & Locale
-- **Primary:** Arabic (RTL) — `lang="ar" dir="rtl"`
-- **Secondary:** English (LTR)
-- **Currency:** SAR (Saudi Riyal) — displayed as "ريال"
-- **Timezone:** Asia/Riyadh (UTC+3)
-- **Number format:** Western digits (1, 2, 3) NOT Arabic-Indic
+**There is exactly ONE Supabase client: the service-role admin client (`lib/supabase/admin.ts`). No anon/browser Supabase client exists.** We do **not** use Supabase Auth.
 
-### Contact
-- **Domain:** aeris.sa
-- **WhatsApp:** +966558048004 (human-answered)
-- **Support hours:** 24/7 (business hours for non-urgent)
-
-### Brand Identity
-- **Primary Color (Gold):** `#C9A961`
-- **Primary Dark (Navy):** `#0A1628`
-- **Secondary:** `#FAFAFA` (white), `#A8B2C1` (muted)
-- **Gold variants:** `#E8D4A8` (light), `#8B7339` (dark)
-- **Fonts:**
-  - English: Playfair Display (headings) + Inter (body)
-  - Arabic: IBM Plex Sans Arabic (all)
+- **Three custom session systems**, each cookie-based with `sha256(token)` stored in DB:
+  - **Client** — `lib/clients/auth.ts` → `requireClientSession()` → `client_id`.
+  - **Admin** — password + **TOTP MFA** + login rate-limiting + founder-seed bootstrap (`lib/admin/...`) → `requireAdminSession()`.
+  - **Operator** — OTP + welcome/password-reset tokens + sessions (`lib/operators/auth.ts`) → `requireOperatorSession()` (+ `password_must_change` lockdown).
+  - Mid-session revoke/suspend is honored on the next request for all three.
+- **Every table has RLS enabled with NO permissive anon/authenticated policy** (deny-all; only `airports` is public-readable). All writes/reads go through **`SECURITY DEFINER` service-role-only RPCs**: each ends with `REVOKE ALL ... FROM PUBLIC, anon, authenticated; GRANT EXECUTE ... TO service_role`. Identity (client/operator id) is passed from the validated session, never trusted from input; RPCs enforce ownership.
+- **Loose-client pattern:** `types/database.ts` is **hand-maintained and lags** the live schema, so new tables/columns are accessed via `createAdminClient() as unknown as SupabaseClient` (or a local `Loose*` type). This is intentional; the compensating control is the DB-compat checker.
+- **DB-compat CI gate (`npm run audit:db`):** `scripts/audit-columns.cjs` statically checks every `.from/.rpc/.select/.eq/.insert/.update` against the committed snapshot `reports/live-schema-compact.json`. **Refresh the snapshot after each prod apply** (`npm run introspect:db`, which reads the service-role key over PostgREST — no DB password). A PR that adds DB objects makes `audit:db` RED until the migration is applied + snapshot refreshed — this enforces apply-before-merge.
 
 ---
 
-## 📁 Project Structure
+## 🗄️ Migrations (forward-only)
 
-```
-aeris/
-├── app/
-│   ├── (auth)/              # Public auth routes
-│   │   ├── login/
-│   │   ├── signup/
-│   │   └── verify-otp/
-│   ├── (client)/            # Customer-facing routes
-│   │   ├── page.tsx         # Home
-│   │   ├── charter/
-│   │   ├── trips/
-│   │   ├── bookings/
-│   │   ├── empty-legs/
-│   │   ├── medevac/
-│   │   ├── cargo/
-│   │   ├── privilege/
-│   │   └── me/
-│   ├── operator/            # Operator portal
-│   ├── admin/               # Admin panel
-│   └── api/                 # API routes & webhooks
-├── components/              # Reusable UI components
-│   ├── ui/                  # shadcn/ui primitives
-│   ├── booking/
-│   ├── operator/
-│   ├── admin/
-│   └── shared/
-├── lib/                     # Core libraries
-│   ├── supabase/            # DB clients + queries
-│   ├── hyperpay/            # Payment integration
-│   ├── zatca/               # Invoice generation
-│   ├── notifications/       # Email/SMS
-│   ├── automation/          # Inngest workflows
-│   ├── validators/          # Zod schemas
-│   └── utils/               # Helpers
-├── types/                   # TypeScript types
-├── hooks/                   # React hooks
-├── supabase/
-│   └── migrations/          # DB migrations
-└── public/                  # Static assets
-```
+- Live in `supabase/migrations/`, sequentially numbered, **forward-only** (no down files), **idempotent** (`IF NOT EXISTS`, `CREATE OR REPLACE`). New functions are `SECURITY DEFINER` + `SET search_path = public` + REVOKE/GRANT. New tables are RLS deny-all.
+- **Never `supabase db push`** (migrations 000001+ were applied via raw `pg`, not tracked in the CLI). Apply to **prod** via the runner in `D:\Plan\migration-runner` over the **session pooler** `aws-1-eu-central-1.pooler.supabase.com` (founder types the DB password interactively). Then refresh the snapshot + commit it.
+- Discipline: a migration/PR reaches **Codex 100/100** before the founder accepts; apply-to-prod only on the founder's explicit «طبّق ثم ادمج».
 
 ---
 
-## 🎨 Design System Rules
+## 💳 Bookings & payment state
 
-### Colors (TailwindCSS)
-```typescript
-// Defined in tailwind.config.ts
-colors: {
-  gold: {
-    DEFAULT: '#C9A961',
-    light: '#E8D4A8',
-    dark: '#8B7339',
-  },
-  navy: {
-    DEFAULT: '#0A1628',
-    secondary: '#050B14',
-    tertiary: '#0F1F35',
-    card: '#0D1B30',
-  },
-  muted: '#6B7A8F',
-  secondary: '#A8B2C1',
-}
-```
-
-### Typography
-- **Headlines (Arabic):** IBM Plex Sans Arabic, weight 500-700
-- **Headlines (English):** Playfair Display, weight 400-600
-- **Body (Arabic):** IBM Plex Sans Arabic, weight 400
-- **Body (English):** Inter, weight 300-500
-
-### Components Philosophy
-- Always **RTL-first** for Arabic content
-- Always **mobile-first** responsive
-- Always use **shadcn/ui** components as base
-- Always **accessible** (WCAG 2.1 AA)
-- Always **animated** (subtle, luxurious — Framer Motion)
+- `bookings.payment_status` (**financial**, ENUM) is separate from `flight_status` (**operational**). New bookings default to **`pending_offline`**; `paid` flips via `confirm_booking_payment` (which cascades cashback-award + tier-eval triggers + the referral cron). A booking is immutable after `paid` (trigger guard).
+- Payment core = migration `..._payment_core.sql` + `lib/payments/{provider,hyperpay,payments}.ts` + `app/actions/payments.ts` (gateway-agnostic; HyperPay COPYandPAY hosted widget — **no card data on our servers**; status-lookup is the source of truth; the webhook is **fail-closed** until a real verifier is wired). All behind `ENABLE_PAYMENTS` (off).
 
 ---
 
-## 🗄️ Database Schema Overview
+## 🎛️ Feature flags (fail-closed `=== 'true'` unless noted)
 
-### Primary Tables (19 total)
-1. **users** — All users (role: client/operator/admin/support)
-2. **operators** — Operator companies
-3. **aircraft** — Fleet
-4. **crew_members** — Pilots & flight attendants
-5. **airports** — IATA/ICAO reference data
-6. **trip_requests** — Customer trip requests
-7. **offers** — Operator offers to requests
-8. **bookings** — Confirmed bookings
-9. **booking_addons** — Selected add-ons per booking
-10. **empty_legs** — Available empty return flights
-11. **payments** — Payment transactions
-12. **loyalty_transactions** — Points earned/redeemed
-13. **reviews** — Post-flight ratings
-14. **notifications** — Multi-channel notifications
-15. **medevac_requests** — Medical evacuation requests
-16. **medevac_subscriptions** — Aeris Shield subscriptions
-17. **cargo_requests** — Specialized cargo requests
-18. **support_tickets** — Customer support
-19. **audit_logs** — Sensitive operations log
-
-### Critical Fields
-- All tables have: `id (UUID PK)`, `created_at`, `updated_at`
-- All user-facing entities have: `status` enum
-- All financial amounts: `DECIMAL(12,2)` for SAR
-- All timestamps: `TIMESTAMPTZ`
-- All text IDs follow pattern: `AER-XXXX` (bookings), `EL-XXXX` (empty legs), `MEV-XXXX` (medevac), `CGO-XXXX` (cargo)
-
-### Row Level Security (RLS)
-- Enabled on **every** table
-- Users can only see their own data (based on `user_id`)
-- Operators can only see their own fleet/bookings
-- Admins see everything (but logged)
+`ENABLE_CLIENT_PORTAL` (the `/me` tree) · `ENABLE_OPERATOR_PORTAL` (⚠️ page-render gates use `=== 'false'` → **fail-OPEN**; the Server Actions are fail-closed — set it to `true` for a working portal) · `ENABLE_CARGO` (live) · `ENABLE_MEDEVAC` (live) · `ENABLE_PRIVILEGE` · `ENABLE_PAYMENTS` (off) · `ENABLE_TRIP_AUTO_DISTRIBUTION` (off → trips wait for manual admin dispatch) · `ENABLE_EMPTY_LEGS_{PUBLIC_MARKETPLACE,NOTIFICATIONS,ADMIN_UI}` · `ENABLE_CLIENT_EMPTY_LEGS_PORTAL` · `PHASE5_ADMIN_UI` (multi-operator dispatch) · `ENABLE_OPERATOR_LEGACY_TOKEN`. Each gated surface also needs its per-token HMAC secret (fail-closed if missing). Referrals / reviews / support are **not** flag-gated.
 
 ---
 
-## 🤖 Automation Engines (Critical)
+## 🌍 i18n / RTL / formatting
 
-### 1. Trip Distribution Engine
-**Trigger:** New trip_request created
-**Location:** `lib/automation/trip-distribution.ts`
-**Logic:**
-```typescript
-1. Query operators matching criteria (location, aircraft category, availability)
-2. Score each operator (weighted: rating 40%, response time 30%, price 20%, location 10%)
-3. Send to top 5 via Email + WhatsApp link
-4. Set 2-hour response window
-5. Escalate to admin if no responses
-```
-
-### 2. Empty Legs Matching Engine
-**Trigger:** New empty_leg created OR price reduced
-**Location:** `lib/automation/empty-legs-matching.ts`
-**Logic:**
-```typescript
-1. Query eligible customers (location, history, preferences)
-2. Calculate match_score for each (6 factors weighted)
-3. Send top 50 matches via multi-channel
-4. Track engagement (PostHog)
-```
-
-### 3. Dynamic Pricing Engine
-**Trigger:** Pricing calculation requested (offers, empty legs)
-**Location:** `lib/automation/pricing-engine.ts`
-**Logic:**
-```typescript
-1. Base price from operator
-2. Multipliers: demand, season, peak hours, route popularity
-3. Discounts: Privilege tier, first-time user, referral
-4. Time-based: Empty Legs Dutch auction (discount increases as departure nears)
-```
-
-### 4. Notification Pipeline
-**Trigger:** Any system event requiring notification
-**Location:** `lib/automation/notifications.ts`
-**Channels:** Email (Resend), SMS (Unifonic), WhatsApp link (wa.me), In-app
-**Templates:** Defined in `lib/notifications/templates/`
-
-### 5. Automated Payouts
-**Trigger:** Flight completed (+48 hours hold)
-**Location:** `lib/automation/payouts.ts`
-**Logic:** Calculate operator_payout = total - commission, transfer via bank API
-
-### 6. Privilege Auto-Upgrade
-**Trigger:** Booking payment confirmed
-**Location:** `lib/automation/loyalty.ts`
-**Logic:** Calculate annual spend, auto-upgrade tier if threshold reached
-
-### 7. ZATCA Auto-Invoice
-**Trigger:** Payment confirmed
-**Location:** `lib/zatca/generator.ts`
-**Output:** XML invoice + QR Code + PDF via Resend
+- Arabic dictionaries in `lib/i18n/*-ar.ts` (e.g. `clientsAr`); error codes → Arabic via `clientErrorMessage(code)` (`components/clients/error-banner.tsx`). No English locale yet.
+- `<html lang="ar" dir="rtl">`. Use logical Tailwind classes: `ms-`/`me-`/`ps-`/`pe-`/`text-start`/`text-end` (never `ml`/`pr`/`text-left`). Currency = SAR shown as "ريال" (use `formatSARLabel` / `clientsAr.currencySAR`, not a hardcoded string). **Western digits** (1,2,3). Timezone **Asia/Riyadh**.
 
 ---
 
-## 🔐 Security Requirements
+## 🎨 Design tokens (Tailwind)
 
-### Authentication
-- JWT tokens with 1-hour expiry + refresh tokens
-- OTP for phone verification
-- 2FA **required** for admins and Platinum+ users
-- Password: minimum 10 chars, must contain numbers + letters
-
-### Authorization
-- Row Level Security (RLS) on all tables
-- API routes check user role before execution
-- Admin actions are logged in `audit_logs`
-
-### Data Protection
-- Input validation: Zod on every API endpoint
-- SQL injection: Use parameterized queries only (Supabase handles)
-- XSS: React auto-escapes; sanitize any dangerouslySetInnerHTML
-- CSRF: Use Next.js built-in protection
-- Passport numbers: Encrypt at rest (AES-256)
-- Payment details: Never store (use HyperPay tokenization)
-
-### Compliance
-- **ZATCA:** Phase 2 e-invoicing (all invoices)
-- **PDPL:** Saudi data protection (consent, right to delete)
-- **GDPR:** For EU customers (right to export)
-- **PCI DSS:** No card storage (HyperPay compliant)
+`navy` (`DEFAULT/secondary/tertiary/card`), `gold` (`DEFAULT/light/dark`), `ink` (`primary/secondary/muted`), `border`. Font: `font-ar` (IBM Plex Sans Arabic). Luxury navy/gold aesthetic; mobile-first.
 
 ---
 
-## 📝 Coding Conventions
+## 🔁 Async / notifications / crons
 
-### TypeScript
-- **Strict mode** always on
-- Define types in `types/` directory
-- Prefer `interface` for object shapes, `type` for unions
-- Never use `any` — use `unknown` if truly unknown
-
-### Components
-- Default export for page components
-- Named exports for reusable components
-- Co-locate component files: `Button.tsx`, `Button.test.tsx`, `Button.stories.tsx`
-- Server components by default, mark client explicitly with `'use client'`
-
-### API Routes
-- Use Server Actions for mutations triggered from client
-- Use API Routes for webhooks and external integrations
-- Always validate input with Zod
-- Always handle errors gracefully
-- Return typed responses
-
-### Naming
-- **Files:** kebab-case (`trip-request-form.tsx`)
-- **Components:** PascalCase (`TripRequestForm`)
-- **Functions:** camelCase (`calculateMatchScore`)
-- **Constants:** UPPER_SNAKE_CASE (`MAX_PASSENGERS`)
-- **Database tables:** snake_case (`trip_requests`)
-
-### Comments
-- **Default: NO comments.** Well-named code speaks for itself.
-- Add comments ONLY for:
-  - Non-obvious WHY (business logic, workarounds)
-  - Complex algorithms
-  - Security-sensitive code
-- NEVER: describe WHAT the code does (that's visible)
+- Outbox + cron pattern: events land in `*_outbox` tables; cron routes under `app/api/cron/*` drain them with `FOR UPDATE SKIP LOCKED` + idempotent guards. Cron auth = `Authorization: Bearer $CRON_SECRET` (constant-time compare). Schedules in `vercel.json`.
+- Notifications fail-soft (no-op when unconfigured). Charter dispatch to operators is a **tokenized `/operator/offer/[token]` link** sent over WhatsApp (manual paste by admin), **not** an in-portal inbox.
 
 ---
 
-## 🌍 RTL / Arabic Support
+## 📐 Conventions
 
-### HTML/CSS
-- `<html lang="ar" dir="rtl">` by default
-- Use `start`/`end` instead of `left`/`right` in Tailwind:
-  - ❌ `ml-4` → ✅ `ms-4`
-  - ❌ `pr-6` → ✅ `pe-6`
-  - ❌ `text-left` → ✅ `text-start`
-
-### Typography
-- Arabic: IBM Plex Sans Arabic (imported from Google Fonts)
-- Numbers: Always Western digits (1, 2, 3) for consistency
-- Dates: Show both Gregorian + Hijri where appropriate
-
-### Icons
-- Directional icons (arrows) must flip in RTL
-- Use `rtl:scale-x-[-1]` Tailwind utility
+- **Offers live in multiple tables:** `phase4_operator_offers` (single-op) + `phase5_operator_offers` (dispatch rounds) for charter, `cargo_offers`, `medevac_offers`. `lib/supabase/queries/unified-offers.ts` merges phase4+phase5 for display. Phase-numbered names are historical.
+- Files **kebab-case**, components **PascalCase**, constants **UPPER_SNAKE**, tables **snake_case**.
+- **Comments only for WHY** (business rule, workaround, security) — never restate WHAT.
+- Validate all input with Zod. Add `audit_logs` rows for sensitive admin/PII reads (medevac patient data + privilege detail are audit-first).
 
 ---
 
-## 🚀 Development Workflow
+## 🧪 Quality gates
 
-### Daily Flow (14h/day — 60 days)
-```
-05:30-08:00  Deep Work 1 (2.5h) — Hardest tasks
-08:00-08:30  Breakfast
-08:30-12:30  Deep Work 2 (4h) — Main feature
-12:30-13:30  Lunch + prayer
-13:30-16:30  Deep Work 3 (3h) — Additional work
-16:30-17:00  Break
-17:00-20:00  Deep Work 4 (3h) — Testing + fixes
-20:00-21:00  Dinner
-21:00-23:00  Admin (1.5h) — Planning, BD, responses
-```
-
-### Git Workflow
-- **main branch:** Production-ready only
-- **dev branch:** Daily development
-- **feature branches:** `feature/charter-booking`, `feature/empty-legs-matching`
-- **Commit often:** At end of each feature
-- **Commit message:** Clear, imperative (e.g., "Add Empty Legs Dutch auction cron")
-
-### Claude Code Best Practices
-1. **Use CLAUDE.md** (this file) — I'm always aware
-2. **Plan mode** (ExitPlanMode) before complex features
-3. **Subagents** for parallel tasks
-4. **Security review** skill after each major feature
-5. **Simplify** skill after finishing a feature
-6. **Test iteratively** — don't wait until end
-
-### Testing Strategy
-- **Manual testing:** After each feature
-- **E2E tests:** Playwright (Week 8)
-- **Security scan:** Weekly (security-review skill)
-- **Performance:** Lighthouse after each deployment
+`npm run type-check` · `npm run lint:strict` (`--max-warnings 0`) · `npm run build` · `npm run audit:db`. CI (`.github/workflows/ci.yml`, at the **git root**, not `aeris/`) runs these + a subset of the `tsx` tests. Local Turbopack `next build` fails inside a git worktree with a `node_modules` junction (env-only) — rely on CI for the build there.
 
 ---
 
-## 🎯 Current Sprint / Week
-
-### Current Week: **Week 1 — Foundation**
-### Today: **Day 1**
-### Goals: Setup + Environment + Initial deployment
-
-### Completed
-- [ ] Accounts setup (Vercel, Supabase, Resend, etc.)
-- [ ] Domain (aeris.sa)
-- [ ] Next.js project initialized
-- [ ] GitHub + Vercel connected
-
-### In Progress
-- [ ] CLAUDE.md (this file)
-
-### Next
-- [ ] Day 2: Design system + Tailwind config
-- [ ] Day 3: Database schema creation
-- [ ] Day 4: Auth system
-
----
-
-## 📞 Key Contacts
-
-| Role | Contact |
-|------|---------|
-| Founder | [Owner] |
-| WhatsApp Support | +966558048004 |
-| Technical Lead | Claude Code Opus 4.7 Max + Founder |
-| Designer | TBD (Freelance, Week 1-3) |
-
----
-
-## 📚 Reference Documents
-
-Located in `D:/Plan/advisor-doc/`:
-- `Aeris-Advisor-Study.docx` — Full business study
-- `Aeris-Technical-Blueprint.docx` — Technical specification
-- `Aeris-60-Days-Plan.docx` — Day-by-day development plan
-
-Located in `D:/Plan/`:
-- `index.html` — Investor pitch deck (Arabic)
-
----
-
-## ⚠️ Important Notes for Claude Code
-
-1. **NEVER** write code without RTL support
-2. **NEVER** use LTR-specific Tailwind classes (use `start`/`end`)
-3. **NEVER** store payment card details directly
-4. **NEVER** hardcode Arabic strings — use i18n (later phase) or constants
-5. **NEVER** skip input validation (Zod is your friend)
-6. **ALWAYS** add audit logging to sensitive admin actions
-7. **ALWAYS** test on mobile viewport (iPhone SE minimum)
-8. **ALWAYS** ensure ZATCA compliance for invoices
-9. **ALWAYS** respect user privacy (PDPL)
-10. **ALWAYS** prefer Server Components unless interactivity needed
-
----
-
-## 🎨 UI/UX Principles
-
-### Luxury Feel
-- Generous whitespace
-- Subtle gold accents (not overwhelming)
-- Smooth animations (300-500ms, ease-out)
-- Serif fonts for display
-- Large, readable Arabic
-
-### Mobile First
-- Test on iPhone SE (375px) minimum
-- Touch targets minimum 44×44px
-- Thumb-friendly navigation (bottom nav for mobile)
-
-### Performance
-- Image optimization (next/image + Supabase transformations)
-- Code splitting per route
-- Lazy loading below the fold
-- Target: Lighthouse score > 90
-
----
-
-**Last updated:** Day 1 — Project kickoff
-**Updated by:** Founder + Claude Code Opus 4.7 Max
+**Last updated:** 2026-06 — reflects Next 16, the 5 live/built service lines, custom-auth + service-role-RPC model, and the built-but-off payment phase (PR1 + checkout UI + cashback-at-checkout).
