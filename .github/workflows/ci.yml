@@ -40,15 +40,6 @@ jobs:
       - name: Install dependencies (clean)
         run: npm ci
 
-      # Phase 6.2 PR 1 (Codex iteration-9 P1 #2 +
-      # iteration-10 P1 fix): catalog parity test runs
-      # BEFORE the slower checks so a drift between
-      # `lib/addons/catalog.ts` and the seeded
-      # `addon_catalog` migration short-circuits the
-      # workflow. Static parse, no DB needed.
-      - name: Catalog parity
-        run: npm run test:addons
-
       # Phase 14 — app<->DB compatibility gate. Static: scans every
       # .from()/.rpc()/.eq()/.select()/.insert()/.update() in the app and
       # asserts the referenced tables/columns/RPC params/enum values exist
@@ -59,63 +50,13 @@ jobs:
       - name: DB compatibility (app<->schema)
         run: npm run audit:db
 
-      # Phase 6.2 PR 2c: WhatsApp confirm-message builder.
-      # Pure-function unit tests, zero deps beyond Node's
-      # built-in assert + tsx. Static — no DB, no network.
-      - name: WhatsApp confirm-message builder
-        run: npm run test:checkout-whatsapp
-
-      # Phase 6.2 PR 2c (Codex round-2 P2 fix): site URL
-      # resolver. Pure-function unit tests covering the
-      # NEXT_PUBLIC_SITE_URL / VERCEL_URL / VERCEL_ENV
-      # interaction matrix that keeps Preview tokens bound
-      # to the Preview deploy.
-      - name: Site URL resolver
-        run: npm run test:checkout-site-url
-
-      # Phase 7 PR 1: Dutch-auction curve parity test. The
-      # plpgsql RPC `_recompute_empty_leg_price` (PR 2a)
-      # ports the same formula in SQL; this Layer-1 test
-      # asserts both ports produce identical outputs at
-      # fixed sample points (0%, 25%, 50%, 75%, 100%
-      # elapsed-pct). Drift is a Codex-blocking finding.
-      - name: Dutch-auction curve parity
-        run: npm run test:empty-legs-curve
-
-      # Phase 7 PR 2d: reservation + opt-out HMAC token
-      # roundtrip + tamper-rejection + expiry-rejection
-      # parity test. Layer-1 (no DB), runs against the
-      # mint/verify modules in lib/empty-legs/. The test
-      # provides its OWN secrets via process.env, so this
-      # step does NOT need real
-      # EMPTY_LEGS_RESERVATION_TOKEN_SECRET / _OPT_OUT_*
-      # values in CI env.
-      - name: Empty Legs token roundtrip
-        run: npm run test:empty-legs-token
-
-      # Phase 7 PR 2e: matching engine pure-scoring parity.
-      # Asserts the scoring formula stays deterministic at
-      # fixed sample points + the per-leg branch decision
-      # (suppress / disabled / candidates) marks the outbox
-      # row correctly.
-      - name: Empty Legs matching scoring
-        run: npm run test:empty-legs-matching
-
-      # Phase 7 PR 2e: frequency-cap pure-logic parity.
-      # Mirrors the contract shipped in
-      # lib/empty-legs/frequency-cap.ts against fixture
-      # rows (no DB). Catches drift between the spec
-      # contract and the actual cap behavior.
-      - name: Empty Legs frequency cap
-        run: npm run test:empty-legs-frequency-cap
-
-      # Phase 7 PR 2e: shared cron-auth helper. Backs the
-      # 3 cron routes + the internal match-trigger route;
-      # a regression here would let unauthorized callers
-      # drain the outbox / expire reservations / push
-      # ticks.
-      - name: Empty Legs cron auth
-        run: npm run test:empty-legs-cron-auth
+      # REA-03 — single aggregator runs ALL test:* unit suites (52, incl.
+      # admin RBAC + login rate-limit), replacing the hand-picked 8 that
+      # used to be gated. scripts/run-unit-tests.mjs auto-discovers every
+      # test:* script (excluding Playwright e2e), so new suites are gated
+      # automatically. Pure-function — no DB, no secrets.
+      - name: Unit tests (all suites)
+        run: npm test
 
       - name: Type-check
         run: npm run type-check
