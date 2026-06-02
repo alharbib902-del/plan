@@ -36,14 +36,14 @@ export function ClientShell({ fullName, children }: ClientShellProps) {
     <div dir="rtl" className="min-h-screen bg-navy">
       <header className="border-b border-border bg-navy-secondary/60">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-6">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2">
             <Link
               href="/me"
-              className="font-ar tracking-tagged text-gold-light hover:text-gold"
+              className="font-ar shrink-0 tracking-tagged text-gold-light hover:text-gold"
             >
               {clientsAr.brand}
             </Link>
-            <nav className="flex items-center gap-4 text-sm">
+            <nav className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
               <NavLink href="/me" active={pathname === '/me'}>
                 {clientsAr.navMyArea}
               </NavLink>
