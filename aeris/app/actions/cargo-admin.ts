@@ -31,12 +31,12 @@ import type { CargoAircraftCapabilityInsert } from '@/lib/cargo/types';
  * `app/actions/empty-legs.ts:123` discipline.
  *
  * Admin path on cargo RPCs (per Phase 11 spec §4.4 round 6
- * P1 #1): pass BOTH p_actor_client_id AND p_actor_admin_user_id
- * as NULL after requireAdminSession() at the Server Action
- * layer. The RPCs accept this as the admin path; they reject
- * `actor_ambiguous` only if both are non-NULL. Aeris admins
- * have NO users row (Phase 8 cookie + ENV auth), so there's no
- * UUID to pass as p_actor_admin_user_id.
+ * P1 #1 + SEC-04): pass p_actor_client_id as NULL and
+ * p_actor_admin_user_id as session.adminUserId (the admin_users.id
+ * resolved by requireAdminSession). The RPCs reject `actor_ambiguous`
+ * only if BOTH are non-NULL, so client-NULL + admin-set is the admin
+ * path, and the admin id is recorded in audit_logs.new_value for
+ * on-behalf actor attribution.
  *
  * The DB writes go through service-role; the cargo tables have
  * RLS enabled (round 6 P1 #3) but service-role bypasses.
@@ -158,7 +158,8 @@ export async function upsertCargoAircraftCapability(
 // ============================================================
 //
 // Admin path on §4.4 accept_cargo_offer for guest cargo requests.
-// Pass both actor IDs as NULL (per round 6 P1 #1). The RPC will
+// Pass client_id NULL + admin_user_id = session.adminUserId
+// (round 6 P1 #1 + SEC-04 actor attribution). The RPC will
 // reject with `admin_cannot_accept_for_authed_client` if the
 // request has client_id IS NOT NULL — defense-in-depth so the
 // admin button only ever works on guest paths even if the UI
@@ -177,7 +178,7 @@ export type AdminAcceptCargoOfferResult =
 export async function adminAcceptCargoOfferOnBehalf(input: {
   offer_id: string;
 }): Promise<AdminAcceptCargoOfferResult> {
-  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
+  const session = await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = acceptOfferSchema.safeParse(input);
@@ -193,7 +194,7 @@ export async function adminAcceptCargoOfferOnBehalf(input: {
   const { data, error } = await client.rpc('accept_cargo_offer', {
     p_offer_id: parsed.data.offer_id,
     p_actor_client_id: null,
-    p_actor_admin_user_id: null,
+    p_actor_admin_user_id: session.adminUserId,
   });
   if (error) {
     console.error('[cargo-admin.acceptOnBehalf] rpc error', error);
@@ -237,7 +238,7 @@ export async function adminDeclineCargoOfferOnBehalf(input: {
   offer_id: string;
   reason?: string;
 }): Promise<AdminDeclineCargoOfferResult> {
-  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
+  const session = await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = declineOfferSchema.safeParse(input);
@@ -253,7 +254,7 @@ export async function adminDeclineCargoOfferOnBehalf(input: {
   const { data, error } = await client.rpc('decline_cargo_offer', {
     p_offer_id: parsed.data.offer_id,
     p_actor_client_id: null,
-    p_actor_admin_user_id: null,
+    p_actor_admin_user_id: session.adminUserId,
     p_reason: parsed.data.reason ?? null,
   });
   if (error) {
@@ -293,7 +294,7 @@ export async function adminCancelCargoRequestOnBehalf(input: {
   request_id: string;
   reason?: string;
 }): Promise<AdminCancelCargoRequestResult> {
-  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
+  const session = await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isCargoDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = cancelRequestSchema.safeParse(input);
@@ -309,7 +310,7 @@ export async function adminCancelCargoRequestOnBehalf(input: {
   const { data, error } = await client.rpc('cancel_cargo_request', {
     p_request_id: parsed.data.request_id,
     p_actor_client_id: null,
-    p_actor_admin_user_id: null,
+    p_actor_admin_user_id: session.adminUserId,
     p_reason: parsed.data.reason ?? null,
   });
   if (error) {

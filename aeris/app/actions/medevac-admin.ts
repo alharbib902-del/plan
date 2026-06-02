@@ -240,7 +240,7 @@ export type AdminAcceptMedevacOfferResult =
 export async function adminAcceptMedevacOfferOnBehalf(input: {
   offer_id: string;
 }): Promise<AdminAcceptMedevacOfferResult> {
-  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
+  const session = await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = acceptOfferSchema.safeParse(input);
@@ -256,7 +256,7 @@ export async function adminAcceptMedevacOfferOnBehalf(input: {
   const { data, error } = await rpc.rpc('accept_medevac_offer', {
     p_offer_id: parsed.data.offer_id,
     p_actor_client_id: null,
-    p_actor_admin_user_id: null,
+    p_actor_admin_user_id: session.adminUserId,
   });
   if (error) {
     console.error('[medevac-admin.acceptOnBehalf] rpc error', error);
@@ -300,7 +300,7 @@ export async function adminDeclineMedevacOfferOnBehalf(input: {
   offer_id: string;
   reason?: string;
 }): Promise<AdminDeclineMedevacOfferResult> {
-  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
+  const session = await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = declineOfferSchema.safeParse(input);
@@ -316,7 +316,7 @@ export async function adminDeclineMedevacOfferOnBehalf(input: {
   const { data, error } = await rpc.rpc('decline_medevac_offer', {
     p_offer_id: parsed.data.offer_id,
     p_actor_client_id: null,
-    p_actor_admin_user_id: null,
+    p_actor_admin_user_id: session.adminUserId,
     p_reason: parsed.data.reason ?? null,
   });
   if (error) {
@@ -357,7 +357,7 @@ export async function adminCancelMedevacRequestOnBehalf(input: {
   request_id: string;
   reason?: string;
 }): Promise<AdminCancelMedevacRequestResult> {
-  await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
+  const session = await requireAdminSession({ roles: ADMIN_WRITE_ROLES });
   if (isMedevacDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const parsed = cancelRequestSchema.safeParse(input);
@@ -373,7 +373,7 @@ export async function adminCancelMedevacRequestOnBehalf(input: {
   const { data, error } = await rpc.rpc('cancel_medevac_request', {
     p_request_id: parsed.data.request_id,
     p_actor_client_id: null,
-    p_actor_admin_user_id: null,
+    p_actor_admin_user_id: session.adminUserId,
     p_reason: parsed.data.reason ?? null,
   });
   if (error) {
