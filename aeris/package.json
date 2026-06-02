@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "lint:strict": "eslint . --max-warnings 0",
     "type-check": "tsc --noEmit",
+    "test": "node scripts/run-unit-tests.mjs",
     "audit:db": "node scripts/audit-columns.cjs --ci",
     "introspect:db": "node scripts/live-introspect.cjs",
     "test:addons": "tsx lib/addons/__tests__/catalog-vs-seed.test.ts",
