@@ -5,6 +5,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 
 /**
  * Phase 13 PR 3 §6.1 — daily evaluate-all cron.
@@ -126,6 +127,7 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   if (claimErr) {
     console.error('[cron.privilege.evaluate-all] claim error', claimErr);
+    await captureCronError('privilege.evaluate-all', claimErr);
     // Same convention as match-drain: don't 5xx so Vercel Cron
     // doesn't compound load with a retry.
     return NextResponse.json(

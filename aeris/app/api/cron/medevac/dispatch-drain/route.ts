@@ -6,6 +6,7 @@ import {
   verifyCronAuth,
   unauthorizedJsonResponse,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 import {
   dispatchMedevacRequest,
   type MedevacDispatchSkipReason,
@@ -114,6 +115,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   );
   if (claimError) {
     console.error('[medevac.cron.dispatch-drain] claim RPC error', claimError);
+    await captureCronError('medevac.dispatch-drain', claimError);
     return NextResponse.json(
       { ok: false, error: 'claim_failed' },
       { status: 500 }

@@ -5,6 +5,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 
 /**
  * Phase 13 PR 3 §6.2 — daily cashback expiry cron.
@@ -71,6 +72,7 @@ export async function GET(req: NextRequest): Promise<Response> {
   const { data, error } = await client.rpc('expire_old_loyalty_credits', {});
   if (error) {
     console.error('[cron.privilege.expire-cashback] rpc error', error);
+    await captureCronError('privilege.expire-cashback', error);
     // 200 to keep Vercel Cron from retrying tight; canary will
     // surface the stale `cron_last_run_at`.
     return NextResponse.json(

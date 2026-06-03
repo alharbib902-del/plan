@@ -5,6 +5,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 
 /**
  * Phase 7 PR 2e — expire-windows cron.
@@ -46,6 +47,7 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   if (claimError) {
     console.error('[cron.expire-windows] claim error', claimError);
+    await captureCronError('empty-legs.expire-windows', claimError);
     return NextResponse.json(
       { ok: false, error: 'claim_failed' },
       { status: 200 }

@@ -5,6 +5,7 @@ import {
   verifyCronAuth,
   unauthorizedJsonResponse,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 import {
   isCertExpired,
   hasAnyCapability,
@@ -166,6 +167,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       '[medevac.cron.expire-certs] read failed',
       error
     );
+    await captureCronError('medevac.expire-certifications', error);
     return NextResponse.json(
       { ok: false, error: 'read_failed' },
       { status: 500 }

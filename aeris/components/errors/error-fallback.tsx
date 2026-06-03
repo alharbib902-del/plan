@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { AlertTriangle } from 'lucide-react';
+import * as Sentry from '@sentry/nextjs';
 
 /**
  * Shared branded error card (Arabic RTL). Used by every route-segment
@@ -27,9 +28,16 @@ export function ErrorFallback({
   description?: string;
 }) {
   useEffect(() => {
-    // TODO(REA-01): replace with a real captureException once error
-    // monitoring (Sentry / Vercel Log Drains) is wired in the next P0 PR.
-    // Until then this at least surfaces the digest in the browser console.
+    // REA-01: report the boundary error to Sentry, tagged so it is
+    // distinguishable from unhandled errors and linked (via `digest`) to
+    // the `ref:` shown to the user below for support correlation. No-op
+    // when the DSN is unset. console.error stays for local-dev visibility.
+    if (error) {
+      Sentry.captureException(error, {
+        tags: { errorBoundary: true },
+        extra: error.digest ? { digest: error.digest } : undefined,
+      });
+    }
     console.error('[error-boundary]', error);
   }, [error]);
 

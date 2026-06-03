@@ -6,6 +6,7 @@ import {
   verifyCronAuth,
   unauthorizedJsonResponse,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 import {
   dispatchCargoRequest,
   type CargoDispatchSkipReason,
@@ -140,6 +141,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   );
   if (claimError) {
     console.error('[cargo.cron] claim RPC error', claimError);
+    await captureCronError('cargo.dispatch-drain', claimError);
     return NextResponse.json(
       { ok: false, error: 'claim_failed' },
       { status: 500 }

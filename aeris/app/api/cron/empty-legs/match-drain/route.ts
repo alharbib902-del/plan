@@ -5,6 +5,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 import {
   matchLeg,
   shouldMarkOutboxProcessed,
@@ -116,6 +117,7 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   if (claimError) {
     console.error('[cron.match-drain] claim error', claimError);
+    await captureCronError('empty-legs.match-drain', claimError);
     return NextResponse.json(
       { ok: false, error: 'claim_failed' },
       { status: 200 }

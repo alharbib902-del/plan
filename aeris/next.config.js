@@ -70,4 +70,26 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+const { withSentryConfig } = require('@sentry/nextjs');
+
+// REA-01: wrap with Sentry. Source-map upload only runs when the build is
+// FULLY configured (auth token + org + project) — if any is missing it is
+// disabled, so a half-configured build (e.g. token set but org/project
+// forgotten) never attempts an upload that could fail the build. Runtime
+// capture (instrumentation.ts + the sentry.*.config.ts files) works
+// regardless; it is gated purely on the DSN being present at runtime.
+const sentrySourceMapsEnabled = Boolean(
+  process.env.SENTRY_AUTH_TOKEN &&
+    process.env.SENTRY_ORG &&
+    process.env.SENTRY_PROJECT
+);
+
+module.exports = withSentryConfig(nextConfig, {
+  silent: true,
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  sourcemaps: {
+    disable: !sentrySourceMapsEnabled,
+  },
+});
