@@ -5,6 +5,7 @@ import {
   verifyCronAuth,
   unauthorizedJsonResponse,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 import { sendFounderSlaEscalationEmail } from '@/lib/medevac/founder-sla-escalation-email';
 import { parseSlaIntervalMinutes } from '@/lib/medevac/sla-interval';
 import type {
@@ -149,6 +150,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     .select('severity, sla_interval');
   if (slaError) {
     console.error('[medevac.cron.sla] sla lookup read failed', slaError);
+    await captureCronError('medevac.sla-escalation', slaError);
     return NextResponse.json(
       { ok: false, error: 'sla_lookup_failed' },
       { status: 500 }
@@ -172,6 +174,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     .limit(SCAN_LIMIT);
   if (candError) {
     console.error('[medevac.cron.sla] candidates read failed', candError);
+    await captureCronError('medevac.sla-escalation', candError);
     return NextResponse.json(
       { ok: false, error: 'candidates_failed' },
       { status: 500 }

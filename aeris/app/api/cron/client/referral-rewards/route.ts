@@ -5,6 +5,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 import {
   listRewardableReferrals,
   referralRewardAmounts,
@@ -51,6 +52,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     candidates = await listRewardableReferrals(BATCH_LIMIT);
   } catch (err) {
     console.error('[cron.referral-rewards] load failed', err);
+    await captureCronError('client.referral-rewards', err);
     return NextResponse.json({ ok: false, error: 'load_failed' }, { status: 200 });
   }
 

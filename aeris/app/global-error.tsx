@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import * as Sentry from '@sentry/nextjs';
 
 /**
  * Global error boundary — the ONLY thing rendered when the root layout
@@ -17,7 +18,15 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // TODO(REA-01): wire captureException once error monitoring lands.
+    // REA-01: the root-layout boundary — the most catastrophic failure
+    // mode, so capture it as `fatal` and tag it `global` to distinguish
+    // it from the per-segment boundaries (which report via ErrorFallback).
+    // No-op when the DSN is unset.
+    Sentry.captureException(error, {
+      level: 'fatal',
+      tags: { errorBoundary: true, global: true },
+      extra: error.digest ? { digest: error.digest } : undefined,
+    });
     console.error('[global-error]', error);
   }, [error]);
 
