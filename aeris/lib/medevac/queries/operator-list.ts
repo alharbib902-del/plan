@@ -180,54 +180,6 @@ export async function listMyOperatorMedevacOffers(
   return ((data ?? []) as MedevacOfferRow[]).slice(0, limit);
 }
 
-/**
- * Pull the post-acceptance customer snapshot for the booked
- * operator. Used by the /operator/medevac/offers page to show
- * patient name on rows whose offer status is 'accepted'. D8 (c)
- * — the transition gate is `medevac_offers.status='accepted'`
- * so we look up the bookings row only when that's true; the
- * snapshot was written into bookings.customer_name_snapshot
- * by accept_medevac_offer step 4.
- */
-export async function getBookedPatientNameForOffer(
-  offerId: string
-): Promise<string | null> {
-  noStore();
-  if (!isUuid(offerId)) return null;
-  type LooseChained = {
-    from: (table: string) => {
-      select: (cols: string) => {
-        eq: (
-          col: string,
-          val: string
-        ) => {
-          eq: (
-            col: string,
-            val: string
-          ) => {
-            maybeSingle: () => Promise<{
-              data: unknown;
-              error: { message?: string } | null;
-            }>;
-          };
-        };
-      };
-    };
-  };
-  const loose = createAdminClient() as unknown as LooseChained;
-  const { data, error } = await loose
-    .from('bookings')
-    .select('customer_name_snapshot')
-    .eq('source_offer_table', 'medevac_offers')
-    .eq('source_offer_id', offerId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return (
-    (data as { customer_name_snapshot?: string | null })
-      .customer_name_snapshot ?? null
-  );
-}
-
 // Re-export the full row type so /operator/bookings/[id] can
 // continue to use the existing Phase 6.2 shape without
 // importing from this module.

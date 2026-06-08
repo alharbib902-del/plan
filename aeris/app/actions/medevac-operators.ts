@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOperatorSession } from '@/lib/operators/auth';
 import { medevacOfferSchema } from '@/lib/medevac/validators/medevac-offer';
 import { withdrawOfferSchema } from '@/lib/medevac/validators/medevac-actions';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 12 PR 2 — operator-side medevac Server Actions.
@@ -32,17 +33,6 @@ export type MedevacOperatorActionFailure = {
 
 function isMedevacDisabled(): boolean {
   return process.env.ENABLE_MEDEVAC !== 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 type LooseRpcClient = {

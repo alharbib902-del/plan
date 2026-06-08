@@ -21,11 +21,14 @@ const nextConfig = {
   async headers() {
     // Baseline CSP — closes XSS amplification paths (frame
     // embedding, object/Flash, arbitrary <base>) without
-    // breaking Next.js hydration, Mapbox, PostHog, Sentry, or
-    // Supabase. The `unsafe-inline` + `unsafe-eval` carve-outs
-    // are required by Next.js's runtime + posthog-js + mapbox-gl.
-    // Tightening to a nonce-based CSP is tracked as follow-up
-    // work; getting CSP present at all is the immediate gain.
+    // breaking Next.js hydration, Sentry, or Supabase. The
+    // `unsafe-inline` + `unsafe-eval` carve-outs are required by
+    // Next.js's runtime (inline bootstrap/hydration scripts +
+    // dev-mode eval) and the Sentry browser SDK; HyperPay's
+    // COPYandPAY widget (loaded only when ENABLE_PAYMENTS, see
+    // below) also relies on inline script. Tightening to a
+    // nonce-based CSP is tracked as follow-up work; getting CSP
+    // present at all is the immediate gain.
     // HyperPay COPYandPAY (Phase payments PR #120) loads paymentWidgets.js and
     // 3DS / redirect frames from *.oppwa.com. Only widen the CSP when payments
     // are actually enabled, so the surface stays closed while the flag is off.

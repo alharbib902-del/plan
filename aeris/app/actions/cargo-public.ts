@@ -9,6 +9,7 @@ import {
   checkPublicActionRateLimit,
   recordPublicActionAttempt,
 } from '@/lib/rate-limit/public-action';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 11 PR 1 — public cargo intake Server Action.
@@ -38,17 +39,6 @@ export type CargoPublicActionFailure = {
 
 function isCargoDisabled(): boolean {
   return process.env.ENABLE_CARGO !== 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 async function clientIp(): Promise<string | null> {

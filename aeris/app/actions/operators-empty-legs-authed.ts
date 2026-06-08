@@ -15,6 +15,7 @@ import type {
   PublishEmptyLegResult,
   UpdateEmptyLegPriceResult,
 } from '@/lib/empty-legs/types';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 8 PR 2c.1 — session-based operator empty-legs Server
@@ -57,17 +58,6 @@ export type OperatorAuthedActionFailure = {
 
 function isPortalFlagDisabled(): boolean {
   return process.env.ENABLE_OPERATOR_PORTAL === 'false';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 function revalidateOperatorLegPaths(legId?: string): void {

@@ -5,6 +5,7 @@ import { headers } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   PUBLIC_ACTION_LIMITS,
+  accountActorIdentity,
   actorIdentityFromHeaders,
   evaluatePublicActionRateLimit,
   fingerprintPublicActionActor,
@@ -52,10 +53,20 @@ type PublicActionAttemptStore = {
 };
 
 export type PublicActionRateLimitCheck =
-  | { ok: true; actorFingerprint: string }
+  | {
+      ok: true;
+      actorFingerprint: string;
+      /**
+       * SEC-01 — present only when the caller passed an
+       * `accountKey`. Lets recordPublicActionAttempt write the
+       * second (per-account) ledger row alongside the IP row.
+       */
+      accountFingerprint?: string;
+    }
   | {
       ok: false;
       actorFingerprint: string;
+      accountFingerprint?: string;
       reason:
         | Exclude<PublicActionRateLimitVerdict, { ok: true }>['reason']
         | 'storage_error'
@@ -91,6 +102,46 @@ async function currentActorFingerprint(
   return fingerprintPublicActionActor(identity, action, secret);
 }
 
+/**
+ * SEC-01 — fingerprint for the per-account bucket. Derived from
+ * the submitted login email via the SAME per-action HMAC helper
+ * (so the same email appears as different fingerprints across
+ * actions). Returns null when no usable secret or accountKey is
+ * present so the caller silently degrades to IP-only throttling.
+ */
+function accountFingerprintFor(
+  action: PublicAction,
+  accountKey: string | null | undefined
+): string | null {
+  const secret = fingerprintSecret();
+  if (!secret) return null;
+  const identity = accountActorIdentity(accountKey);
+  if (!identity) return null;
+  return fingerprintPublicActionActor(identity, action, secret);
+}
+
+/** Single indexed read of the recent attempt ledger for one fingerprint. */
+async function loadRecentAttempts(
+  action: PublicAction,
+  fingerprint: string,
+  since: string
+): Promise<
+  | { ok: true; rows: PublicActionAttemptRow[] }
+  | { ok: false }
+> {
+  const { data, error } = await publicActionStore()
+    .from(TABLE)
+    .select('outcome, attempted_at')
+    .eq('action', action)
+    .eq('actor_fingerprint', fingerprint)
+    .gte('attempted_at', since);
+  if (error) {
+    console.error('[public-action-rate-limit] check failed', { action, error });
+    return { ok: false };
+  }
+  return { ok: true, rows: normalizeRows(data) };
+}
+
 function normalizeRows(rows: unknown[] | null): PublicActionAttemptRow[] {
   return (rows ?? []).flatMap((row) => {
     if (!row || typeof row !== 'object') return [];
@@ -110,8 +161,19 @@ function normalizeRows(rows: unknown[] | null): PublicActionAttemptRow[] {
   });
 }
 
+/**
+ * @param accountKey SEC-01 — optional normalized account
+ *   identifier (the submitted login email). When present, a
+ *   SECOND bucket keyed on its `acct:`-prefixed HMAC fingerprint
+ *   is evaluated and the STRICTER of the two verdicts (IP-bucket
+ *   AND account-bucket) is returned. This closes credential-
+ *   stuffing against ONE account from rotating IPs, which the
+ *   IP-only bucket cannot catch. Omitted/blank → IP-only
+ *   throttling, unchanged.
+ */
 export async function checkPublicActionRateLimit(
-  action: PublicAction
+  action: PublicAction,
+  accountKey?: string | null
 ): Promise<PublicActionRateLimitCheck> {
   const config = PUBLIC_ACTION_LIMITS[action];
   const actorFingerprint = await currentActorFingerprint(action);
@@ -128,46 +190,102 @@ export async function checkPublicActionRateLimit(
     };
   }
 
+  const accountFingerprint = accountFingerprintFor(action, accountKey);
   const since = new Date(Date.now() - config.attemptWindowMs).toISOString();
 
-  const { data, error } = await publicActionStore()
-    .from(TABLE)
-    .select('outcome, attempted_at')
-    .eq('action', action)
-    .eq('actor_fingerprint', actorFingerprint)
-    .gte('attempted_at', since);
-
-  if (error) {
-    console.error('[public-action-rate-limit] check failed', { action, error });
+  // IP bucket — always evaluated (unchanged behaviour).
+  const ipRows = await loadRecentAttempts(action, actorFingerprint, since);
+  if (!ipRows.ok) {
     return {
       ok: false,
       actorFingerprint,
+      ...(accountFingerprint ? { accountFingerprint } : {}),
       reason: 'storage_error',
       retryAfterSeconds: 60,
     };
   }
+  const ipVerdict = evaluatePublicActionRateLimit(ipRows.rows, config);
+  if (!ipVerdict.ok) {
+    return {
+      ...ipVerdict,
+      ok: false,
+      actorFingerprint,
+      ...(accountFingerprint ? { accountFingerprint } : {}),
+    };
+  }
 
-  const verdict = evaluatePublicActionRateLimit(normalizeRows(data), config);
-  return verdict.ok
-    ? { ok: true, actorFingerprint }
-    : { ...verdict, ok: false, actorFingerprint };
+  // Account bucket — only when an accountKey was supplied.
+  if (accountFingerprint) {
+    const acctRows = await loadRecentAttempts(action, accountFingerprint, since);
+    if (!acctRows.ok) {
+      return {
+        ok: false,
+        actorFingerprint,
+        accountFingerprint,
+        reason: 'storage_error',
+        retryAfterSeconds: 60,
+      };
+    }
+    const acctVerdict = evaluatePublicActionRateLimit(acctRows.rows, config);
+    if (!acctVerdict.ok) {
+      return {
+        ...acctVerdict,
+        ok: false,
+        actorFingerprint,
+        accountFingerprint,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    actorFingerprint,
+    ...(accountFingerprint ? { accountFingerprint } : {}),
+  };
 }
 
+/**
+ * @param accountFingerprint SEC-01 — when present (the value
+ *   returned by checkPublicActionRateLimit for an accountKey
+ *   call), the same outcome is ALSO recorded under the per-
+ *   account bucket so its window stays in sync with the IP
+ *   window. Both rows share the `action` + `outcome`; they
+ *   differ only by `actor_fingerprint`, which the existing
+ *   (action, actor_fingerprint, attempted_at) index already
+ *   serves.
+ */
 export async function recordPublicActionAttempt(
   action: PublicAction,
   actorFingerprint: string,
-  outcome: PublicActionAttemptOutcome
+  outcome: PublicActionAttemptOutcome,
+  accountFingerprint?: string
 ): Promise<void> {
-  if (actorFingerprint === 'unknown') return;
-  const { error } = await publicActionStore().from(TABLE).insert({
-    action,
-    actor_fingerprint: actorFingerprint,
-    outcome,
-  });
-  if (error) {
-    console.error('[public-action-rate-limit] record failed', {
+  const store = publicActionStore();
+  if (actorFingerprint !== 'unknown') {
+    const { error } = await store.from(TABLE).insert({
       action,
-      error,
+      actor_fingerprint: actorFingerprint,
+      outcome,
     });
+    if (error) {
+      console.error('[public-action-rate-limit] record failed', {
+        action,
+        error,
+      });
+    }
+  }
+
+  if (accountFingerprint && accountFingerprint !== 'unknown') {
+    const { error } = await store.from(TABLE).insert({
+      action,
+      actor_fingerprint: accountFingerprint,
+      outcome,
+    });
+    if (error) {
+      console.error('[public-action-rate-limit] account record failed', {
+        action,
+        error,
+      });
+    }
   }
 }

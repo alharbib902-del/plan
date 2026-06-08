@@ -33,6 +33,7 @@ import {
   adminUploadOperatorDocumentSchema,
   adminConvertPhase7StubSchema,
 } from '@/lib/validators/operators';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 8 PR 2b — 9 admin Server Actions for the operator
@@ -57,17 +58,6 @@ export type AdminOperatorActionFailure = {
   error: string;
   field_errors?: Record<string, string>;
 };
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
-}
 
 function isAdminFlagDisabled(): boolean {
   return process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'false';

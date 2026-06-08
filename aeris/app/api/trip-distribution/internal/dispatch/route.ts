@@ -159,10 +159,6 @@ export async function POST(req: NextRequest): Promise<Response> {
       `[trip-distribution.dispatch] structured decline: ${result.error} for trip ${tripRequestId}`,
       result
     );
-  } else {
-    console.info(
-      `[trip-distribution.dispatch] dispatched trip=${tripRequestId} round=${result.round_id} count=${result.dispatched_count}`
-    );
   }
 
   return NextResponse.json(result, { status: 200 });

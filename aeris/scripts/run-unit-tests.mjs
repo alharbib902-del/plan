@@ -22,6 +22,18 @@ if (suites.length === 0) {
   process.exit(1);
 }
 
+// Run the tsx suites under the `react-server` export condition so that
+// `import 'server-only'` resolves to server-only/empty.js (a no-op) instead
+// of its throwing default entry. Several library modules under test (e.g.
+// lib/supabase/admin.ts) are marked `import 'server-only'`; without this
+// condition tsx cannot load them outside the Next build. The flag is
+// appended to NODE_OPTIONS (preserving any caller value) and inherited by
+// the spawned `npm run` -> `tsx` child processes.
+const childEnv = {
+  ...process.env,
+  NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --conditions=react-server`.trim(),
+};
+
 console.log(`Running ${suites.length} unit-test suites...\n`);
 const failed = [];
 
@@ -30,6 +42,7 @@ for (const name of suites) {
     cwd: root,
     shell: true,
     encoding: 'utf8',
+    env: childEnv,
   });
   if (res.status === 0) {
     console.log(`  ok    ${name}`);

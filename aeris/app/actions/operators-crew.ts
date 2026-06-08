@@ -9,6 +9,7 @@ import {
   updateCrewSchema,
   setCrewAvailabilitySchema,
 } from '@/lib/operators/validators/crew';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 14 — operator crew Server Actions (crew_members CRUD).
@@ -24,17 +25,6 @@ export type CrewActionFailure = {
   field_errors?: Record<string, string>;
 };
 export type CrewActionResult = { ok: true } | CrewActionFailure;
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
-}
 
 type LooseRpcClient = {
   rpc: (

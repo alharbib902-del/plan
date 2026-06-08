@@ -16,6 +16,7 @@ import {
   mintEmptyLegSessionToken,
 } from '@/lib/operator/empty-leg-session-token';
 import type { Phase7OperatorStubRow } from '@/lib/empty-legs/types';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 7 PR 2c — admin Server Actions for the operator-
@@ -42,17 +43,6 @@ export type AdminStubActionFailure = {
   error: string;
   field_errors?: Record<string, string>;
 };
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
-}
 
 function isAdminFlagDisabled(): boolean {
   return process.env.ENABLE_EMPTY_LEGS_ADMIN_UI === 'false';

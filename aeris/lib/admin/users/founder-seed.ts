@@ -137,9 +137,5 @@ export async function tryFounderSeed(input: {
     return { ok: false, reason: 'insert_failed' };
   }
 
-  console.info('[founder-seed] founder row created', {
-    admin_user_id: inserted.user.id,
-    email: inserted.user.email,
-  });
   return { ok: true, admin_user_id: inserted.user.id };
 }

@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOperatorSession } from '@/lib/operators/auth';
 import { cargoOfferSchema } from '@/lib/cargo/validators/cargo-offer';
 import { withdrawOfferSchema } from '@/lib/cargo/validators/cargo-actions';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 11 PR 2 — operator cargo Server Actions.
@@ -45,17 +46,6 @@ export type CargoOperatorActionFailure = {
 
 function isCargoDisabled(): boolean {
   return process.env.ENABLE_CARGO !== 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 type LooseRpcClient = {

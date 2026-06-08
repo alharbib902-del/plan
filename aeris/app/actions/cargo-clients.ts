@@ -12,6 +12,7 @@ import {
   declineOfferSchema,
   cancelRequestSchema,
 } from '@/lib/cargo/validators/cargo-actions';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 11 PR 2 — authenticated client cargo Server Actions.
@@ -52,17 +53,6 @@ export type CargoClientsActionFailure = {
 
 function isCargoDisabled(): boolean {
   return process.env.ENABLE_CARGO !== 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 async function clientIp(): Promise<string | null> {

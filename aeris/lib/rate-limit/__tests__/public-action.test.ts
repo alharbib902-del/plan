@@ -13,6 +13,7 @@ import { strict as assert } from 'node:assert';
 
 import {
   PUBLIC_ACTION_LIMITS,
+  accountActorIdentity,
   actorIdentityFromHeaders,
   evaluatePublicActionRateLimit,
   fingerprintPublicActionActor,
@@ -342,6 +343,104 @@ test('failureWindow < attemptWindow for every action', () => {
       `${action} failureWindow >= attemptWindow`
     );
   }
+});
+
+// ============================================================
+// SEC-01 — per-account (email) bucket
+// ============================================================
+
+const ACCT_SECRET = 'test-secret-32-bytes-long-aaaaaa';
+
+test('accountActorIdentity normalises (trim + lowercase) + acct: prefix', () => {
+  assert.equal(accountActorIdentity('  User@X.COM '), 'acct:user@x.com');
+  assert.equal(accountActorIdentity('a@b.co'), 'acct:a@b.co');
+});
+
+test('accountActorIdentity returns null for blank/missing (→ IP-only)', () => {
+  assert.equal(accountActorIdentity(null), null);
+  assert.equal(accountActorIdentity(undefined), null);
+  assert.equal(accountActorIdentity(''), null);
+  assert.equal(accountActorIdentity('   '), null);
+});
+
+test('account fingerprint differs from the IP fingerprint (distinct buckets)', () => {
+  // Same action + secret, but the account identity is a different
+  // string than the IP identity → a SEPARATE ledger row, so the
+  // two buckets never collide.
+  const ipFp = fingerprintPublicActionActor(
+    'ip:203.0.113.7',
+    'client_login',
+    ACCT_SECRET
+  );
+  const acctFp = fingerprintPublicActionActor(
+    accountActorIdentity('victim@aeris.sa')!,
+    'client_login',
+    ACCT_SECRET
+  );
+  assert.notEqual(ipFp, acctFp);
+  assert.equal(acctFp.length, 64);
+  assert.ok(!acctFp.includes('victim@aeris.sa'));
+});
+
+test('same email (any casing) → stable account fingerprint', () => {
+  const a = fingerprintPublicActionActor(
+    accountActorIdentity('Victim@Aeris.SA')!,
+    'client_login',
+    ACCT_SECRET
+  );
+  const b = fingerprintPublicActionActor(
+    accountActorIdentity(' victim@aeris.sa ')!,
+    'client_login',
+    ACCT_SECRET
+  );
+  assert.equal(a, b);
+});
+
+test('same email across actions → different account fingerprints', () => {
+  const onClient = fingerprintPublicActionActor(
+    accountActorIdentity('a@b.co')!,
+    'client_login',
+    ACCT_SECRET
+  );
+  const onOperator = fingerprintPublicActionActor(
+    accountActorIdentity('a@b.co')!,
+    'operator_login',
+    ACCT_SECRET
+  );
+  assert.notEqual(onClient, onOperator);
+});
+
+test('stricter-of-two: IP under cap but account over cap → rate_limited', () => {
+  // Models the binding's combine step: rotating IPs keep each IP
+  // bucket low, but every attempt lands in the SAME account bucket,
+  // which trips the failure cap. The binding returns the stricter
+  // verdict (rate_limited if EITHER bucket is over).
+  const cfg = PUBLIC_ACTION_LIMITS.client_login;
+  const ipRows = [
+    { outcome: 'auth_failed' as const, attempted_at: minutesAgo(1) },
+  ];
+  const accountRows = Array.from({ length: cfg.maxFailures }, (_, i) => ({
+    outcome: 'auth_failed' as const,
+    attempted_at: minutesAgo(i + 1),
+  }));
+
+  const ipVerdict = evaluatePublicActionRateLimit(ipRows, cfg, NOW);
+  const accountVerdict = evaluatePublicActionRateLimit(accountRows, cfg, NOW);
+  const combinedOk = ipVerdict.ok && accountVerdict.ok;
+
+  assert.equal(ipVerdict.ok, true);
+  assert.equal(accountVerdict.ok, false);
+  assert.equal(combinedOk, false);
+});
+
+test('stricter-of-two: both buckets under cap → ok', () => {
+  const cfg = PUBLIC_ACTION_LIMITS.client_login;
+  const rows = [
+    { outcome: 'auth_failed' as const, attempted_at: minutesAgo(1) },
+  ];
+  const ipVerdict = evaluatePublicActionRateLimit(rows, cfg, NOW);
+  const accountVerdict = evaluatePublicActionRateLimit(rows, cfg, NOW);
+  assert.equal(ipVerdict.ok && accountVerdict.ok, true);
 });
 
 // ============================================================

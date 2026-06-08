@@ -49,6 +49,24 @@ export function fingerprintAdminLoginActor(
     .digest('hex');
 }
 
+/**
+ * SEC-01 — per-account rate-limit identity for admin login.
+ *
+ * The IP bucket keys on `ip:<addr>`, so credential-stuffing the
+ * founder's email from rotating IPs never trips it. This bucket
+ * keys on the account instead; fed through
+ * `fingerprintAdminLoginActor` it becomes an `acct:`-prefixed
+ * HMAC — the raw email is NEVER stored. Returns `null` for
+ * blank/missing input so the caller falls back to IP-only.
+ */
+export function accountActorIdentity(
+  accountKey: string | null | undefined
+): string | null {
+  const normalized = accountKey?.trim().toLowerCase();
+  if (!normalized) return null;
+  return `acct:${normalized}`;
+}
+
 export function firstForwardedIp(value: string | null): string | null {
   const first = value?.split(',')[0]?.trim();
   return first && first.length > 0 ? first : null;
