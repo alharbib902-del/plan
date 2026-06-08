@@ -1,8 +1,6 @@
-/* Fonts — must precede @tailwind so the expanded output keeps the
-   @import at the top of the stylesheet (per CSS spec + Next 16
-   stricter PostCSS). */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
-
+/* Fonts are self-hosted via next/font (app/layout.tsx) and exposed
+   as the CSS variables --font-ibm-plex-arabic / --font-playfair-display
+   referenced below. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -34,7 +32,7 @@ html {
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: 'IBM Plex Sans Arabic', 'Inter', sans-serif;
+  font-family: var(--font-ibm-plex-arabic), 'IBM Plex Sans Arabic', sans-serif;
   font-weight: 400;
   line-height: 1.75;
   overflow-x: hidden;
@@ -70,12 +68,12 @@ body::before {
 
 /* Utility classes */
 .font-display {
-  font-family: 'Playfair Display', serif;
+  font-family: var(--font-playfair-display), 'Playfair Display', serif;
   letter-spacing: -0.01em;
 }
 
 .font-ar {
-  font-family: 'IBM Plex Sans Arabic', sans-serif;
+  font-family: var(--font-ibm-plex-arabic), 'IBM Plex Sans Arabic', sans-serif;
 }
 
 .gold-text {
