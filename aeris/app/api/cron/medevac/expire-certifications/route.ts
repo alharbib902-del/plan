@@ -136,7 +136,20 @@ type LooseAudit = {
 // so the warning-cascade + enforcement-flip + renewal-reset
 // logic is testable in isolation (medical-cert-expiry.test.ts).
 
+// P0 fix (review 2026-06-08) — Vercel Cron invokes scheduled paths via GET;
+// a POST-only handler 405s so expired medical certs were never enforced
+// (expired-cert aircraft stayed dispatch-eligible). Expose GET (the
+// scheduler's method) and keep POST for the documented manual/curl trigger.
+// Both methods share one handler.
+export async function GET(req: NextRequest): Promise<Response> {
+  return handler(req);
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
+  return handler(req);
+}
+
+async function handler(req: NextRequest): Promise<Response> {
   const auth = verifyCronAuth(req.headers);
   if (!auth.ok) return unauthorizedJsonResponse();
 

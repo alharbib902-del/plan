@@ -127,7 +127,19 @@ type LooseUpdateClient = {
   };
 };
 
+// P0 fix (review 2026-06-08) — Vercel Cron invokes scheduled paths via GET;
+// a POST-only handler 405s so this drain never ran. Expose GET (the
+// scheduler's method) and keep POST for the documented manual/curl trigger
+// (PHASE-11 spec §5). Both methods share one handler.
+export async function GET(req: NextRequest): Promise<Response> {
+  return handler(req);
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
+  return handler(req);
+}
+
+async function handler(req: NextRequest): Promise<Response> {
   const auth = verifyCronAuth(req.headers);
   if (!auth.ok) return unauthorizedJsonResponse();
 
