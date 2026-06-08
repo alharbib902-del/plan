@@ -67,6 +67,7 @@
     "test:admin-mfa-challenge-rate-limit": "tsx lib/admin/mfa/__tests__/challenge-rate-limit.test.ts",
     "test:monitoring-sentry-options": "tsx lib/monitoring/__tests__/sentry-options.test.ts",
     "test:monitoring-operational": "tsx lib/monitoring/__tests__/operational.test.ts",
+    "test:cron-get-contract": "tsx app/api/cron/__tests__/cron-get-contract.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "format": "prettier --write .",
