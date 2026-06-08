@@ -20,8 +20,8 @@
 -- trg_bookings_paid_state_immutable_after_paid trigger binding (no DROP
 -- needed — the function body is replaced in place).
 --
--- NOT YET APPLIED TO PROD — apply via the runner + refresh
--- reports/live-schema-compact.json snapshot.
+-- APPLIED TO PROD 2026-06-08 (via the migration-runner over the session
+-- pooler; reports/live-schema-compact.json snapshot refreshed).
 -- =============================================================
 
 CREATE OR REPLACE FUNCTION reject_paid_state_mutation_after_paid()

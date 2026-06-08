@@ -14,8 +14,8 @@
 -- Forward-only and idempotent (IF EXISTS); the explicit (uuid) arg list
 -- targets the single overload defined in the initial schema.
 --
--- NOT YET APPLIED TO PROD — apply via the runner + refresh
--- reports/live-schema-compact.json snapshot.
+-- APPLIED TO PROD 2026-06-08 (via the migration-runner over the session
+-- pooler; reports/live-schema-compact.json snapshot refreshed).
 -- =============================================================
 
 DROP FUNCTION IF EXISTS is_admin(uuid);

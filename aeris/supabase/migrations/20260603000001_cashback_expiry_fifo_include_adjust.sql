@@ -25,8 +25,8 @@
 -- Still emits ONE `expire` event per client per run with the
 -- FIFO-correct unconsumed-expired total.
 --
--- NOT YET APPLIED TO PROD — apply via the runner + refresh
--- reports/live-schema-compact.json snapshot.
+-- APPLIED TO PROD 2026-06-08 (via the migration-runner over the session
+-- pooler; reports/live-schema-compact.json snapshot refreshed).
 -- =============================================================
 
 CREATE OR REPLACE FUNCTION expire_old_loyalty_credits()
