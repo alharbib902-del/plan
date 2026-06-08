@@ -1128,9 +1128,6 @@
       "geom:public.geometry",
       "ords:cstring"
     ],
-    "is_admin": [
-      "user_id:uuid"
-    ],
     "postgis_libprotobuf_version": [
       "args:?"
     ],
