@@ -119,7 +119,7 @@ export default async function OperatorCargoListPage() {
                     {formatDateAr(row.pickup_date)}
                   </td>
                   <td className="px-4 py-3 text-sm text-ink-secondary">
-                    <span dir="ltr">{formatSAR(row.estimated_value_sar)} SAR</span>
+                    <span dir="ltr">{formatSAR(row.estimated_value_sar)} ريال</span>
                   </td>
                   <td className="px-4 py-3">
                     {row.pending_offer_from_me ? (

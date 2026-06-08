@@ -17,6 +17,7 @@ import {
   evaluatePublicActionRateLimit,
   fingerprintPublicActionActor,
   firstForwardedIp,
+  lastForwardedIp,
 } from '@/lib/rate-limit/public-action-core';
 
 let passed = 0;
@@ -45,7 +46,7 @@ const minutesAgo = (m: number) =>
   new Date(NOW.getTime() - m * 60 * 1000).toISOString();
 
 // ============================================================
-// firstForwardedIp
+// firstForwardedIp / lastForwardedIp
 // ============================================================
 
 test('firstForwardedIp picks the first comma-separated entry', () => {
@@ -59,23 +60,36 @@ test('firstForwardedIp returns null for empty or null', () => {
   assert.equal(firstForwardedIp('   '), null);
 });
 
+test('lastForwardedIp picks the rightmost (platform-appended) hop', () => {
+  assert.equal(lastForwardedIp('1.2.3.4, 5.6.7.8'), '5.6.7.8');
+  assert.equal(lastForwardedIp('1.2.3.4, 5.6.7.8, 9.9.9.9'), '9.9.9.9');
+  assert.equal(lastForwardedIp('  9.9.9.9 '), '9.9.9.9');
+});
+
+test('lastForwardedIp returns null for empty or null', () => {
+  assert.equal(lastForwardedIp(null), null);
+  assert.equal(lastForwardedIp(''), null);
+  assert.equal(lastForwardedIp('   '), null);
+});
+
 // ============================================================
-// actorIdentityFromHeaders
+// actorIdentityFromHeaders — IP-spoofing-resistant precedence
 // ============================================================
 
-test('prefers forwardedFor first IP', () => {
+test('prefers x-vercel-forwarded-for (platform-trusted client IP)', () => {
   const id = actorIdentityFromHeaders({
+    vercelForwardedFor: '203.0.113.7',
     forwardedFor: '1.2.3.4, 5.6.7.8',
     realIp: '9.9.9.9',
     cfConnectingIp: '8.8.8.8',
     userAgent: 'Mozilla',
   });
-  assert.equal(id, 'ip:1.2.3.4');
+  assert.equal(id, 'ip:203.0.113.7');
 });
 
-test('falls back to realIp when forwardedFor missing', () => {
+test('falls back to realIp when vercel header missing', () => {
   const id = actorIdentityFromHeaders({
-    forwardedFor: null,
+    forwardedFor: '1.2.3.4, 5.6.7.8',
     realIp: '9.9.9.9',
     cfConnectingIp: '8.8.8.8',
     userAgent: 'Mozilla',
@@ -83,14 +97,27 @@ test('falls back to realIp when forwardedFor missing', () => {
   assert.equal(id, 'ip:9.9.9.9');
 });
 
-test('falls back to cfConnectingIp third', () => {
+test('falls back to cfConnectingIp before raw XFF', () => {
   const id = actorIdentityFromHeaders({
-    forwardedFor: null,
+    forwardedFor: '1.2.3.4, 5.6.7.8',
     realIp: null,
     cfConnectingIp: '8.8.8.8',
     userAgent: 'Mozilla',
   });
   assert.equal(id, 'ip:8.8.8.8');
+});
+
+test('raw XFF uses RIGHTMOST hop — a spoofed leftmost token is ignored', () => {
+  // Attacker injects "X-Forwarded-For: 1.1.1.1" hoping to key the
+  // limiter on a victim IP; Vercel appends the real client IP last,
+  // so we must bucket on the rightmost hop, not the leftmost.
+  const id = actorIdentityFromHeaders({
+    forwardedFor: '1.1.1.1, 203.0.113.55',
+    realIp: null,
+    cfConnectingIp: null,
+    userAgent: 'Mozilla',
+  });
+  assert.equal(id, 'ip:203.0.113.55');
 });
 
 test('falls back to UA bucket when no IP available', () => {

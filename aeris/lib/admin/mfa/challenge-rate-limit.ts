@@ -86,6 +86,7 @@ async function currentActorFingerprint(
   const env = requireAdminEnv();
   const h = await headers();
   const identity = actorIdentityFromHeaders({
+    vercelForwardedFor: h.get('x-vercel-forwarded-for'),
     forwardedFor: h.get('x-forwarded-for'),
     realIp: h.get('x-real-ip'),
     cfConnectingIp: h.get('cf-connecting-ip'),

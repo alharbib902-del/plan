@@ -104,7 +104,7 @@ export default async function OperatorMyCargoOffersPage() {
                     {formatDateTimeAr(o.created_at)}
                   </td>
                   <td className="px-4 py-3 text-sm text-ink-secondary">
-                    <span dir="ltr">{formatSAR(o.total_price_sar)} SAR</span>
+                    <span dir="ltr">{formatSAR(o.total_price_sar)} ريال</span>
                   </td>
                   <td className="font-ar px-4 py-3 text-sm text-ink-secondary">
                     {cargoAr.statusLabels[o.status] ?? o.status}

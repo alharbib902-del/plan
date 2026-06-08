@@ -11,6 +11,7 @@ import {
   listDeliveredLegIds,
 } from '@/lib/empty-legs/alerts';
 import { sendClientEmptyLegMatchEmail } from '@/lib/notifications/client-empty-leg-email';
+import { captureCronError } from '@/lib/monitoring/operational';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 
 /**
@@ -54,6 +55,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     alerts = await listActiveAlertsWithClient(500);
   } catch (err) {
     console.error('[cron.price-alerts] load alerts failed', err);
+    await captureCronError('empty-legs.price-alerts', err);
     return NextResponse.json({ ok: false, error: 'load_failed' }, { status: 200 });
   }
 

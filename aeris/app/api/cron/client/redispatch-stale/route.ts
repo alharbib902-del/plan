@@ -6,6 +6,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 
 /**
  * Phase 9 PR 4 — `redispatch_stale_trip_requests` cron.
@@ -150,6 +151,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       '[cron.client.redispatch-stale] rpc threw',
       err
     );
+    await captureCronError('client.redispatch-stale', err);
     return NextResponse.json(
       { ok: false, error: 'rpc_threw' },
       { status: 200 }
@@ -158,6 +160,7 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   if (error) {
     console.error('[cron.client.redispatch-stale] rpc error', error);
+    await captureCronError('client.redispatch-stale', error);
     return NextResponse.json(
       { ok: false, error: 'rpc_failed' },
       { status: 200 }

@@ -59,7 +59,7 @@ export default async function OperatorEmptyLegsPage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-navy-card/40">
+        <div className="overflow-x-auto rounded-xl border border-border bg-navy-card/40">
           <table className="w-full text-right">
             <thead className="border-b border-border bg-navy-secondary/40">
               <tr>

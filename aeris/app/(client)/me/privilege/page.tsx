@@ -34,7 +34,7 @@ function formatSar(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return '—';
   const n = typeof value === 'string' ? Number(value) : value;
   if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' SAR';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ريال';
 }
 
 function formatDate(value: string | null | undefined): string {

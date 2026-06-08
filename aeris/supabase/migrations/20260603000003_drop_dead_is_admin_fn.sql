@@ -1,0 +1,21 @@
+-- SEC-03 — drop the dead pre-cutover Supabase-Auth is_admin() helper.
+--
+-- is_admin(user_id UUID DEFAULT auth.uid()) (20260422000001) was the
+-- RLS admin predicate for the original Supabase-Auth design: it resolves
+-- the caller via auth.uid() and checks users.role. Aeris moved to custom
+-- cookie+sha256 sessions (admin/operator/client) and deny-all RLS with
+-- service_role-only RPCs; identity comes from the session, never from
+-- auth.uid(). The promised "admin policies … using the is_admin()
+-- function" were never added, so the function has no live caller (only a
+-- stale comment references it). It is also a SECURITY DEFINER function
+-- with NO pinned search_path — a dormant search-path-hijack footprint.
+-- Removing it eliminates that surface.
+--
+-- Forward-only and idempotent (IF EXISTS); the explicit (uuid) arg list
+-- targets the single overload defined in the initial schema.
+--
+-- APPLIED TO PROD 2026-06-08 (via the migration-runner over the session
+-- pooler; reports/live-schema-compact.json snapshot refreshed).
+-- =============================================================
+
+DROP FUNCTION IF EXISTS is_admin(uuid);

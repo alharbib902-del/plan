@@ -143,6 +143,8 @@ export function OperatorDetailApproved({ operator }: { operator: OperatorRow }) 
     <div className="space-y-6">
       {toast ? (
         <div
+          role={toast.kind === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
           className={`font-ar rounded-xl border px-4 py-3 text-sm ${
             toast.kind === 'success'
               ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'

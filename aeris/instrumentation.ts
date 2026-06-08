@@ -11,6 +11,19 @@ import * as Sentry from '@sentry/nextjs';
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     await import('./sentry.server.config');
+    // Boot-time env presence check (REA ops monitoring). Run only in the
+    // Node.js runtime — that is where the server-only secrets live (the edge
+    // runtime has a restricted env) and where the `'server-only'` module is
+    // importable. Reports a misconfigured deploy as ONE Sentry error; it never
+    // throws, so a missing var can never crash boot (features fail-closed).
+    const { findMissingRequiredEnv } = await import('./lib/config/env-validation');
+    const missing = findMissingRequiredEnv();
+    if (missing.length > 0) {
+      Sentry.captureException(
+        new Error(`Missing required env vars at boot: ${missing.join(', ')}`),
+        { level: 'error', tags: { boot: true, env_validation: true } }
+      );
+    }
   }
   if (process.env.NEXT_RUNTIME === 'edge') {
     await import('./sentry.edge.config');

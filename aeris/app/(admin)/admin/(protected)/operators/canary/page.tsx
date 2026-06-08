@@ -521,7 +521,7 @@ function CronHealthCard({ rows }: { rows: CronTickHealth[] }) {
       <p className="font-ar mb-4 text-xs text-ink-muted">
         {operatorsAr.canary.cronSubtitle}
       </p>
-      <div className="overflow-hidden rounded-lg border border-border bg-navy-secondary/30">
+      <div className="overflow-x-auto rounded-lg border border-border bg-navy-secondary/30">
         <table className="w-full text-right">
           <thead className="border-b border-border bg-navy-secondary/40">
             <tr>

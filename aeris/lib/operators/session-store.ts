@@ -2,7 +2,11 @@ import 'server-only';
 
 import { unstable_noStore as noStore } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
-import type { OperatorSessionRow, OperatorRow } from '@/types/database';
+import type {
+  OperatorSessionRow,
+  OperatorRow,
+  EmptyLegStatus,
+} from '@/types/database';
 
 /**
  * Phase 8 PR 2c — DB helpers for operator sessions + the
@@ -71,23 +75,26 @@ export async function getOperatorDashboardStats(
 ): Promise<OperatorDashboardStats> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from('empty_legs')
-    .select('status')
-    .eq('operator_id', operatorId);
-  if (error) {
-    console.error('[operators.session-store] getOperatorDashboardStats', error);
-    throw new Error(`getOperatorDashboardStats failed: ${error.message}`);
-  }
-  const stats: OperatorDashboardStats = {
-    active_legs: 0,
-    reserved_legs: 0,
-    sold_legs: 0,
+  // Count-only head queries: the DB returns the count per status
+  // instead of shipping every matching row to be tallied in JS.
+  const countByStatus = async (
+    status: NonNullable<EmptyLegStatus>
+  ): Promise<number> => {
+    const { count, error } = await client
+      .from('empty_legs')
+      .select('*', { count: 'exact', head: true })
+      .eq('operator_id', operatorId)
+      .eq('status', status);
+    if (error) {
+      console.error('[operators.session-store] getOperatorDashboardStats', error);
+      throw new Error(`getOperatorDashboardStats failed: ${error.message}`);
+    }
+    return count ?? 0;
   };
-  for (const row of data ?? []) {
-    if (row.status === 'available') stats.active_legs += 1;
-    else if (row.status === 'reserved') stats.reserved_legs += 1;
-    else if (row.status === 'sold') stats.sold_legs += 1;
-  }
-  return stats;
+  const [active_legs, reserved_legs, sold_legs] = await Promise.all([
+    countByStatus('available'),
+    countByStatus('reserved'),
+    countByStatus('sold'),
+  ]);
+  return { active_legs, reserved_legs, sold_legs };
 }
