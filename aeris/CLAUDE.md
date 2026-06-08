@@ -28,7 +28,8 @@ Plus: referrals, reviews, support tickets, admin analytics.
 - **TailwindCSS** with a custom navy/gold/ink theme (see Design tokens); **Zod** for validation (`lib/validators/`, `lib/*/validators/`).
 - **Supabase** Postgres + **PostgREST**. Hosting: **Vercel** (+ Vercel Cron). Email: **Resend**. WhatsApp: **wasenderapi** (transactional) + `wa.me` deep-links.
 
-> **NOT in use (don't assume):** Supabase Auth (we roll our own — see below), `shadcn`/Radix, Inngest (dead dependency, zero imports), Sentry (referenced in env only, not wired), Unifonic SMS (env exists, no call sites), TanStack Query. There is **no standard test runner** — tests are hand-rolled `tsx` scripts; only ~8 + `audit:db` run in CI.
+> **Wired:** Sentry error monitoring (`instrumentation.ts`, `sentry.server/edge.config.ts`, `instrumentation-client.ts`, `lib/monitoring/*`; fully a no-op until a DSN is set — see `.env.example`).
+> **NOT in use (don't assume):** Supabase Auth (we roll our own — see below), `shadcn`/Radix, Unifonic SMS (env exists, no call sites). There is **no standard test runner** — tests are hand-rolled `tsx` scripts auto-discovered by `scripts/run-unit-tests.mjs`; CI runs **all** `test:*` unit suites + `audit:db`.
 
 ---
 
@@ -99,7 +100,7 @@ Plus: referrals, reviews, support tickets, admin analytics.
 
 ## 🧪 Quality gates
 
-`npm run type-check` · `npm run lint:strict` (`--max-warnings 0`) · `npm run build` · `npm run audit:db`. CI (`.github/workflows/ci.yml`, at the **git root**, not `aeris/`) runs these + a subset of the `tsx` tests. Local Turbopack `next build` fails inside a git worktree with a `node_modules` junction (env-only) — rely on CI for the build there.
+`npm run type-check` · `npm run lint:strict` (`--max-warnings 0`) · `npm run build` · `npm run audit:db`. CI (`.github/workflows/ci.yml`, at the **git root**, not `aeris/`) runs these + **all** `test:*` unit suites (auto-discovered by `scripts/run-unit-tests.mjs`). Local Turbopack `next build` fails inside a git worktree with a `node_modules` junction (env-only) — rely on CI for the build there.
 
 ---
 

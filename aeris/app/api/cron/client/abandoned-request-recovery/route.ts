@@ -7,6 +7,7 @@ import {
 } from '@/lib/empty-legs/cron-auth';
 import { listRecoverableRequests } from '@/lib/clients/request-recovery';
 import { sendClientRequestRecoveryEmail } from '@/lib/notifications/client-request-recovery-email';
+import { captureCronError } from '@/lib/monitoring/operational';
 
 /**
  * Abandoned trip-request recovery cron.
@@ -53,6 +54,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     requests = await listRecoverableRequests(STALE_HOURS, 500);
   } catch (err) {
     console.error('[cron.request-recovery] load failed', err);
+    await captureCronError('client.abandoned-request-recovery', err);
     return NextResponse.json({ ok: false, error: 'load_failed' }, { status: 200 });
   }
 

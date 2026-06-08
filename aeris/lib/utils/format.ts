@@ -21,6 +21,7 @@ export function formatDateAr(date: Date | string) {
     day: 'numeric',
     calendar: 'gregory',
     numberingSystem: 'latn',
+    timeZone: 'Asia/Riyadh',
   }).format(d);
 }
 
@@ -34,6 +35,7 @@ export function formatTimeAr(date: Date | string) {
     minute: '2-digit',
     hour12: true,
     numberingSystem: 'latn',
+    timeZone: 'Asia/Riyadh',
   }).format(d);
 }
 

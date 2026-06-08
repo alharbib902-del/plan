@@ -52,10 +52,11 @@ const config: Config = {
         },
       },
       fontFamily: {
-        display: ['Playfair Display', 'serif'],
-        sans: ['Inter', 'IBM Plex Sans Arabic', 'sans-serif'],
-        arabic: ['IBM Plex Sans Arabic', 'sans-serif'],
-        inter: ['Inter', 'sans-serif'],
+        // Self-hosted via next/font (app/layout.tsx); the CSS vars
+        // come first with the physical names as fallbacks.
+        display: ['var(--font-playfair-display)', 'Playfair Display', 'serif'],
+        sans: ['var(--font-ibm-plex-arabic)', 'IBM Plex Sans Arabic', 'sans-serif'],
+        arabic: ['var(--font-ibm-plex-arabic)', 'IBM Plex Sans Arabic', 'sans-serif'],
         mono: ['Consolas', 'monospace'],
       },
       fontSize: {

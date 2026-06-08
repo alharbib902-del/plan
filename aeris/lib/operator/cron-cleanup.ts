@@ -13,6 +13,7 @@ import {
   unauthorizedJsonResponse,
   verifyCronAuth,
 } from '@/lib/empty-legs/cron-auth';
+import { captureCronError } from '@/lib/monitoring/operational';
 
 /**
  * Phase 8 PR 2e — shared cleanup-cron runner.
@@ -95,6 +96,7 @@ export async function runOperatorCleanupCron(
       false,
       `rpc_threw: ${err instanceof Error ? err.message : 'unknown'}`
     );
+    await captureCronError(`operator.${jobName}`, err);
     return NextResponse.json(
       { ok: false, error: 'rpc_threw' },
       { status: 200 }
@@ -110,6 +112,7 @@ export async function runOperatorCleanupCron(
       false,
       `rpc_error: ${error.code ?? error.message ?? 'unknown'}`
     );
+    await captureCronError(`operator.${jobName}`, error);
     return NextResponse.json(
       { ok: false, error: 'rpc_failed' },
       { status: 200 }

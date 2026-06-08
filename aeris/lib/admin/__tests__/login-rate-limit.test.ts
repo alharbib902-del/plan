@@ -7,6 +7,7 @@ import {
   evaluateAdminLoginRateLimit,
   fingerprintAdminLoginActor,
   firstForwardedIp,
+  lastForwardedIp,
   type AdminLoginAttemptRow,
 } from '@/lib/admin/login-rate-limit-core';
 
@@ -23,21 +24,42 @@ function failures(count: number, minutes: number): AdminLoginAttemptRow[] {
   }));
 }
 
-test('firstForwardedIp returns only the closest forwarded address', () => {
+test('firstForwardedIp returns the leftmost forwarded address', () => {
   assert.equal(firstForwardedIp('203.0.113.10, 10.0.0.1'), '203.0.113.10');
   assert.equal(firstForwardedIp('  '), null);
   assert.equal(firstForwardedIp(null), null);
 });
 
-test('actorIdentityFromHeaders prefers forwarded IP over fallback headers', () => {
+test('lastForwardedIp returns the rightmost (platform-appended) hop', () => {
+  assert.equal(lastForwardedIp('203.0.113.10, 10.0.0.1'), '10.0.0.1');
+  assert.equal(lastForwardedIp('  '), null);
+  assert.equal(lastForwardedIp(null), null);
+});
+
+test('actorIdentityFromHeaders prefers the platform-trusted client IP', () => {
   assert.equal(
     actorIdentityFromHeaders({
-      forwardedFor: '203.0.113.10, 10.0.0.1',
+      vercelForwardedFor: '203.0.113.10',
+      forwardedFor: '1.1.1.1, 10.0.0.1',
       realIp: '198.51.100.2',
       cfConnectingIp: '198.51.100.3',
       userAgent: 'Mozilla',
     }),
     'ip:203.0.113.10'
+  );
+});
+
+test('actorIdentityFromHeaders keys raw XFF on the rightmost hop (spoof-resistant)', () => {
+  // A client-injected leftmost token (1.1.1.1) must not become the
+  // limiter key; Vercel appends the real client IP last.
+  assert.equal(
+    actorIdentityFromHeaders({
+      forwardedFor: '1.1.1.1, 198.51.100.9',
+      realIp: null,
+      cfConnectingIp: null,
+      userAgent: 'Mozilla',
+    }),
+    'ip:198.51.100.9'
   );
 });
 

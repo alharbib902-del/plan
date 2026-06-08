@@ -135,20 +135,42 @@ export function firstForwardedIp(value: string | null): string | null {
 }
 
 /**
+ * Last (rightmost) IP from a comma-separated X-Forwarded-For value.
+ *
+ * On Vercel the platform APPENDS the real client IP as the final
+ * XFF hop, so a client that injects `X-Forwarded-For: <victim>`
+ * only controls the leftmost tokens — the rightmost hop is the
+ * one the trusted proxy added. We key the limiter on that hop so
+ * the client can't spoof its identity to dodge the throttle.
+ */
+export function lastForwardedIp(value: string | null): string | null {
+  const parts = value?.split(',');
+  const last = parts?.[parts.length - 1]?.trim();
+  return last && last.length > 0 ? last : null;
+}
+
+/**
  * Builds the unique identity string for an anonymous public
- * caller. Prefers IP from Vercel/Cloudflare headers; falls back
- * to a UA-derived bucket so we never lose the throttle entirely.
+ * caller. Derives the client IP from platform-trusted sources
+ * first (`x-vercel-forwarded-for` / `x-real-ip` are edge-set and
+ * unforgeable; `cf-connecting-ip` is Cloudflare-trusted). Only as
+ * a last resort does it read the raw XFF, and then it takes the
+ * RIGHTMOST hop (platform-appended), never the client-controlled
+ * leftmost token. Falls back to a UA-derived bucket so we never
+ * lose the throttle entirely.
  */
 export function actorIdentityFromHeaders(headers: {
+  vercelForwardedFor?: string | null;
   forwardedFor?: string | null;
   realIp?: string | null;
   cfConnectingIp?: string | null;
   userAgent?: string | null;
 }): string {
   const ip =
-    firstForwardedIp(headers.forwardedFor ?? null) ??
+    firstForwardedIp(headers.vercelForwardedFor ?? null) ??
     headers.realIp?.trim() ??
-    headers.cfConnectingIp?.trim();
+    headers.cfConnectingIp?.trim() ??
+    lastForwardedIp(headers.forwardedFor ?? null);
 
   if (ip && ip.length > 0) {
     return `ip:${ip}`;

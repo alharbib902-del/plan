@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 function formatSar(value: string | number): string {
   const n = typeof value === 'string' ? Number(value) : value;
   if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' SAR';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ريال';
 }
 
 function formatDateTime(value: string): string {

@@ -2,10 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { requireOperatorSession } from '@/lib/operators/auth';
-import {
-  listMyOperatorMedevacOffers,
-  getBookedPatientNameForOffer,
-} from '@/lib/medevac/queries/operator-list';
+import { listMyOperatorMedevacOffers } from '@/lib/medevac/queries/operator-list';
+import { createAdminClient } from '@/lib/supabase/admin';
 import type {
   MedevacOfferRow,
   MedevacOfferStatus,
@@ -72,17 +70,50 @@ export default async function OperatorMedevacOffersPage() {
   // D8 (c) — for accepted offers, fetch the patient name from
   // bookings.customer_name_snapshot (the post-acceptance fanout
   // that accept_medevac_offer wrote). Other statuses keep
-  // patient-name redacted.
+  // patient-name redacted. One batched read over the accepted
+  // offer ids (was a per-offer N+1 lookup).
   const acceptedIds = offers
     .filter((o) => o.status === 'accepted')
     .map((o) => o.id);
   const patientNames = new Map<string, string>();
-  await Promise.all(
-    acceptedIds.map(async (id) => {
-      const name = await getBookedPatientNameForOffer(id);
-      if (name) patientNames.set(id, name);
-    })
-  );
+  if (acceptedIds.length > 0) {
+    type LooseBatchClient = {
+      from: (table: string) => {
+        select: (cols: string) => {
+          eq: (
+            col: string,
+            val: string
+          ) => {
+            in: (
+              col: string,
+              vals: string[]
+            ) => Promise<{
+              data: unknown;
+              error: { message?: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+    const loose = createAdminClient() as unknown as LooseBatchClient;
+    const { data, error } = await loose
+      .from('bookings')
+      .select('source_offer_id,customer_name_snapshot')
+      .eq('source_offer_table', 'medevac_offers')
+      .in('source_offer_id', acceptedIds);
+    if (error) {
+      console.error('[medevac.operator.offers] patient-name batch read failed', error);
+    } else {
+      for (const row of (data ?? []) as Array<{
+        source_offer_id?: string | null;
+        customer_name_snapshot?: string | null;
+      }>) {
+        if (row.source_offer_id && row.customer_name_snapshot) {
+          patientNames.set(row.source_offer_id, row.customer_name_snapshot);
+        }
+      }
+    }
+  }
 
   return (
     <section className="space-y-6">
