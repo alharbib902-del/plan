@@ -18,8 +18,8 @@ right server-only vs client-public split, in every environment
 
 | Prefix | Visibility | Where to use |
 |---|---|---|
-| `NEXT_PUBLIC_*` | Inlined into the **client** bundle. Treat as public. | Public site URL, anon Supabase key, public Mapbox token, public WhatsApp number, public PostHog key. |
-| `_no prefix_` (server-only) | Available only on the server (Server Components, Server Actions, Route Handlers, Edge functions). | Service role keys, Resend API key, admin password and signing secret, gateway secrets, Anthropic key, etc. |
+| `NEXT_PUBLIC_*` | Inlined into the **client** bundle. Treat as public. | Public site URL, anon Supabase key, public WhatsApp number, public Sentry DSN. |
+| `_no prefix_` (server-only) | Available only on the server (Server Components, Server Actions, Route Handlers, Edge functions). | Service role keys, Resend API key, admin password and signing secret, gateway secrets, etc. |
 
 **Rule of thumb:** if you would not screenshot the value into Slack,
 it does not get a `NEXT_PUBLIC_` prefix.
@@ -40,11 +40,10 @@ it does not get a `NEXT_PUBLIC_` prefix.
 | `LEAD_NOTIFICATION_TO` | server | optional | optional | optional | Defaults to `RESEND_FROM_EMAIL` if unset. |
 | `OPERATOR_TOKEN_SECRET` | server | **yes** for the operator offer URL to work | **yes** | **yes** | 32-byte hex (`openssl rand -hex 32`). **Different secret from `ADMIN_AUTH_SECRET`** — different lifecycle and blast radius. Required for `/admin/trips` dispatch to issue tokens, and for `/operator/offer/[token]` to verify them. |
 
-Other variables in `.env.example` (`ANTHROPIC_API_KEY`, `HYPERPAY_*`,
-`ZATCA_*`, `INNGEST_*`, `SENTRY_*`, `UNIFONIC_*`, `MAPBOX`, `POSTHOG`,
-`FLIGHTRADAR24_API_KEY`, `ACCUWEATHER_API_KEY`) are **not required**
-by Phase 1 + Phase 2 + Phase 4 and may be left unset until the
-corresponding phase ships.
+Other variables in `.env.example` (`HYPERPAY_*`, `ZATCA_*`,
+`INNGEST_*`, `SENTRY_*`, `UNIFONIC_*`, `FLIGHTRADAR24_API_KEY`,
+`ACCUWEATHER_API_KEY`) are **not required** by Phase 1 + Phase 2 +
+Phase 4 and may be left unset until the corresponding phase ships.
 
 ## Steps
 
@@ -70,7 +69,7 @@ corresponding phase ships.
        ```
        → No `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`,
        `ADMIN_INBOX_PASSWORD`, `ADMIN_AUTH_SECRET`,
-       `OPERATOR_TOKEN_SECRET`, `ANTHROPIC_API_KEY`, `HYPERPAY_*`,
+       `OPERATOR_TOKEN_SECRET`, `HYPERPAY_*`,
        `INNGEST_SIGNING_KEY`, or `SENTRY_AUTH_TOKEN` appears in
        this list. **Any of those in the public list is a P1
        incident — rotate immediately.**

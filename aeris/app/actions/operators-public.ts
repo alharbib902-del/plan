@@ -230,13 +230,19 @@ export async function operatorLogin(input: {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
   // SEC-02 — per-IP login rate-limit (credential stuffing / brute force).
-  const rl = await checkPublicActionRateLimit('operator_login');
+  // SEC-01 — also key a second bucket on the submitted account
+  // (email) so stuffing ONE account from rotating IPs trips the
+  // cap; the stricter of the IP/account verdicts applies. The raw
+  // email is read pre-validation (it is only HMAC-fingerprinted,
+  // never stored) — a blank/missing value degrades to IP-only.
+  const rl = await checkPublicActionRateLimit('operator_login', input.email);
   if (!rl.ok) {
     if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
       await recordPublicActionAttempt(
         'operator_login',
         rl.actorFingerprint,
-        'rate_limited'
+        'rate_limited',
+        rl.accountFingerprint
       );
     }
     return { ok: false, error: 'rate_limited' };
@@ -274,7 +280,8 @@ export async function operatorLogin(input: {
     await recordPublicActionAttempt(
       'operator_login',
       rl.actorFingerprint,
-      'auth_failed'
+      'auth_failed',
+      rl.accountFingerprint
     );
     return { ok: false, error: lookup.error ?? 'invalid_credentials' };
   }
@@ -288,7 +295,8 @@ export async function operatorLogin(input: {
     await recordPublicActionAttempt(
       'operator_login',
       rl.actorFingerprint,
-      'auth_failed'
+      'auth_failed',
+      rl.accountFingerprint
     );
     return { ok: false, error: 'invalid_credentials' };
   }
@@ -323,7 +331,8 @@ export async function operatorLogin(input: {
   await recordPublicActionAttempt(
     'operator_login',
     rl.actorFingerprint,
-    'success'
+    'success',
+    rl.accountFingerprint
   );
   return {
     ok: true,

@@ -199,6 +199,29 @@ export function fingerprintPublicActionActor(
     .digest('hex');
 }
 
+/**
+ * SEC-01 — per-account rate-limit identity.
+ *
+ * Builds the actor-identity string for the SECOND (account)
+ * bucket from the submitted login email. The IP bucket alone
+ * keys on `ip:<addr>`, so credential-stuffing one account from
+ * rotating IPs never trips it; this bucket keys on the account
+ * instead, so the stricter of the two verdicts applies.
+ *
+ * Returns `null` for blank/missing input so the caller silently
+ * falls back to IP-only throttling (backward-compatible). The
+ * email is normalised (trim + lowercase) here and fed through
+ * `fingerprintPublicActionActor`, which HMACs it — the raw email
+ * is NEVER stored, only its `acct:`-prefixed fingerprint.
+ */
+export function accountActorIdentity(
+  accountKey: string | null | undefined
+): string | null {
+  const normalized = accountKey?.trim().toLowerCase();
+  if (!normalized) return null;
+  return `acct:${normalized}`;
+}
+
 export function evaluatePublicActionRateLimit(
   attempts: PublicActionAttemptRow[],
   config: PublicActionRateLimitConfig,

@@ -22,12 +22,8 @@
   - اشتراك Pro ($20/شهر) للبريد
 - [ ] **Unifonic** — https://unifonic.com
   - حساب للـ SMS (للتحقق من OTP)
-- [ ] **Mapbox** — https://mapbox.com
-  - حساب مجاني (للخرائط لاحقاً)
 - [ ] **Sentry** — https://sentry.io
   - مشروع Next.js جديد
-- [ ] **PostHog** — https://posthog.com
-  - مشروع جديد (مجاني)
 
 #### ⏰ 9:00 - 10:00 — شراء الدومين والمتطلبات القانونية
 - [ ] شراء **aeris.sa** من [saudinic.sa](https://saudinic.sa)
@@ -148,7 +144,7 @@
 ## 📊 نهاية اليوم 1 — الإنجازات المتوقعة
 
 ### ✅ كل هذا يجب أن يكون جاهزاً:
-1. **حسابات جاهزة:** GitHub, Vercel, Supabase, Resend, Unifonic, Mapbox, Sentry, PostHog
+1. **حسابات جاهزة:** GitHub, Vercel, Supabase, Resend, Unifonic, Sentry
 2. **دومين مسجل:** aeris.sa (قد يكون قيد التفعيل)
 3. **HyperPay طلب مرسل:** في الانتظار
 4. **مشروع Next.js شغال:** على localhost

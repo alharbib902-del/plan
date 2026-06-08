@@ -91,9 +91,22 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
     throw err;
   }
 
-  const rateLimit = await checkAdminLoginRateLimit();
+  // SEC-01 — read the raw submitted email (pre-validation) so the
+  // rate-limiter can key a SECOND bucket on the targeted account.
+  // Credential-stuffing one admin from rotating IPs slips past the
+  // IP-only bucket; the account bucket catches it. The email is
+  // only HMAC-fingerprinted, never stored; a non-string/blank
+  // value degrades to IP-only throttling.
+  const rawEmail = formData.get('email');
+  const accountKey = typeof rawEmail === 'string' ? rawEmail : null;
+
+  const rateLimit = await checkAdminLoginRateLimit(accountKey);
   if (!rateLimit.ok) {
-    await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'rate_limited');
+    await recordAdminLoginAttempt(
+      rateLimit.actorFingerprint,
+      'rate_limited',
+      rateLimit.accountFingerprint
+    );
     return { ok: false, error: 'rate_limited' };
   }
 
@@ -102,7 +115,11 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
     password: formData.get('password'),
   });
   if (!parsed.success) {
-    await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'invalid_input');
+    await recordAdminLoginAttempt(
+      rateLimit.actorFingerprint,
+      'invalid_input',
+      rateLimit.accountFingerprint
+    );
     return { ok: false, error: 'invalid_input' };
   }
 
@@ -123,7 +140,8 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
   if (!verdict.ok) {
     await recordAdminLoginAttempt(
       rateLimit.actorFingerprint,
-      'invalid_password'
+      'invalid_password',
+      rateLimit.accountFingerprint
     );
     return { ok: false, error: 'invalid_credentials' };
   }
@@ -148,7 +166,8 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
     // invalid_credentials to match the anti-enumeration contract.
     await recordAdminLoginAttempt(
       rateLimit.actorFingerprint,
-      'invalid_password'
+      'invalid_password',
+      rateLimit.accountFingerprint
     );
     return { ok: false, error: 'invalid_credentials' };
   }
@@ -166,11 +185,16 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
   // for the full login is written there when MFA verifies.
   if (!issued.mfaPending) {
     await stampAdminUserLogin(verdict.user.id);
-    await recordAdminLoginAttempt(rateLimit.actorFingerprint, 'success');
+    await recordAdminLoginAttempt(
+      rateLimit.actorFingerprint,
+      'success',
+      rateLimit.accountFingerprint
+    );
   } else {
     await recordAdminLoginAttempt(
       rateLimit.actorFingerprint,
-      'password_ok_pending_mfa'
+      'password_ok_pending_mfa',
+      rateLimit.accountFingerprint
     );
   }
 

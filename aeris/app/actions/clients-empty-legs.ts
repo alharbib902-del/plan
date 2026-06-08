@@ -11,6 +11,7 @@ import {
   cancelMyEmptyLegReservationSchema,
   notificationPreferencesSchema,
 } from '@/lib/validators/clients';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 10 PR 1 — authenticated client Server Actions for the
@@ -43,17 +44,6 @@ export type ClientEmptyLegsActionFailure = {
 // Probes 21+22+23 pass.
 function isPortalDisabled(): boolean {
   return process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL !== 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 async function clientIp(): Promise<string | null> {

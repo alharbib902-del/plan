@@ -12,6 +12,7 @@ import {
   acceptOfferSchema,
   declineOfferSchema,
 } from '@/lib/validators/clients';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 9 PR 2 + PR 3 — authenticated trip-request Server
@@ -54,17 +55,6 @@ function isPortalDisabled(): boolean {
 
 function isAutoDistributionEnabled(): boolean {
   return process.env.ENABLE_TRIP_AUTO_DISTRIBUTION === 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 // Phase 9 PR 1 carry-over (convention #1): no Functions map

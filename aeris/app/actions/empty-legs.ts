@@ -24,6 +24,7 @@ import type {
   PublishEmptyLegResult,
   UpdateEmptyLegPriceResult,
 } from '@/lib/empty-legs/types';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 7 PR 2b — admin Server Actions for the Empty Legs
@@ -64,17 +65,6 @@ function isFlagDisabled(): boolean {
   // The flag is on by default (per spec §7.3); only an
   // explicit "false" disables the surface.
   return process.env.ENABLE_EMPTY_LEGS_ADMIN_UI === 'false';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 function sha256Hex(input: string): string {

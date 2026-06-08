@@ -97,7 +97,7 @@ every change merged to `main`. Failing CI must block a merge.
        - `ADMIN_INBOX_PASSWORD`
        - `ADMIN_AUTH_SECRET`
        - `RESEND_API_KEY`
-       - any third-party token (Sentry, PostHog, Mapbox auth, etc.)
+       - any third-party token (Sentry auth token, etc.)
        in the CI workflow. Their absence is the pass signal.
 
 10. [ ] **No-deploy check.** Confirm the workflow does not call

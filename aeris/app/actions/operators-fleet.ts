@@ -9,6 +9,7 @@ import {
   updateAircraftSchema,
   retireAircraftSchema,
 } from '@/lib/operators/validators/fleet';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 14 — operator fleet Server Actions (aircraft CRUD).
@@ -29,17 +30,6 @@ export type FleetActionFailure = {
   field_errors?: Record<string, string>;
 };
 export type FleetActionResult = { ok: true } | FleetActionFailure;
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
-}
 
 type LooseRpcClient = {
   rpc: (

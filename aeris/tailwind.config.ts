@@ -44,7 +44,8 @@ const config: Config = {
         ink: {
           DEFAULT: '#FAFAFA',
           secondary: '#A8B2C1',
-          muted: '#6B7A8F',
+          // WCAG AA: >=4.5:1 on navy (#0A1628/#0D1B30); old #6B7A8F was ~3.95:1.
+          muted: '#93A1B5',
         },
         border: {
           DEFAULT: 'rgba(201, 169, 97, 0.15)',

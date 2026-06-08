@@ -11,6 +11,7 @@ import {
   cancelRequestSchema,
 } from '@/lib/cargo/validators/cargo-actions';
 import type { CargoAircraftCapabilityInsert } from '@/lib/cargo/types';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 11 PR 1 + PR 2 + PR 3 — admin Server Actions for the
@@ -47,17 +48,6 @@ export type CargoAdminActionFailure = {
   error: string;
   field_errors?: Record<string, string>;
 };
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
-}
 
 type LooseRpcClient = {
   rpc: (

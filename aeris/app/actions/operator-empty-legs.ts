@@ -15,6 +15,7 @@ import type {
   PublishEmptyLegResult,
   UpdateEmptyLegPriceResult,
 } from '@/lib/empty-legs/types';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 7 PR 2c — operator-side Server Actions for the
@@ -48,17 +49,6 @@ export type OperatorActionFailure = {
 
 function isPortalFlagDisabled(): boolean {
   return process.env.ENABLE_OPERATOR_PORTAL !== 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 function revalidateOperatorPaths(token: string, legId?: string): void {

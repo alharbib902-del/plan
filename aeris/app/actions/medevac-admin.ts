@@ -16,6 +16,7 @@ import type {
   AircraftMedicalCertificationRow,
   MedicalCertifyingAuthority,
 } from '@/lib/medevac/types';
+import { fieldErrorsFromZod } from '@/lib/validators/field-errors';
 
 /**
  * Phase 12 PR 1 — admin Server Actions for the medevac surface.
@@ -210,17 +211,6 @@ type LooseRpcClient = {
     error: { code?: string; message?: string } | null;
   }>;
 };
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
-}
 
 // ------------------------------------------------------------
 // adminAcceptMedevacOfferOnBehalf → §4.4 (admin path)
