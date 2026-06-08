@@ -30,6 +30,7 @@ Plus: referrals, reviews, support tickets, admin analytics.
 
 > **Wired:** Sentry error monitoring (`instrumentation.ts`, `sentry.server/edge.config.ts`, `instrumentation-client.ts`, `lib/monitoring/*`; fully a no-op until a DSN is set — see `.env.example`).
 > **NOT in use (don't assume):** Supabase Auth (we roll our own — see below), `shadcn`/Radix, Unifonic SMS (env exists, no call sites). There is **no standard test runner** — tests are hand-rolled `tsx` scripts auto-discovered by `scripts/run-unit-tests.mjs`; CI runs **all** `test:*` unit suites + `audit:db`.
+> **⚠️ `inngest` is installed but has ZERO app imports** — it is retained ONLY because the Vercel build/deploy requires it (most likely a Vercel Inngest integration on the project). Removing it builds + tests + lints green locally and on GitHub Actions, yet **breaks the Vercel deploy** (proven by bisection 2026-06-08). **Do NOT remove `inngest`.** The other historically-dead deps (posthog-js, mapbox-gl, framer-motion, @anthropic-ai/sdk, @tanstack/react-query, react-hook-form, @hookform/resolvers) were confirmed safe to remove and were removed.
 
 ---
 
