@@ -1,25 +1,6 @@
 import type { Metadata, Viewport } from 'next';
-import { IBM_Plex_Sans_Arabic, Playfair_Display } from 'next/font/google';
 import { ServiceWorkerRegister } from '@/components/pwa/sw-register';
 import './globals.css';
-
-// Self-hosted via next/font (was a render-blocking cross-origin
-// @import in globals.css). IBM Plex Sans Arabic = the primary UI
-// face; Playfair Display = the `font-display` wordmark. Inter was
-// dropped — it had no className usage, only a dead fallback slot.
-const ibmPlexArabic = IBM_Plex_Sans_Arabic({
-  subsets: ['arabic', 'latin'],
-  weight: ['300', '400', '500', '600', '700'],
-  variable: '--font-ibm-plex-arabic',
-  display: 'swap',
-});
-
-const playfairDisplay = Playfair_Display({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-playfair-display',
-  display: 'swap',
-});
 
 export const metadata: Metadata = {
   title: {
@@ -102,11 +83,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="ar"
-      dir="rtl"
-      className={`h-full ${ibmPlexArabic.variable} ${playfairDisplay.variable}`}
-    >
+    <html lang="ar" dir="rtl" className="h-full">
       <body className="min-h-screen bg-navy text-ink antialiased">
         {children}
         <ServiceWorkerRegister />
