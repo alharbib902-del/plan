@@ -13,9 +13,11 @@ import 'server-only';
  * Scope is intentionally conservative: a name is listed ONLY when the current
  * code actually reads it and fail-closes without it. The unconditional four are
  * load-bearing in every environment. Per-feature secrets are checked ONLY when
- * their `ENABLE_*` flag is the literal string `'true'` (the same gate the
- * features use), so a deploy with a feature OFF is not flagged for that
- * feature's secrets. Secrets with a documented fallback (e.g.
+ * their `ENABLE_*` flag is on, using the SAME gate semantics the feature itself
+ * uses — fail-closed (the literal `'true'`) for most, but fail-open (on unless
+ * the literal `'false'`) for ENABLE_OPERATOR_PORTAL, matching its page/action
+ * gates — so a deploy with a feature OFF is not flagged for that feature's
+ * secrets. Secrets with a documented fallback (e.g.
  * RATE_LIMIT_FINGERPRINT_SECRET → CRON_SECRET) and the reserved-but-unread
  * OPERATOR_OTP_SECRET / *_SESSION_SECRET names are excluded by design.
  */
@@ -25,7 +27,10 @@ function isPresent(name: string): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function flagOn(name: string): boolean {
+function flagOn(name: string, defaultOn = false): boolean {
+  if (defaultOn) {
+    return process.env[name] !== 'false';
+  }
   // Fail-closed convention across the codebase: ONLY the literal `'true'`
   // enables a feature; any other value (unset / empty / `1` / typo) is off.
   return process.env[name] === 'true';
@@ -42,10 +47,16 @@ const UNCONDITIONAL_REQUIRED: readonly string[] = [
 // Per-feature HMAC / gateway secrets, keyed by the flag that makes them
 // load-bearing. Each listed secret is read + fail-closed at its call site only
 // when its flag is `'true'`.
-const FEATURE_REQUIRED: ReadonlyArray<{ flag: string; vars: readonly string[] }> = [
+const FEATURE_REQUIRED: ReadonlyArray<{
+  flag: string;
+  vars: readonly string[];
+  defaultOn?: boolean;
+}> = [
   {
-    // Phase 8 operator portal — welcome magic-link + password-reset mints.
+    // Phase 8 operator portal — current page/action gates disable only on the
+    // literal string 'false', so unset means enabled.
     flag: 'ENABLE_OPERATOR_PORTAL',
+    defaultOn: true,
     vars: ['OPERATOR_WELCOME_TOKEN_SECRET', 'OPERATOR_PASSWORD_RESET_TOKEN_SECRET'],
   },
   {
@@ -101,8 +112,8 @@ export function findMissingRequiredEnv(): string[] {
   };
 
   for (const name of UNCONDITIONAL_REQUIRED) consider(name);
-  for (const { flag, vars } of FEATURE_REQUIRED) {
-    if (!flagOn(flag)) continue;
+  for (const { flag, vars, defaultOn } of FEATURE_REQUIRED) {
+    if (!flagOn(flag, defaultOn)) continue;
     for (const name of vars) consider(name);
   }
 
