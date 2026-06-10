@@ -38,11 +38,11 @@ export default async function AdminOperatorStubsPage({
 
   const convertTargetId = searchParams?.convert_target ?? null;
   const convertTargetOperator =
-    convertTargetId && process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'false'
+    convertTargetId && process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'true'
       ? await getOperatorById(convertTargetId)
       : null;
   const convertModeEnabled =
-    process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'false';
+    process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'true';
 
   const stubs = await listActiveOperatorStubs();
 

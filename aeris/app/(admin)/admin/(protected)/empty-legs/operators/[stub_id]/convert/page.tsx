@@ -28,7 +28,7 @@ export default async function AdminConvertStubPage({
   params,
   searchParams,
 }: PageProps) {
-  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'false') {
+  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'true') {
     notFound();
   }
 

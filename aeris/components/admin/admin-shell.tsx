@@ -18,7 +18,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           { href: '/admin/empty-legs/operators', label: 'سجلّات المشغّلين' },
         ]
       : []),
-    ...(process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'false'
+    ...(process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'true'
       ? [
           { href: '/admin/operators', label: 'المشغّلون' },
           { href: '/admin/operators/canary', label: 'لوحة الصحّة' },

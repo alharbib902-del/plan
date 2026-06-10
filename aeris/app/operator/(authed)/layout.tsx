@@ -18,7 +18,7 @@ export default async function OperatorAuthedLayout({
 }: {
   children: React.ReactNode;
 }) {
-  if (process.env.ENABLE_OPERATOR_PORTAL === 'false') notFound();
+  if (process.env.ENABLE_OPERATOR_PORTAL !== 'true') notFound();
 
   const session = await requireOperatorSession();
   const operator = await getOperatorRowById(session.operator_id);
