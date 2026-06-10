@@ -8,6 +8,8 @@ import { operatorPublishLegSession } from '@/app/actions/operators-empty-legs-au
 import { datetimeLocalToRiyadhIso } from '@/components/admin/empty-legs/formatters';
 import { translateEmptyLegError } from '@/components/admin/empty-legs/error-translator';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
+import { AirportCombobox } from '@/components/ui/airport-combobox';
+import type { AirportRow } from '@/types/database';
 
 interface FormState {
   error: string | null;
@@ -42,14 +44,36 @@ function readNumber(form: FormData, key: string): number | null {
  * Field shapes + validation are identical across both modes;
  * only the action call + redirect target differ.
  */
+export interface OperatorFleetAircraft {
+  id: string;
+  registration: string;
+  manufacturer: string;
+  model: string;
+}
+
 export type OperatorPublishFormProps =
   | { mode: 'token'; token: string }
-  | { mode: 'session' };
+  | {
+      mode: 'session';
+      /** Session operator's ACTIVE fleet — renders a picker instead of free text. */
+      aircraft?: OperatorFleetAircraft[];
+      /** Private-capable airports — renders the shared AirportCombobox. */
+      airports?: AirportRow[];
+    };
 
 export function OperatorPublishForm(props: OperatorPublishFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [state, setState] = useState<FormState>(INITIAL);
+
+  // Session mode ships the operator's fleet + airports so the
+  // form upgrades from free-text to a picker + combobox. Token
+  // mode has neither, so it keeps the original text inputs. The
+  // submitted FormData keys are identical either way
+  // (aircraft_text + departure/arrival_airport_iata/_freeform),
+  // so the Server Action + RPC are untouched.
+  const fleet = props.mode === 'session' ? props.aircraft : undefined;
+  const airports = props.mode === 'session' ? props.airports : undefined;
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -182,70 +206,128 @@ export function OperatorPublishForm(props: OperatorPublishFormProps) {
             </Field>
           </>
         ) : null}
-        <Field label={emptyLegsAr.fieldAircraftText} name="aircraft_text">
-          <input
-            id="aircraft_text"
-            name="aircraft_text"
-            type="text"
-            className={inputCls}
-          />
-        </Field>
+        {fleet && fleet.length > 0 ? (
+          <Field label={emptyLegsAr.fieldAircraftSelect} name="aircraft_text">
+            <select
+              id="aircraft_text"
+              name="aircraft_text"
+              defaultValue=""
+              className={inputCls}
+            >
+              <option value="">
+                {emptyLegsAr.fieldAircraftSelectPlaceholder}
+              </option>
+              {fleet.map((ac) => {
+                const label = `${ac.manufacturer} ${ac.model} (${ac.registration})`;
+                return (
+                  <option key={ac.id} value={label}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </Field>
+        ) : (
+          <Field label={emptyLegsAr.fieldAircraftText} name="aircraft_text">
+            <input
+              id="aircraft_text"
+              name="aircraft_text"
+              type="text"
+              className={inputCls}
+            />
+          </Field>
+        )}
       </Section>
 
       <Section>
         <p className="font-ar md:col-span-2 text-xs text-ink-muted">
           {emptyLegsAr.formPublishHintRoutePresence}
         </p>
-        <Field
-          label={emptyLegsAr.fieldDepartureAirportIata}
-          name="departure_airport_iata"
-          error={state.fieldErrors.departure_airport_iata}
-        >
-          <input
-            id="departure_airport_iata"
-            name="departure_airport_iata"
-            type="text"
-            maxLength={3}
-            dir="ltr"
-            className={inputCls}
-          />
-        </Field>
-        <Field
-          label={emptyLegsAr.fieldDepartureAirportFreeform}
-          name="departure_airport_freeform"
-        >
-          <input
-            id="departure_airport_freeform"
-            name="departure_airport_freeform"
-            type="text"
-            className={inputCls}
-          />
-        </Field>
-        <Field
-          label={emptyLegsAr.fieldArrivalAirportIata}
-          name="arrival_airport_iata"
-          error={state.fieldErrors.arrival_airport_iata}
-        >
-          <input
-            id="arrival_airport_iata"
-            name="arrival_airport_iata"
-            type="text"
-            maxLength={3}
-            dir="ltr"
-            className={inputCls}
-          />
-        </Field>
-        <Field
-          label={emptyLegsAr.fieldArrivalAirportFreeform}
-          name="arrival_airport_freeform"
-        >
-          <input
-            id="arrival_airport_freeform"
-            name="arrival_airport_freeform"
-            type="text"
-            className={inputCls}
-          />
-        </Field>
+        {airports ? (
+          <>
+            {/* Same hidden-input contract as the raw inputs below:
+                AirportCombobox emits `${name}_iata` + `${name}_freeform`,
+                so departure_airport / arrival_airport produce exactly the
+                four FormData keys the submit handler already reads. */}
+            <AirportCombobox
+              name="departure_airport"
+              airports={airports}
+              label={emptyLegsAr.fieldDepartureAirport}
+              error={
+                state.fieldErrors.departure_airport_iata
+                  ? translateEmptyLegError(
+                      state.fieldErrors.departure_airport_iata
+                    )
+                  : undefined
+              }
+            />
+            <AirportCombobox
+              name="arrival_airport"
+              airports={airports}
+              label={emptyLegsAr.fieldArrivalAirport}
+              error={
+                state.fieldErrors.arrival_airport_iata
+                  ? translateEmptyLegError(
+                      state.fieldErrors.arrival_airport_iata
+                    )
+                  : undefined
+              }
+            />
+          </>
+        ) : (
+          <>
+            <Field
+              label={emptyLegsAr.fieldDepartureAirportIata}
+              name="departure_airport_iata"
+              error={state.fieldErrors.departure_airport_iata}
+            >
+              <input
+                id="departure_airport_iata"
+                name="departure_airport_iata"
+                type="text"
+                maxLength={3}
+                dir="ltr"
+                className={inputCls}
+              />
+            </Field>
+            <Field
+              label={emptyLegsAr.fieldDepartureAirportFreeform}
+              name="departure_airport_freeform"
+            >
+              <input
+                id="departure_airport_freeform"
+                name="departure_airport_freeform"
+                type="text"
+                className={inputCls}
+              />
+            </Field>
+            <Field
+              label={emptyLegsAr.fieldArrivalAirportIata}
+              name="arrival_airport_iata"
+              error={state.fieldErrors.arrival_airport_iata}
+            >
+              <input
+                id="arrival_airport_iata"
+                name="arrival_airport_iata"
+                type="text"
+                maxLength={3}
+                dir="ltr"
+                className={inputCls}
+              />
+            </Field>
+            <Field
+              label={emptyLegsAr.fieldArrivalAirportFreeform}
+              name="arrival_airport_freeform"
+            >
+              <input
+                id="arrival_airport_freeform"
+                name="arrival_airport_freeform"
+                type="text"
+                className={inputCls}
+              />
+            </Field>
+          </>
+        )}
       </Section>
 
       <Section>
