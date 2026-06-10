@@ -66,3 +66,44 @@ jobs:
 
       - name: Lint (strict)
         run: npm run lint:strict
+
+  e2e:
+    name: Playwright E2E (smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only run the (slower) browser smoke suite once the unit/type/build
+    # gates are green — no point booting a dev server if the app doesn't
+    # compile. Keeps this off the critical path of the main gate.
+    needs: quality-gates
+
+    env:
+      # Same public compile-time placeholders the build needs. The
+      # smoke specs only hit the HTTP boundary (no DB seeding, no
+      # secrets) — see e2e/README.md + playwright.config.ts.
+      NEXT_PUBLIC_SITE_URL: https://aeris.sa
+      NEXT_PUBLIC_WHATSAPP_NUMBER: "966558048004"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: aeris/package-lock.json
+
+      - name: Install dependencies (clean)
+        run: npm ci
+
+      # Chromium only — matches the single project in playwright.config.ts.
+      # --with-deps pulls the OS libs the browser needs on ubuntu-latest.
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
+
+      # webServer in playwright.config.ts boots `npm run dev` on :3000 and
+      # waits for it before running the smoke specs (CI=true → 1 worker,
+      # 1 retry).
+      - name: E2E smoke tests
+        run: npm run test:e2e
