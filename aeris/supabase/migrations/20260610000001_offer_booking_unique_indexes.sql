@@ -1,0 +1,69 @@
+-- DB-03 — back the offer→booking 1:1 invariant with a DB-level UNIQUE
+-- index for cargo / medevac / empty-leg, matching what charter already has.
+--
+-- PROBLEM. Every service line writes into the single `bookings` table and
+-- records the originating offer via the generic discriminator pair
+-- `(source_offer_table, source_offer_id)` introduced in
+-- 20260508000007_phase_6_2_addons.sql (ll. 136-138):
+--   - charter  → ('phase4' | 'phase5',     <offer id>)
+--   - empty-leg→ ('phase7_empty_leg',       <leg id>)
+--   - cargo    → ('cargo_offers',           <offer id>)
+--   - medevac  → ('medevac_offers',         <offer id>)
+-- Charter is additionally protected by the partial UNIQUE index
+-- `bookings_trip_request_unique ON bookings(trip_request_id)` (added in
+-- 20260508000007_phase_6_2_addons.sql, ll. 356-358): two concurrent
+-- accept_offer / backfill calls for one trip lose the INSERT race to a
+-- PG unique violation. Cargo (accept_cargo_offer), medevac
+-- (accept_medevac_offer), and empty-leg (admin_mark_empty_leg_sold etc.)
+-- have NO equivalent backing index — they rely solely on row-locks +
+-- status re-checks inside their RPCs. That is correct for the concurrency
+-- paths that exist today, but a future code path, a new RPC, or a manual
+-- admin write could create a SECOND booking for the same source offer with
+-- nothing at the database level to stop it.
+--
+-- FIX. One partial UNIQUE index on the discriminator pair. Because the pair
+-- is the canonical "which offer produced this booking" key, uniqueness on
+-- (source_offer_table, source_offer_id) is exactly the offer→booking 1:1
+-- invariant — and it covers all four service lines (charter included) in a
+-- single index. Two concurrent offer-acceptances for the same offer now
+-- lose the INSERT race to a unique violation, identical to charter's model.
+--
+-- WHY `WHERE source_offer_id IS NOT NULL`. The medevac Shield-covered
+-- direct-booking path (book_medevac_with_shield-style INSERT in
+-- 20260527000042_phase_12_pr_3_medevac_distribution.sql, ll. ~1001-1003)
+-- legitimately writes the pair as (NULL, NULL): it is backed by the Shield
+-- subscription contract, NOT by an operator offer, and the existing
+-- `bookings_source_offer_pair_check` already forces both columns NULL
+-- together. Those rows are not offer-backed, so they MUST be excluded from
+-- the uniqueness rule. (Postgres treats NULLs as distinct in a unique index
+-- anyway, but the explicit partial predicate states the intent and keeps the
+-- index limited to offer-backed rows.) This mirrors charter's own
+-- `WHERE trip_request_id IS NOT NULL`.
+--
+-- Forward-only + idempotent (CREATE UNIQUE INDEX IF NOT EXISTS). Supabase
+-- migrations run inside a single transaction, so this deliberately uses a
+-- plain (NON-CONCURRENT) index build; CREATE INDEX CONCURRENTLY cannot run
+-- in a transaction block and is intentionally avoided.
+--
+-- ------------------------------------------------------------------------
+-- !!! OPERATOR PRE-CHECK — RUN THIS *BEFORE* APPLYING, ON A CLEAN main. !!!
+-- A UNIQUE index build fails (and rolls back the whole migration) if any
+-- duplicate already exists. Run the SELECT below first; it must return ZERO
+-- rows. If it returns any row, two bookings already point at one offer —
+-- investigate / reconcile those bookings manually before applying. (Audited
+-- clean against the live DB on 2026-06-09; re-verify at apply time.)
+--
+--   SELECT source_offer_table,
+--          source_offer_id,
+--          COUNT(*)                         AS booking_count,
+--          array_agg(id ORDER BY created_at) AS booking_ids
+--     FROM bookings
+--    WHERE source_offer_id IS NOT NULL
+--    GROUP BY source_offer_table, source_offer_id
+--   HAVING COUNT(*) > 1;
+--
+-- ========================================================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS bookings_source_offer_unique
+  ON bookings (source_offer_table, source_offer_id)
+  WHERE source_offer_id IS NOT NULL;
