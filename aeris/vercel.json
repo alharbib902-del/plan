@@ -87,6 +87,10 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/privilege/cashback-drift-check",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/cron/cleanup/public-action-attempts",
       "schedule": "0 5 * * *"
     }
