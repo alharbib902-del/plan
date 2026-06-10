@@ -324,6 +324,8 @@ export const emptyLegsAr = {
   publicReserveNudgeSuffix: '— وبياناتك تتعبّأ تلقائياً.',
   publicReservePrefilledHint:
     'عبّأنا اسمك ورقمك من حسابك — عدّلهما إن أردت.',
+  publicReserveAccountLinkedHint:
+    'ستحجز بحسابك — وسيظهر الحجز في «حجوزاتي»:',
   publicReservedTitle: 'تم تثبيت الحجز',
   publicReservedHint:
     'يجب التواصل معنا خلال 10 دقائق لتأكيد الدفع، وإلا سيُلغى الحجز تلقائياً.',

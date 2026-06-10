@@ -7,6 +7,7 @@ import { useTransition, type ReactNode } from 'react';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { supportAr } from '@/lib/i18n/support-ar';
 import { referralsAr } from '@/lib/i18n/referrals-ar';
+import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 import { clientLogout } from '@/app/actions/clients-public';
 
 interface ClientShellProps {
@@ -58,6 +59,12 @@ export function ClientShell({ fullName, children }: ClientShellProps) {
                 active={pathname.startsWith('/me/bookings')}
               >
                 {clientsAr.meBookingsTitle}
+              </NavLink>
+              <NavLink
+                href="/empty-legs"
+                active={pathname.startsWith('/empty-legs')}
+              >
+                {emptyLegsAr.navList}
               </NavLink>
               <NavLink
                 href="/me/reviews"

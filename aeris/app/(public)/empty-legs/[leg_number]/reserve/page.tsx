@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { PublicReserveForm } from '@/components/public/empty-legs/reserve-form';
+import { ReserveEmptyLegButton } from '@/components/clients/reserve-empty-leg-button';
 import {
   formatDateTimeAr,
   formatPercent,
@@ -59,6 +60,14 @@ export default async function PublicEmptyLegReservePage({
   const sessionResult = await validateClientSession();
   const clientSession = sessionResult.ok ? sessionResult.session : null;
 
+  // When a logged-in client reserves AND the authenticated empty-leg
+  // portal is enabled, use the account-linked one-click reserve so the
+  // booking lands in their /me/bookings — never a silent phone match.
+  // Otherwise (flag off, or guest) fall back to the pre-filled form.
+  const accountLinkedReserve =
+    clientSession !== null &&
+    process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL === 'true';
+
   return (
     <section className="mx-auto max-w-2xl px-4 pb-16 pt-28 sm:px-6 lg:px-8">
       <Link
@@ -105,12 +114,24 @@ export default async function PublicEmptyLegReservePage({
       </article>
 
       <div className="mt-6">
-        <PublicReserveForm
-          legNumber={leg.leg_number}
-          isLoggedIn={Boolean(clientSession)}
-          prefillName={clientSession?.full_name}
-          prefillPhone={clientSession?.contact_phone}
-        />
+        {accountLinkedReserve ? (
+          <div className="space-y-3">
+            <p className="font-ar text-sm text-ink-muted">
+              {emptyLegsAr.publicReserveAccountLinkedHint}{' '}
+              <span className="text-gold-light">
+                {clientSession?.full_name}
+              </span>
+            </p>
+            <ReserveEmptyLegButton legId={leg.id} />
+          </div>
+        ) : (
+          <PublicReserveForm
+            legNumber={leg.leg_number}
+            isLoggedIn={Boolean(clientSession)}
+            prefillName={clientSession?.full_name}
+            prefillPhone={clientSession?.contact_phone}
+          />
+        )}
       </div>
     </section>
   );
