@@ -1,8 +1,14 @@
 import type { Metadata } from 'next';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 
 import { requireOperatorSession } from '@/lib/operators/auth';
-import { OperatorPublishForm } from '@/components/operator/empty-legs/operator-publish-form';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { listAirports } from '@/lib/supabase/queries/airports';
+import {
+  OperatorPublishForm,
+  type OperatorFleetAircraft,
+} from '@/components/operator/empty-legs/operator-publish-form';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 
 export const dynamic = 'force-dynamic';
@@ -21,9 +27,21 @@ export const metadata: Metadata = {
  * which pulls operator_id from the session cookie via
  * requireOperatorSession() and forces operator_stub_id=NULL,
  * then routes to /operator/legs/<leg_id> on success.
+ *
+ * UX follow-up: the page now ships the operator's ACTIVE fleet +
+ * the private-capable airports list so the form renders an
+ * aircraft picker (instead of free text) and the shared
+ * AirportCombobox (instead of raw IATA inputs). Pure UI — the
+ * submit shape is unchanged (aircraft_text + *_iata/_freeform),
+ * so the Server Action + RPC stay untouched.
  */
 export default async function OperatorPublishLegPage() {
-  await requireOperatorSession();
+  const session = await requireOperatorSession();
+
+  const [airports, aircraft] = await Promise.all([
+    listAirports({ privateCapable: true }),
+    loadOperatorActiveAircraft(session.operator_id),
+  ]);
 
   return (
     <section className="mx-auto max-w-3xl space-y-6">
@@ -39,7 +57,36 @@ export default async function OperatorPublishLegPage() {
         </Link>
       </header>
 
-      <OperatorPublishForm mode="session" />
+      <OperatorPublishForm
+        mode="session"
+        airports={airports}
+        aircraft={aircraft}
+      />
     </section>
   );
+}
+
+/**
+ * Load the session operator's ACTIVE aircraft for the publish
+ * form's fleet picker. Scoped to the authenticated operator_id
+ * (never client-supplied). An empty fleet makes the form fall
+ * back to a free-text aircraft field, so the page never blocks
+ * an operator who has not registered aircraft yet.
+ */
+async function loadOperatorActiveAircraft(
+  operatorId: string
+): Promise<OperatorFleetAircraft[]> {
+  const client = createAdminClient() as unknown as SupabaseClient;
+  const { data, error } = await client
+    .from('aircraft')
+    .select('id, registration, manufacturer, model')
+    .eq('operator_id', operatorId)
+    .eq('status', 'active')
+    .order('registration', { ascending: true });
+
+  if (error) {
+    console.error('[operator/legs/new] active-fleet load failed', error);
+    return [];
+  }
+  return (data ?? []) as OperatorFleetAircraft[];
 }
