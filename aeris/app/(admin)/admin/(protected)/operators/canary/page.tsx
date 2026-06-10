@@ -64,7 +64,7 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminOperatorsCanaryPage() {
-  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'false') {
+  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'true') {
     notFound();
   }
 

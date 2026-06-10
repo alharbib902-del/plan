@@ -66,7 +66,7 @@ Plus: referrals, reviews, support tickets, admin analytics.
 
 ## 🎛️ Feature flags (fail-closed `=== 'true'` unless noted)
 
-`ENABLE_CLIENT_PORTAL` (the `/me` tree) · `ENABLE_OPERATOR_PORTAL` (⚠️ page-render gates use `=== 'false'` → **fail-OPEN**; the Server Actions are fail-closed — set it to `true` for a working portal) · `ENABLE_CARGO` (live) · `ENABLE_MEDEVAC` (live) · `ENABLE_PRIVILEGE` · `ENABLE_PAYMENTS` (off) · `ENABLE_TRIP_AUTO_DISTRIBUTION` (off → trips wait for manual admin dispatch) · `ENABLE_EMPTY_LEGS_{PUBLIC_MARKETPLACE,NOTIFICATIONS,ADMIN_UI}` · `ENABLE_CLIENT_EMPTY_LEGS_PORTAL` · `PHASE5_ADMIN_UI` (multi-operator dispatch) · `ENABLE_OPERATOR_LEGACY_TOKEN`. Each gated surface also needs its per-token HMAC secret (fail-closed if missing). Referrals / reviews / support are **not** flag-gated.
+`ENABLE_CLIENT_PORTAL` (the `/me` tree) · `ENABLE_OPERATOR_PORTAL` (page-render + Server-Action gates are fail-closed `=== 'true'` — set it to `true` for a working portal) · `ENABLE_CARGO` (live) · `ENABLE_MEDEVAC` (live) · `ENABLE_PRIVILEGE` · `ENABLE_PAYMENTS` (off) · `ENABLE_TRIP_AUTO_DISTRIBUTION` (off → trips wait for manual admin dispatch) · `ENABLE_EMPTY_LEGS_{PUBLIC_MARKETPLACE,NOTIFICATIONS,ADMIN_UI}` · `ENABLE_CLIENT_EMPTY_LEGS_PORTAL` · `PHASE5_ADMIN_UI` (multi-operator dispatch) · `ENABLE_OPERATOR_LEGACY_TOKEN`. Each gated surface also needs its per-token HMAC secret (fail-closed if missing). Referrals / reviews / support are **not** flag-gated.
 
 ---
 

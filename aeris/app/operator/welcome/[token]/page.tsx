@@ -18,7 +18,7 @@ interface PageProps {
 }
 
 export default async function OperatorWelcomePage({ params }: PageProps) {
-  if (process.env.ENABLE_OPERATOR_PORTAL === 'false') notFound();
+  if (process.env.ENABLE_OPERATOR_PORTAL !== 'true') notFound();
   const { token } = await params;
   if (!token || token.length === 0) notFound();
 

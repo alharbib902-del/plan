@@ -65,7 +65,7 @@ import {
  * via the i18n `operatorsAr.portal.errors` map.
  *
  * Public actions are flag-gated by ENABLE_OPERATOR_PORTAL —
- * when false the actions short-circuit with
+ * unless it is the literal 'true' the actions short-circuit with
  * { ok: false, error: 'flag_disabled' } so a deploy without
  * the portal flipped on simply renders empty / 404 pages.
  */
@@ -92,7 +92,7 @@ function fieldErrorsFromZod(
 }
 
 function isPortalDisabled(): boolean {
-  return process.env.ENABLE_OPERATOR_PORTAL === 'false';
+  return process.env.ENABLE_OPERATOR_PORTAL !== 'true';
 }
 
 function siteUrl(): string {
