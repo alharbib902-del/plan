@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -7,7 +8,23 @@ import { reserveEmptyLeg } from '@/app/actions/empty-legs-public';
 import { translateEmptyLegError } from '@/components/admin/empty-legs/error-translator';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
-export function PublicReserveForm({ legNumber }: { legNumber: string }) {
+interface PublicReserveFormProps {
+  legNumber: string;
+  /** When the visitor is a logged-in client, the page pre-fills these
+   *  from the validated session so the client doesn't retype details.
+   *  The guest reserve action is still used — this is auto-fill only,
+   *  not account-linking (that stays the /me authenticated flow). */
+  prefillName?: string;
+  prefillPhone?: string;
+  isLoggedIn?: boolean;
+}
+
+export function PublicReserveForm({
+  legNumber,
+  prefillName,
+  prefillPhone,
+  isLoggedIn,
+}: PublicReserveFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +72,23 @@ export function PublicReserveForm({ legNumber }: { legNumber: string }) {
         {emptyLegsAr.publicReserveHint}
       </p>
 
+      {isLoggedIn ? (
+        <p className="font-ar text-xs text-gold-light/80">
+          {emptyLegsAr.publicReservePrefilledHint}
+        </p>
+      ) : (
+        <p className="font-ar text-xs text-ink-muted">
+          {emptyLegsAr.publicReserveNudgePrefix}{' '}
+          <Link
+            href="/login"
+            className="text-gold-light underline transition-colors hover:text-gold"
+          >
+            {emptyLegsAr.publicReserveNudgeCta}
+          </Link>{' '}
+          {emptyLegsAr.publicReserveNudgeSuffix}
+        </p>
+      )}
+
       <div>
         <label
           htmlFor="customer_name"
@@ -68,6 +102,7 @@ export function PublicReserveForm({ legNumber }: { legNumber: string }) {
           name="customer_name"
           type="text"
           required
+          defaultValue={prefillName ?? ''}
           className={inputCls}
         />
         {fieldErrors.customer_name ? (
@@ -91,6 +126,7 @@ export function PublicReserveForm({ legNumber }: { legNumber: string }) {
           type="tel"
           dir="ltr"
           required
+          defaultValue={prefillPhone ?? ''}
           className={inputCls}
         />
         {fieldErrors.customer_phone ? (

@@ -10,6 +10,7 @@ import {
   routeLabel,
 } from '@/components/admin/empty-legs/formatters';
 import { getPublicLegByNumber } from '@/lib/empty-legs/public-queries';
+import { validateClientSession } from '@/lib/clients/auth';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
 export const dynamic = 'force-dynamic';
@@ -51,6 +52,12 @@ export default async function PublicEmptyLegReservePage({
       </section>
     );
   }
+
+  // Optional (non-redirecting) session read: a logged-in client
+  // gets their name/phone pre-filled; a guest gets a gentle
+  // "log in to auto-fill" nudge. Guests can still reserve freely.
+  const sessionResult = await validateClientSession();
+  const clientSession = sessionResult.ok ? sessionResult.session : null;
 
   return (
     <section className="mx-auto max-w-2xl px-4 pb-16 pt-28 sm:px-6 lg:px-8">
@@ -98,7 +105,12 @@ export default async function PublicEmptyLegReservePage({
       </article>
 
       <div className="mt-6">
-        <PublicReserveForm legNumber={leg.leg_number} />
+        <PublicReserveForm
+          legNumber={leg.leg_number}
+          isLoggedIn={Boolean(clientSession)}
+          prefillName={clientSession?.full_name}
+          prefillPhone={clientSession?.contact_phone}
+        />
       </div>
     </section>
   );

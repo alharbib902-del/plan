@@ -319,6 +319,11 @@ export const emptyLegsAr = {
   publicReserveOptInHint:
     'اختياري — يمكنك إلغاء الإشتراك من أي رابط مستقبلي.',
   publicReserveSubmit: 'تأكيد الحجز',
+  publicReserveNudgePrefix: 'مسجّل عندنا؟',
+  publicReserveNudgeCta: 'سجّل دخول',
+  publicReserveNudgeSuffix: '— وبياناتك تتعبّأ تلقائياً.',
+  publicReservePrefilledHint:
+    'عبّأنا اسمك ورقمك من حسابك — عدّلهما إن أردت.',
   publicReservedTitle: 'تم تثبيت الحجز',
   publicReservedHint:
     'يجب التواصل معنا خلال 10 دقائق لتأكيد الدفع، وإلا سيُلغى الحجز تلقائياً.',
