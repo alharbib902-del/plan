@@ -166,7 +166,7 @@ export function AcceptOfferButton({
         disabled={isPending}
         className="font-ar inline-flex items-center gap-2 rounded-lg border border-emerald-400/50 bg-emerald-500/15 px-4 py-2 text-sm text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:opacity-60"
       >
-        {isPending ? cargoAr.actionAcceptSuccess : cargoAr.meDetailOfferAcceptCta}
+        {isPending ? cargoAr.meDetailOfferAccepting : cargoAr.meDetailOfferAcceptCta}
       </button>
     </div>
   );

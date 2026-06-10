@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Menu, X } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { whatsappLink } from '@/lib/utils/format';
@@ -34,6 +34,7 @@ const NAV_ITEMS: { href: string; label: string }[] = SHOW_EMPTY_LEGS_LINK
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const panelId = useId();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 16);
@@ -41,6 +42,21 @@ export function SiteHeader() {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  // Close the mobile drawer on Escape + lock background scroll while it's
+  // open (mirrors the admin/operator portal mobile-nav behavior).
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [open]);
 
   return (
     <header
@@ -93,6 +109,7 @@ export function SiteHeader() {
           type="button"
           aria-label={open ? 'إغلاق القائمة' : 'فتح القائمة'}
           aria-expanded={open}
+          aria-controls={panelId}
           onClick={() => setOpen((v) => !v)}
           className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-border text-gold-light md:hidden"
         >
@@ -101,7 +118,7 @@ export function SiteHeader() {
       </div>
 
       {open && (
-        <div className="border-t border-border bg-navy-secondary/95 backdrop-blur-luxury md:hidden">
+        <div id={panelId} className="border-t border-border bg-navy-secondary/95 backdrop-blur-luxury md:hidden">
           <nav className="flex flex-col gap-1 px-4 py-4 sm:px-6">
             {NAV_ITEMS.map((item) => (
               <Link

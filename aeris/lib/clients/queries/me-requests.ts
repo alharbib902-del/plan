@@ -61,7 +61,10 @@ export async function listTripRequestsForClient(
     .from('trip_requests')
     .select('*')
     .eq('client_id', clientId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    // Bound the wire payload — the client's own list renders without
+    // pagination, so cap to the most-recent rows (matches admin libs).
+    .limit(200);
 
   if (filter !== 'all') {
     query = query.eq('status', filter);

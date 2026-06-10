@@ -100,9 +100,10 @@ function Field(props: {
   }`;
   return (
     <div>
-      <label className="font-ar mb-1 block text-xs text-ink-muted">{props.label}</label>
+      <label htmlFor={props.name} className="font-ar mb-1 block text-xs text-ink-muted">{props.label}</label>
       {isPassword ? (
         <PasswordInput
+          id={props.name}
           name={props.name}
           dir={props.dir}
           required={props.required}
@@ -110,6 +111,7 @@ function Field(props: {
         />
       ) : (
         <input
+          id={props.name}
           name={props.name}
           type={props.type ?? 'text'}
           dir={props.dir}

@@ -140,6 +140,8 @@ export const emptyLegsAr = {
   // reads reservation_client_id off the leg + clients table.
   reservedConfirmClientReservation: 'تأكيد حجز عميل مسجّل',
   reservedReleaseReservation: 'إلغاء التحفظ',
+  reservedReleaseConfirm:
+    'هل أنت متأكد من إلغاء هذا التحفّظ؟ ستُتاح الرحلة الفارغة لعميل آخر.',
   reservedConfirmHint:
     'الصق رمز التحفظ الذي أرسله العميل عبر واتساب لتأكيد الحجز.',
   reservedConfirmFieldToken: 'رمز التحفظ من العميل',

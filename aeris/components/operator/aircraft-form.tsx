@@ -226,10 +226,11 @@ function Field(props: {
 }) {
   return (
     <div>
-      <label className="font-ar mb-1 block text-xs text-ink-muted">
+      <label htmlFor={props.name} className="font-ar mb-1 block text-xs text-ink-muted">
         {props.label}
       </label>
       <input
+        id={props.name}
         name={props.name}
         type={props.type ?? 'text'}
         dir={props.dir}
@@ -255,10 +256,11 @@ function SelectField(props: {
 }) {
   return (
     <div>
-      <label className="font-ar mb-1 block text-xs text-ink-muted">
+      <label htmlFor={props.name} className="font-ar mb-1 block text-xs text-ink-muted">
         {props.label}
       </label>
       <select
+        id={props.name}
         name={props.name}
         defaultValue={props.defaultValue}
         className={`font-ar w-full rounded-lg border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:outline-none ${
