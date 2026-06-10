@@ -24,7 +24,7 @@ interface PageProps {
 }
 
 export default async function AdminOperatorDocumentsPage({ params }: PageProps) {
-  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'false') {
+  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'true') {
     notFound();
   }
 

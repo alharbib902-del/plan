@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 };
 
 export default function OperatorForgotPasswordPage() {
-  if (process.env.ENABLE_OPERATOR_PORTAL === 'false') notFound();
+  if (process.env.ENABLE_OPERATOR_PORTAL !== 'true') notFound();
   return (
     <OperatorPublicShell
       title={operatorsAr.portal.forgotPassword.title}

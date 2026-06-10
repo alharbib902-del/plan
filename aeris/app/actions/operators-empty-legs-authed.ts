@@ -56,7 +56,7 @@ export type OperatorAuthedActionFailure = {
 };
 
 function isPortalFlagDisabled(): boolean {
-  return process.env.ENABLE_OPERATOR_PORTAL === 'false';
+  return process.env.ENABLE_OPERATOR_PORTAL !== 'true';
 }
 
 function fieldErrorsFromZod(

@@ -14,10 +14,9 @@ import 'server-only';
  * code actually reads it and fail-closes without it. The unconditional four are
  * load-bearing in every environment. Per-feature secrets are checked ONLY when
  * their `ENABLE_*` flag is on, using the SAME gate semantics the feature itself
- * uses — fail-closed (the literal `'true'`) for most, but fail-open (on unless
- * the literal `'false'`) for ENABLE_OPERATOR_PORTAL, matching its page/action
- * gates — so a deploy with a feature OFF is not flagged for that feature's
- * secrets. Secrets with a documented fallback (e.g.
+ * uses — fail-closed (the literal `'true'`) across the board — so a deploy with
+ * a feature OFF is not flagged for that feature's secrets. Secrets with a
+ * documented fallback (e.g.
  * RATE_LIMIT_FINGERPRINT_SECRET → CRON_SECRET) and the reserved-but-unread
  * OPERATOR_OTP_SECRET / *_SESSION_SECRET names are excluded by design.
  */
@@ -53,10 +52,9 @@ const FEATURE_REQUIRED: ReadonlyArray<{
   defaultOn?: boolean;
 }> = [
   {
-    // Phase 8 operator portal — current page/action gates disable only on the
-    // literal string 'false', so unset means enabled.
+    // Phase 8 operator portal — page/action gates are fail-closed (enabled only
+    // on the literal string 'true'), so the secrets are load-bearing only then.
     flag: 'ENABLE_OPERATOR_PORTAL',
-    defaultOn: true,
     vars: ['OPERATOR_WELCOME_TOKEN_SECRET', 'OPERATOR_PASSWORD_RESET_TOKEN_SECRET'],
   },
   {

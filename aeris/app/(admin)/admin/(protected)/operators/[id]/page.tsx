@@ -39,7 +39,7 @@ function formatDate(iso: string | null | undefined): string {
 }
 
 export default async function AdminOperatorDetailPage({ params }: PageProps) {
-  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'false') {
+  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'true') {
     notFound();
   }
 
