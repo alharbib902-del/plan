@@ -6,9 +6,10 @@
  * authed (authed) group. The (authed) layout adds the portal
  * shell (nav + cookie validation) on top of this one.
  *
- * The page modules below all `notFound()` when
- * ENABLE_OPERATOR_PORTAL is `false` so a deploy without the
- * flag flipped on returns 404 across the entire portal tree.
+ * The page modules below all `notFound()` unless
+ * ENABLE_OPERATOR_PORTAL is the literal `'true'` so a deploy
+ * without the flag flipped on returns 404 across the entire
+ * portal tree.
  */
 export default function OperatorRootLayout({
   children,

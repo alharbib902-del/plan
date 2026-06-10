@@ -70,7 +70,7 @@ function fieldErrorsFromZod(
 }
 
 function isAdminFlagDisabled(): boolean {
-  return process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'false';
+  return process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'true';
 }
 
 function siteUrl(): string {

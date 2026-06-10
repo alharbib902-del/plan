@@ -36,7 +36,7 @@ function parseFilter(raw: string | undefined): OperatorListFilter {
 }
 
 export default async function AdminOperatorsPage({ searchParams }: PageProps) {
-  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'false') {
+  if (process.env.ENABLE_OPERATOR_PORTAL_ADMIN !== 'true') {
     notFound();
   }
 
