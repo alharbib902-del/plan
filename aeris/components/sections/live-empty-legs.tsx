@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import { PublicLegCard } from '@/components/public/empty-legs/leg-card';
 import { listPublicAvailableLegs } from '@/lib/empty-legs/public-queries';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 
@@ -36,8 +37,9 @@ export async function LiveEmptyLegs() {
               {emptyLegsAr.homeEmptyLegsCtaTitle}
             </h2>
             <p className="font-ar mt-4 text-sm leading-7 text-ink-secondary sm:text-base">
-              {emptyLegsAr.homeEmptyLegsCtaSubtitle} الأسعار ديناميكية وتنخفض
-              تلقائياً كلما اقترب موعد الإقلاع.
+              {clientPricingVisible()
+                ? `${emptyLegsAr.homeEmptyLegsCtaSubtitle} الأسعار ديناميكية وتنخفض تلقائياً كلما اقترب موعد الإقلاع.`
+                : emptyLegsAr.pricingHiddenHomeSubtitle}
             </p>
           </div>
           <Link

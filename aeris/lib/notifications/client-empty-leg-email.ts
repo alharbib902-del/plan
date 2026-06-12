@@ -7,6 +7,7 @@
 import { Resend } from 'resend';
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 
 import type { ClientEmailDeliveryResult } from './client-email';
@@ -177,29 +178,43 @@ export async function sendClientEmptyLegMatchEmail(
   const price = input.leg.current_price ?? 0;
   const discountPct = input.leg.current_discount_pct ?? 0;
   const isPriceDrop = input.eventType === 'price_dropped';
+  const pricingVisible = clientPricingVisible();
 
   const heading = isPriceDrop
-    ? 'انخفض السعر — رحلة فارغة جديدة لك'
+    ? pricingVisible
+      ? 'انخفض السعر — رحلة فارغة جديدة لك'
+      : 'تحدّث عرض رحلة فارغة تهمّك'
     : 'رحلة فارغة جديدة قد تناسبك';
   const subject = isPriceDrop
-    ? 'Aeris — انخفض سعر رحلة فارغة'
+    ? pricingVisible
+      ? 'Aeris — انخفض سعر رحلة فارغة'
+      : 'Aeris — عرض محدّث لرحلة فارغة'
     : 'Aeris — رحلة فارغة جديدة';
 
   const html = shellHtml({
-    preheader: `${routeFrom} → ${routeTo} — ${price} ريال (خصم ${discountPct}%)`,
+    preheader: pricingVisible
+      ? `${routeFrom} → ${routeTo} — ${price} ريال (خصم ${discountPct}%)`
+      : `${routeFrom} → ${routeTo} — خصم ${discountPct}%`,
     heading,
     body: `
       <p>مرحباً ${escapeHtml(input.client.full_name)}،</p>
       <p>عثر نظام المطابقة على رحلة فارغة قد تناسب رحلاتك السابقة:</p>
       <p style="background:#0F1F35;padding:16px;border-radius:10px;margin:16px 0">
         <strong style="color:#E8D4A8">المسار:</strong> ${escapeHtml(routeFrom)} → ${escapeHtml(routeTo)}<br>
-        <strong style="color:#E8D4A8">السعر الحالي:</strong> ${price.toLocaleString('en-US')} ريال<br>
+        ${pricingVisible ? `<strong style="color:#E8D4A8">السعر الحالي:</strong> ${price.toLocaleString('en-US')} ريال<br>` : ''}
         <strong style="color:#E8D4A8">الخصم الحالي:</strong> ${discountPct}%
       </p>
-      <p>السعر يتغير ديناميكياً مع اقتراب موعد الرحلة. يمكنك حجز الرحلة من حسابك في أي وقت — وسيتواصل معك فريق Aeris لتأكيد التفاصيل خلال ساعة.</p>
+      <p>${
+        pricingVisible
+          ? 'السعر يتغير ديناميكياً مع اقتراب موعد الرحلة. يمكنك حجز الرحلة من حسابك في أي وقت — وسيتواصل معك فريق Aeris لتأكيد التفاصيل خلال ساعة.'
+          : 'أرسل طلب الحجز من حسابك وسيتواصل معك فريق Aeris بالسعر والتفاصيل بعد تأكيد طلبك.'
+      }</p>
     `,
     ctaUrl: input.legUrl,
-    ctaLabel: isPriceDrop ? 'عرض السعر الجديد' : 'عرض الرحلة الفارغة',
+    ctaLabel:
+      isPriceDrop && pricingVisible
+        ? 'عرض السعر الجديد'
+        : 'عرض الرحلة الفارغة',
   });
 
   try {
@@ -296,7 +311,7 @@ export async function sendClientEmptyLegReservationConfirmationEmail(
       <p>تم حجز الرحلة الفارغة <strong style="color:#E8D4A8">${escapeHtml(input.leg_number)}</strong> باسمك مؤقتاً لمدة ساعة واحدة:</p>
       <p style="background:#0F1F35;padding:16px;border-radius:10px;margin:16px 0">
         <strong style="color:#E8D4A8">المسار:</strong> ${escapeHtml(input.route_from)} → ${escapeHtml(input.route_to)}<br>
-        <strong style="color:#E8D4A8">السعر:</strong> ${input.price_at_reservation.toLocaleString('en-US')} ريال<br>
+        ${clientPricingVisible() ? `<strong style="color:#E8D4A8">السعر:</strong> ${input.price_at_reservation.toLocaleString('en-US')} ريال<br>` : ''}
         <strong style="color:#E8D4A8">ينتهي الحجز عند:</strong> ${expiresLocal} (توقيت الرياض)
       </p>
       <p>سيتواصل معك فريق Aeris خلال ساعة لتأكيد الحجز نهائياً وإكمال تفاصيل الدفع. يمكنك إلغاء الحجز من حسابك في أي لحظة قبل التأكيد.</p>

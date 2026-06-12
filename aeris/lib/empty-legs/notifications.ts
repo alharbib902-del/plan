@@ -7,6 +7,7 @@ import type { CandidateRow, ClientCandidateRow } from './candidate-pool';
 import { mintOptOutToken } from './opt-out-token';
 import { buildLegPublishedWhatsAppBody } from './notification-templates/leg-published-whatsapp';
 import { buildLegPriceDroppedWhatsAppBody } from './notification-templates/leg-price-dropped-whatsapp';
+import { clientPricingVisible } from './pricing-visibility';
 import { sendFounderBatchAlert } from './founder-batch-email';
 import { isClientOptedIn } from '@/lib/clients/notification-preferences';
 import { sendClientEmptyLegMatchEmail } from '@/lib/notifications/client-empty-leg-email';
@@ -132,6 +133,7 @@ export async function enqueueLegNotifications({
             legUrl,
             optOutUrl,
             customerName: cand.customer_name,
+            includePricing: clientPricingVisible(),
           })
         : buildLegPublishedWhatsAppBody({
             legNumber: leg.leg_number,
@@ -142,6 +144,7 @@ export async function enqueueLegNotifications({
             legUrl,
             optOutUrl,
             customerName: cand.customer_name,
+            includePricing: clientPricingVisible(),
           });
     const url = waMeUrl(cand.customer_phone, body);
 
@@ -316,6 +319,7 @@ export async function enqueueClientLegNotifications({
             legUrl,
             optOutUrl: `${siteUrl}/me/notifications`,
             customerName: cand.customer_name,
+            includePricing: clientPricingVisible(),
           })
         : buildLegPublishedWhatsAppBody({
             legNumber: leg.leg_number,
@@ -326,6 +330,7 @@ export async function enqueueClientLegNotifications({
             legUrl,
             optOutUrl: `${siteUrl}/me/notifications`,
             customerName: cand.customer_name,
+            includePricing: clientPricingVisible(),
           });
 
     const waUrl = wantsWa

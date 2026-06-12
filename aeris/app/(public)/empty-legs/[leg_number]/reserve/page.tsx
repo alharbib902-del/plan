@@ -12,6 +12,7 @@ import {
 } from '@/components/admin/empty-legs/formatters';
 import { getPublicLegByNumber } from '@/lib/empty-legs/public-queries';
 import { validateClientSession } from '@/lib/clients/auth';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
 export const dynamic = 'force-dynamic';
@@ -99,18 +100,30 @@ export default async function PublicEmptyLegReservePage({
           {formatDateTimeAr(leg.departure_window_start)} ←{' '}
           {formatDateTimeAr(leg.departure_window_end)}
         </div>
-        <div className="font-ar mt-3 flex items-baseline gap-3">
-          <span className="text-2xl text-gold-light">
-            {formatSarAmount(leg.current_price)}
-          </span>
-          <span className="text-sm text-ink-muted">
-            {emptyLegsAr.publicLegSar}
-          </span>
-          <span className="text-sm text-ink-muted">
-            ({formatPercent(leg.current_discount_pct)}{' '}
-            {emptyLegsAr.publicLegDiscount})
-          </span>
-        </div>
+        {clientPricingVisible() ? (
+          <div className="font-ar mt-3 flex items-baseline gap-3">
+            <span className="text-2xl text-gold-light">
+              {formatSarAmount(leg.current_price)}
+            </span>
+            <span className="text-sm text-ink-muted">
+              {emptyLegsAr.publicLegSar}
+            </span>
+            <span className="text-sm text-ink-muted">
+              ({formatPercent(leg.current_discount_pct)}{' '}
+              {emptyLegsAr.publicLegDiscount})
+            </span>
+          </div>
+        ) : (
+          <div className="font-ar mt-3 flex items-baseline gap-3">
+            <span className="text-xl text-gold-light">
+              {emptyLegsAr.pricingHiddenCardPrice}
+            </span>
+            <span className="text-sm text-ink-muted">
+              ({formatPercent(leg.current_discount_pct)}{' '}
+              {emptyLegsAr.publicLegDiscount})
+            </span>
+          </div>
+        )}
       </article>
 
       <div className="mt-6">
@@ -122,7 +135,14 @@ export default async function PublicEmptyLegReservePage({
                 {clientSession?.full_name}
               </span>
             </p>
-            <ReserveEmptyLegButton legId={leg.id} />
+            <ReserveEmptyLegButton
+              legId={leg.id}
+              label={
+                clientPricingVisible()
+                  ? undefined
+                  : emptyLegsAr.pricingHiddenSubmit
+              }
+            />
           </div>
         ) : (
           <PublicReserveForm
@@ -130,6 +150,7 @@ export default async function PublicEmptyLegReservePage({
             isLoggedIn={Boolean(clientSession)}
             prefillName={clientSession?.full_name}
             prefillPhone={clientSession?.contact_phone}
+            requestMode={!clientPricingVisible()}
           />
         )}
       </div>

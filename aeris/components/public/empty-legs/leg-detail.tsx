@@ -8,6 +8,7 @@ import {
   routeLabel,
 } from '@/components/admin/empty-legs/formatters';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import { PublicAuctionTrajectory } from './auction-trajectory';
 
 export function PublicLegDetail({ leg }: { leg: EmptyLegRow }) {
@@ -44,22 +45,42 @@ export function PublicLegDetail({ leg }: { leg: EmptyLegRow }) {
         <Pair label={emptyLegsAr.publicLegMaxPassengers}>
           {leg.max_passengers}
         </Pair>
-        <Pair label={emptyLegsAr.publicLegOriginalPrice}>
-          {formatSarAmount(leg.original_price)} {emptyLegsAr.publicLegSar}
-        </Pair>
-        <Pair label={emptyLegsAr.publicLegPrice}>
-          <span className="text-2xl text-gold-light">
-            {formatSarAmount(leg.current_price)}
-          </span>{' '}
-          <span className="text-sm">{emptyLegsAr.publicLegSar}</span>{' '}
-          <span className="text-sm text-ink-muted">
-            ({formatPercent(leg.current_discount_pct)}{' '}
-            {emptyLegsAr.publicLegDiscount})
-          </span>
-        </Pair>
+        {clientPricingVisible() ? (
+          <>
+            <Pair label={emptyLegsAr.publicLegOriginalPrice}>
+              {formatSarAmount(leg.original_price)} {emptyLegsAr.publicLegSar}
+            </Pair>
+            <Pair label={emptyLegsAr.publicLegPrice}>
+              <span className="text-2xl text-gold-light">
+                {formatSarAmount(leg.current_price)}
+              </span>{' '}
+              <span className="text-sm">{emptyLegsAr.publicLegSar}</span>{' '}
+              <span className="text-sm text-ink-muted">
+                ({formatPercent(leg.current_discount_pct)}{' '}
+                {emptyLegsAr.publicLegDiscount})
+              </span>
+            </Pair>
+          </>
+        ) : (
+          <>
+            <Pair label={emptyLegsAr.pricingHiddenPriceLabel}>
+              <span className="text-xl text-gold-light">
+                {emptyLegsAr.pricingHiddenValue}
+              </span>{' '}
+              <span className="text-xs text-ink-muted">
+                {emptyLegsAr.pricingHiddenDetailNote}
+              </span>
+            </Pair>
+            <Pair label={emptyLegsAr.publicLegDiscount}>
+              <span className="text-xl text-gold-light">
+                {formatPercent(leg.current_discount_pct)}
+              </span>
+            </Pair>
+          </>
+        )}
       </section>
 
-      <PublicAuctionTrajectory leg={leg} />
+      {clientPricingVisible() ? <PublicAuctionTrajectory leg={leg} /> : null}
 
       {leg.status === 'available' ? (
         <div className="flex justify-end">
@@ -67,7 +88,9 @@ export function PublicLegDetail({ leg }: { leg: EmptyLegRow }) {
             href={`/empty-legs/${leg.leg_number}/reserve`}
             className="font-ar inline-flex items-center gap-2 rounded-md border border-gold bg-gold/15 px-6 py-3 text-base text-gold-light transition-colors hover:bg-gold/25"
           >
-            {emptyLegsAr.publicLegReserveCta}
+            {clientPricingVisible()
+              ? emptyLegsAr.publicLegReserveCta
+              : emptyLegsAr.pricingHiddenReserveCta}
             <span aria-hidden>←</span>
           </Link>
         </div>

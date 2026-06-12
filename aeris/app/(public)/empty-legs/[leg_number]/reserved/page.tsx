@@ -15,6 +15,7 @@ import {
   verifyReservationToken,
 } from '@/lib/empty-legs/reservation-token';
 import { whatsappLink } from '@/lib/utils/format';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
 export const dynamic = 'force-dynamic';
@@ -123,10 +124,14 @@ export default async function PublicEmptyLegReservedPage({
         ← {emptyLegsAr.publicLegPageBack}
       </Link>
       <h1 className="font-ar mt-2 text-3xl text-ink sm:text-4xl">
-        {emptyLegsAr.publicReservedTitle}
+        {clientPricingVisible()
+          ? emptyLegsAr.publicReservedTitle
+          : emptyLegsAr.pricingHiddenReservedTitle}
       </h1>
       <p className="font-ar mt-2 text-base text-ink-secondary">
-        {emptyLegsAr.publicReservedHint}
+        {clientPricingVisible()
+          ? emptyLegsAr.publicReservedHint
+          : emptyLegsAr.pricingHiddenReservedHint}
       </p>
 
       <article className="mt-6 rounded-xl border border-gold/30 bg-gold/5 p-5">
@@ -149,7 +154,9 @@ export default async function PublicEmptyLegReservedPage({
           {formatDateTimeAr(leg.departure_window_end)}
         </div>
         <div className="font-ar mt-3 text-base">
-          {formatSarAmount(leg.current_price)} {emptyLegsAr.publicLegSar}
+          {clientPricingVisible()
+            ? `${formatSarAmount(leg.current_price)} ${emptyLegsAr.publicLegSar}`
+            : emptyLegsAr.pricingHiddenCardPrice}
         </div>
 
         {expiresAt && leg.status === 'reserved' ? (

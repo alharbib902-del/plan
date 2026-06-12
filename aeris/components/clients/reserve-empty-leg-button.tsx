@@ -25,9 +25,16 @@ import { ClientBanner, clientErrorMessage } from './error-banner';
 
 interface ReserveEmptyLegButtonProps {
   legId: string;
+  /** 2026-06 request-to-book — overrides the CTA so the button reads
+   *  "أرسل طلب الحجز" while client pricing is hidden. Passed from
+   *  server pages (env flags are server-only). */
+  label?: string;
 }
 
-export function ReserveEmptyLegButton({ legId }: ReserveEmptyLegButtonProps) {
+export function ReserveEmptyLegButton({
+  legId,
+  label,
+}: ReserveEmptyLegButtonProps) {
   const [isPending, startTransition] = useTransition();
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -70,7 +77,9 @@ export function ReserveEmptyLegButton({ legId }: ReserveEmptyLegButtonProps) {
         disabled={isPending}
         className="font-ar w-full rounded-lg border border-gold/50 bg-gold/15 px-5 py-3 text-base font-medium text-gold-light transition-colors hover:bg-gold/25 disabled:opacity-60 sm:w-auto"
       >
-        {isPending ? clientsAr.emptyLegsReserving : clientsAr.emptyLegsReserveCta}
+        {isPending
+          ? clientsAr.emptyLegsReserving
+          : (label ?? clientsAr.emptyLegsReserveCta)}
       </button>
     </div>
   );

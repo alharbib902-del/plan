@@ -7,6 +7,7 @@ import {
   listDistinctDepartures,
   listPublicAvailableLegs,
 } from '@/lib/empty-legs/public-queries';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
 
 export const dynamic = 'force-dynamic';
@@ -41,7 +42,11 @@ export default async function PublicEmptyLegsListPage({
   const resolvedSearchParams = (await searchParams) ?? {};
   const departure = resolvedSearchParams.departure?.trim() || null;
   const minPassengers = parseNumber(resolvedSearchParams.minPassengers);
-  const maxPrice = parseNumber(resolvedSearchParams.maxPrice);
+  // Request-to-book: with client pricing hidden there is no price to
+  // filter on, so the param is ignored even if hand-crafted in the URL.
+  const maxPrice = clientPricingVisible()
+    ? parseNumber(resolvedSearchParams.maxPrice)
+    : null;
 
   const [legs, distinctDepartures] = await Promise.all([
     listPublicAvailableLegs({
@@ -60,13 +65,17 @@ export default async function PublicEmptyLegsListPage({
           {emptyLegsAr.publicListTitle}
         </h1>
         <p className="font-ar mt-2 text-base text-ink-secondary">
-          {emptyLegsAr.publicListSubtitle}
+          {clientPricingVisible()
+            ? emptyLegsAr.publicListSubtitle
+            : emptyLegsAr.pricingHiddenListSubtitle}
         </p>
       </header>
 
       <form
         method="get"
-        className="mb-8 grid gap-3 rounded-xl border border-border bg-navy-card/40 p-4 sm:grid-cols-3"
+        className={`mb-8 grid gap-3 rounded-xl border border-border bg-navy-card/40 p-4 ${
+          clientPricingVisible() ? 'sm:grid-cols-3' : 'sm:grid-cols-2'
+        }`}
       >
         <div>
           <label
@@ -108,24 +117,30 @@ export default async function PublicEmptyLegsListPage({
             className="font-ar block w-full rounded-md border border-border bg-navy-card/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
           />
         </div>
-        <div>
-          <label
-            htmlFor="maxPrice"
-            className="font-ar mb-1 block text-xs text-ink-muted"
-          >
-            {emptyLegsAr.publicListFilterMaxPrice}
-          </label>
-          <input
-            id="maxPrice"
-            name="maxPrice"
-            type="number"
-            min={0}
-            step="500"
-            defaultValue={maxPrice ?? ''}
-            className="font-ar block w-full rounded-md border border-border bg-navy-card/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
-          />
-        </div>
-        <div className="flex flex-wrap items-end justify-end gap-2 sm:col-span-3">
+        {clientPricingVisible() ? (
+          <div>
+            <label
+              htmlFor="maxPrice"
+              className="font-ar mb-1 block text-xs text-ink-muted"
+            >
+              {emptyLegsAr.publicListFilterMaxPrice}
+            </label>
+            <input
+              id="maxPrice"
+              name="maxPrice"
+              type="number"
+              min={0}
+              step="500"
+              defaultValue={maxPrice ?? ''}
+              className="font-ar block w-full rounded-md border border-border bg-navy-card/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none"
+            />
+          </div>
+        ) : null}
+        <div
+          className={`flex flex-wrap items-end justify-end gap-2 ${
+            clientPricingVisible() ? 'sm:col-span-3' : 'sm:col-span-2'
+          }`}
+        >
           <Link
             href="/empty-legs"
             className="font-ar inline-flex items-center gap-2 rounded-md border border-border bg-navy-secondary/60 px-4 py-2 text-sm text-ink-secondary transition-colors hover:border-gold/40 hover:text-gold-light"

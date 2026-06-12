@@ -347,6 +347,28 @@ export const emptyLegsAr = {
   homeEmptyLegsCtaButton: 'تصفّح الرحلات',
   navEmptyLegsLabel: 'رحلات فارغة',
 
+  // ============================================================
+  // 2026-06 — request-to-book: client-facing pricing hidden unless
+  // ENABLE_EMPTY_LEGS_CLIENT_PRICING === 'true'. The client sees the
+  // leg + discount, sends a request, and Aeris sends the price after
+  // a seriousness check.
+  // ============================================================
+  pricingHiddenPriceLabel: 'السعر',
+  pricingHiddenValue: 'عند الطلب',
+  pricingHiddenCardPrice: 'السعر عند الطلب',
+  pricingHiddenReserveCta: 'اطلب الحجز',
+  pricingHiddenSubmit: 'أرسل طلب الحجز',
+  pricingHiddenDetailNote: 'يُرسل لك السعر بعد تأكيد طلب الحجز.',
+  pricingHiddenReserveHint:
+    'طلبك يحفظ المقعد مؤقتاً لمدة 10 دقائق — تواصل معنا عبر واتساب وسنرسل لك السعر وتفاصيل الدفع بعد تأكيد طلبك.',
+  pricingHiddenReservedTitle: 'تم استلام طلبك',
+  pricingHiddenReservedHint:
+    'تواصل معنا عبر واتساب خلال 10 دقائق لتأكيد طلبك — بعد التأكيد نرسل لك السعر وتفاصيل الدفع، وإلا يُلغى الطلب تلقائياً.',
+  pricingHiddenListSubtitle:
+    'رحلات عودة بخصومات حصرية. أرسل طلب الحجز وسيؤكد لك فريق Aeris السعر والتفاصيل مباشرة.',
+  pricingHiddenHomeSubtitle:
+    'رحلات عودة بخصومات تصل إلى 70% — أرسل طلب الحجز وسيتواصل معك فريق Aeris بالسعر والتفاصيل.',
+
   // PR 2d — Validator + Server Action error codes
   errorRpcLegNumberMissing: 'رقم الرحلة مطلوب.',
   errorRpcLegNumberInvalid: 'رقم الرحلة غير صالح.',

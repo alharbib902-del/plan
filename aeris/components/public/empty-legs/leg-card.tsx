@@ -8,6 +8,7 @@ import {
   routeLabel,
 } from '@/components/admin/empty-legs/formatters';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 
 export function PublicLegCard({ leg }: { leg: EmptyLegRow }) {
   return (
@@ -33,14 +34,28 @@ export function PublicLegCard({ leg }: { leg: EmptyLegRow }) {
           </div>
         </div>
         <div className="text-end">
-          <div className="font-ar text-2xl text-gold-light sm:text-3xl">
-            {formatSarAmount(leg.current_price)}
-          </div>
-          <div className="font-ar mt-1 text-xs text-ink-muted">
-            {emptyLegsAr.publicLegSar} ·{' '}
-            {formatPercent(leg.current_discount_pct)}{' '}
-            {emptyLegsAr.publicLegDiscount}
-          </div>
+          {clientPricingVisible() ? (
+            <>
+              <div className="font-ar text-2xl text-gold-light sm:text-3xl">
+                {formatSarAmount(leg.current_price)}
+              </div>
+              <div className="font-ar mt-1 text-xs text-ink-muted">
+                {emptyLegsAr.publicLegSar} ·{' '}
+                {formatPercent(leg.current_discount_pct)}{' '}
+                {emptyLegsAr.publicLegDiscount}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="font-ar text-lg text-gold-light sm:text-xl">
+                {emptyLegsAr.pricingHiddenCardPrice}
+              </div>
+              <div className="font-ar mt-1 text-xs text-ink-muted">
+                {formatPercent(leg.current_discount_pct)}{' '}
+                {emptyLegsAr.publicLegDiscount}
+              </div>
+            </>
+          )}
         </div>
       </header>
 
@@ -62,7 +77,9 @@ export function PublicLegCard({ leg }: { leg: EmptyLegRow }) {
 
       <div className="mt-4 flex justify-end">
         <span className="font-ar inline-flex items-center gap-1 text-sm text-gold-light transition-colors group-hover:text-gold">
-          {emptyLegsAr.publicLegReserveCta}
+          {clientPricingVisible()
+            ? emptyLegsAr.publicLegReserveCta
+            : emptyLegsAr.pricingHiddenReserveCta}
           <span aria-hidden>←</span>
         </span>
       </div>
