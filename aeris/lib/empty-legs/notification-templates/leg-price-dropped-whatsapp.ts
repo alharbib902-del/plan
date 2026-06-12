@@ -16,6 +16,11 @@ export interface LegPriceDroppedTemplateInput {
   legUrl: string;
   optOutUrl: string;
   customerName: string | null;
+  /** 2026-06 request-to-book — when false the body shows the discount
+   *  % only (no SAR amount); Aeris sends the price manually after the
+   *  seriousness check. Defaults to true so the function stays pure and
+   *  existing callers/tests are unchanged. */
+  includePricing?: boolean;
 }
 
 export function buildLegPriceDroppedWhatsAppBody(
@@ -33,7 +38,9 @@ export function buildLegPriceDroppedWhatsAppBody(
     `انخفض سعر الرحلة الفارغة التي سبق أن أبدينا اهتمامك بها:`,
     `• الرقم: ${input.legNumber}`,
     `• المسار: ${input.routeFrom} ← ${input.routeTo}`,
-    `• السعر الجديد: ${priceSar} ريال (${discountPct}% خصم)`,
+    input.includePricing === false
+      ? `• الخصم الحالي: ${discountPct}%`
+      : `• السعر الجديد: ${priceSar} ريال (${discountPct}% خصم)`,
     '',
     `قد تختفي المقاعد بسرعة. للحجز:`,
     input.legUrl,

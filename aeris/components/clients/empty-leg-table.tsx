@@ -1,6 +1,8 @@
 import Link from 'next/link';
 
 import { clientsAr } from '@/lib/i18n/clients-ar';
+import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 import type { MatchedEmptyLegEntry } from '@/lib/clients/queries/me-empty-legs';
 
@@ -96,9 +98,11 @@ export function EmptyLegBrowseTable({ legs }: BrowseProps) {
               </Td>
               <Td>{formatDateAr(leg.departure_window_start)}</Td>
               <Td>
-                {formatSAR(
-                  leg.current_price as unknown as number | string | null
-                )}
+                {clientPricingVisible()
+                  ? formatSAR(
+                      leg.current_price as unknown as number | string | null
+                    )
+                  : emptyLegsAr.pricingHiddenValue}
               </Td>
               <Td>
                 <span className="text-gold-light">
@@ -167,12 +171,14 @@ export function EmptyLegMatchesTable({ entries }: MatchesProps) {
               </Td>
               <Td>{formatDateAr(entry.notification_sent_at)}</Td>
               <Td>
-                {formatSAR(
-                  entry.leg.current_price as unknown as
-                    | number
-                    | string
-                    | null
-                )}
+                {clientPricingVisible()
+                  ? formatSAR(
+                      entry.leg.current_price as unknown as
+                        | number
+                        | string
+                        | null
+                    )
+                  : emptyLegsAr.pricingHiddenValue}
               </Td>
               <Td>
                 <span className="text-gold-light">

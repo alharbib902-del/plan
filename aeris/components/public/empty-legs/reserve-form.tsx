@@ -17,6 +17,10 @@ interface PublicReserveFormProps {
   prefillName?: string;
   prefillPhone?: string;
   isLoggedIn?: boolean;
+  /** 2026-06 request-to-book — client pricing is hidden, so the form
+   *  reads as "send a reservation request" instead of "confirm a
+   *  booking". Passed from the server page (env flags are server-only). */
+  requestMode?: boolean;
 }
 
 export function PublicReserveForm({
@@ -24,6 +28,7 @@ export function PublicReserveForm({
   prefillName,
   prefillPhone,
   isLoggedIn,
+  requestMode,
 }: PublicReserveFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -69,7 +74,9 @@ export function PublicReserveForm({
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <p className="font-ar text-sm text-ink-muted">
-        {emptyLegsAr.publicReserveHint}
+        {requestMode
+          ? emptyLegsAr.pricingHiddenReserveHint
+          : emptyLegsAr.publicReserveHint}
       </p>
 
       {isLoggedIn ? (
@@ -172,7 +179,9 @@ export function PublicReserveForm({
         >
           {isPending
             ? emptyLegsAr.formSubmitting
-            : emptyLegsAr.publicReserveSubmit}
+            : requestMode
+              ? emptyLegsAr.pricingHiddenSubmit
+              : emptyLegsAr.publicReserveSubmit}
         </button>
       </div>
     </form>

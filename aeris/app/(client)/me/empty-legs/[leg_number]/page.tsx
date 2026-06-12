@@ -8,6 +8,8 @@ import { CancelEmptyLegButton } from '@/components/clients/cancel-empty-leg-butt
 import { AuctionCountdown } from '@/components/clients/auction-countdown';
 import { ClientBanner } from '@/components/clients/error-banner';
 import { clientsAr } from '@/lib/i18n/clients-ar';
+import { emptyLegsAr } from '@/lib/i18n/empty-legs-ar';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 
 /**
  * Phase 10 PR 2 — `/me/empty-legs/[leg_number]` detail page.
@@ -137,8 +139,14 @@ export default async function ClientMeEmptyLegDetailPage({
           <div>
             <dt className="text-ink-muted">{clientsAr.emptyLegsCardPrice}</dt>
             <dd className="mt-1 text-ink-primary">
-              {formatSAR(leg.current_price as unknown as number | string)}{' '}
-              <span className="text-xs text-ink-muted">ريال</span>
+              {clientPricingVisible() ? (
+                <>
+                  {formatSAR(leg.current_price as unknown as number | string)}{' '}
+                  <span className="text-xs text-ink-muted">ريال</span>
+                </>
+              ) : (
+                emptyLegsAr.pricingHiddenValue
+              )}
             </dd>
           </div>
           <div>
@@ -170,7 +178,14 @@ export default async function ClientMeEmptyLegDetailPage({
       </div>
 
       {isAvailable ? (
-        <ReserveEmptyLegButton legId={leg.id} />
+        <ReserveEmptyLegButton
+          legId={leg.id}
+          label={
+            clientPricingVisible()
+              ? undefined
+              : emptyLegsAr.pricingHiddenSubmit
+          }
+        />
       ) : null}
 
       {isReservedByMe ? (
