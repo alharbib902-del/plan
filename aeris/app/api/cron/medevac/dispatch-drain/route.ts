@@ -118,6 +118,14 @@ async function handler(req: NextRequest): Promise<Response> {
   const auth = verifyCronAuth(req.headers);
   if (!auth.ok) return unauthorizedJsonResponse();
 
+  // 2026-06 scope focus — with medevac hidden the drain must be a no-op,
+  // not merely unscheduled: a manual/leftover invocation would otherwise
+  // email operators about stale outbox rows. Re-enabling the flag resumes
+  // draining the backlog unchanged.
+  if (process.env.ENABLE_MEDEVAC !== 'true') {
+    return NextResponse.json({ ok: true, skipped: 'flag_disabled' });
+  }
+
   const admin = createAdminClient() as unknown as LooseRpcClient;
   const claimId = crypto.randomUUID();
 

@@ -30,6 +30,23 @@ const SOURCE_LABEL: Record<string, string> = {
   medevac: analyticsAr.sourceMedevac,
 };
 
+// 2026-06 scope focus — disabled verticals drop out of the by-source
+// breakdown so the dashboard mirrors what the platform currently offers.
+// KPI totals stay whole on purpose: historical paid bookings remain real
+// revenue regardless of which verticals are visible today.
+const HIDDEN_SOURCES = new Set<string>([
+  ...(process.env.ENABLE_CARGO !== 'true' ? ['cargo'] : []),
+  ...(process.env.ENABLE_MEDEVAC !== 'true' ? ['medevac'] : []),
+]);
+
+function visibleBySource(
+  record: Record<string, number>
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => !HIDDEN_SOURCES.has(key))
+  );
+}
+
 const STATUS_LABEL: Record<string, string> = {
   pending: analyticsAr.statusPending,
   distributed: analyticsAr.statusDistributed,
@@ -213,7 +230,10 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
             <CountTable
               heading={analyticsAr.bySourceHeading}
               keyHeader={analyticsAr.colType}
-              rows={labeledRows(summary.bookings.by_source, SOURCE_LABEL)}
+              rows={labeledRows(
+                visibleBySource(summary.bookings.by_source),
+                SOURCE_LABEL
+              )}
             />
             <CountTable
               heading={analyticsAr.byStatusHeading}

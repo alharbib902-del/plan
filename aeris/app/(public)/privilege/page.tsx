@@ -82,7 +82,10 @@ export default async function PublicPrivilegePage() {
                     : `أبكر ${t.empty_legs_boost_hours} ساعة`}
                 </p>
               </div>
-              {t.free_diamond_shield && (
+              {/* 2026-06 scope focus — the Shield perk is a MedEvac benefit;
+                  with the vertical hidden the public tier card must not
+                  advertise it. Restored automatically when the flag flips. */}
+              {t.free_diamond_shield && process.env.ENABLE_MEDEVAC === 'true' && (
                 <p className="font-ar mt-2 text-xs text-violet-300">
                   + Aeris Shield Diamond مجاناً (MedEvac unlimited)
                 </p>

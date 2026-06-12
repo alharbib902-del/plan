@@ -63,22 +63,6 @@
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/cron/cargo/dispatch-drain",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/cron/medevac/dispatch-drain",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/medevac/sla-escalation",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/medevac/expire-certifications",
-      "schedule": "*/30 * * * *"
-    },
-    {
       "path": "/api/cron/privilege/evaluate-all",
       "schedule": "0 3 * * *"
     },
