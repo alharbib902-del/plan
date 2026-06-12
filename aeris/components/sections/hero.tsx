@@ -3,6 +3,20 @@ import { ArrowLeft } from 'lucide-react';
 import { whatsappLink } from '@/lib/utils/format';
 import { AERIS_DEFAULT_WHATSAPP_MESSAGE } from '@/lib/config/contact';
 
+// 2026-06 scope focus — the hero pitch enumerates only the verticals the
+// platform currently offers: a hidden flag drops its mention so the copy
+// never advertises a service whose intake is disabled.
+const HERO_VERTICALS = [
+  'رحلات مخصصة',
+  'رحلات الإياب الفارغة',
+  ...(process.env.ENABLE_MEDEVAC === 'true' ? ['إخلاء طبي'] : []),
+  ...(process.env.ENABLE_CARGO === 'true' ? ['شحن متخصص'] : []),
+];
+const HERO_VERTICALS_AR =
+  HERO_VERTICALS.length === 2
+    ? HERO_VERTICALS.join(' و')
+    : `${HERO_VERTICALS.slice(0, -1).join('، ')}، و${HERO_VERTICALS.at(-1)}`;
+
 export function Hero() {
   return (
     <section className="relative overflow-hidden">
@@ -40,9 +54,8 @@ export function Hero() {
         </h2>
 
         <p className="font-ar mx-auto mt-6 max-w-2xl text-base leading-8 text-ink-secondary sm:text-lg">
-          منصة ذكية متكاملة للطيران الخاص في المملكة العربية السعودية.
-          رحلات مخصصة، رحلات الإياب الفارغة، إخلاء طبي، وشحن متخصص — بإشراف
-          مباشر من فريق Aeris.
+          منصة ذكية متكاملة للطيران الخاص في المملكة العربية السعودية.{' '}
+          {HERO_VERTICALS_AR} — بإشراف مباشر من فريق Aeris.
         </p>
 
         <div className="mt-10 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">

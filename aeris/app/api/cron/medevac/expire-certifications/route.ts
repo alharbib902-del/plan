@@ -153,6 +153,14 @@ async function handler(req: NextRequest): Promise<Response> {
   const auth = verifyCronAuth(req.headers);
   if (!auth.ok) return unauthorizedJsonResponse();
 
+  // 2026-06 scope focus — with medevac hidden, cert warning/expiry emails
+  // would nag operators about a vertical that is no longer offered. The
+  // scans are state-based (thresholds vs NOW()), so re-enabling the flag
+  // catches up on warnings + enforcement on the next tick.
+  if (process.env.ENABLE_MEDEVAC !== 'true') {
+    return NextResponse.json({ ok: true, skipped: 'flag_disabled' });
+  }
+
   const admin = createAdminClient() as unknown as LooseSelect;
   const audit = createAdminClient() as unknown as LooseAudit;
 

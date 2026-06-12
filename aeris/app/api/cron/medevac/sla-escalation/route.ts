@@ -146,6 +146,14 @@ async function handler(req: NextRequest): Promise<Response> {
   const auth = verifyCronAuth(req.headers);
   if (!auth.ok) return unauthorizedJsonResponse();
 
+  // 2026-06 scope focus — with medevac hidden, SLA escalation would keep
+  // emailing the founder about requests in a vertical that is no longer
+  // offered. No-op while the flag is off; state-based scan catches up if
+  // the vertical is re-enabled.
+  if (process.env.ENABLE_MEDEVAC !== 'true') {
+    return NextResponse.json({ ok: true, skipped: 'flag_disabled' });
+  }
+
   const admin = createAdminClient() as unknown as LooseClient;
 
   // Load SLA intervals once.

@@ -36,50 +36,43 @@ const SERVICES: Service[] = [
     ],
     cta: { href: '/request', label: 'استعلم عن المتاح' },
   },
-  {
-    icon: HeartPulse,
-    title: 'الإخلاء الطبي (MedEvac)',
-    description:
-      'نقل المرضى بطائرات مجهّزة طبياً مع طاقم تخصصي، بتنسيق محلي ودولي.',
-    highlights: [
-      'تنسيق طبي عبر مشغّلين معتمدين',
-      'مستويات خدمة BMT • ALS • CCT',
-      'تنسيق مع المستشفيات والتأمين',
-    ],
-    // Round 1 PR #76 P2 #4 fix — when ENABLE_MEDEVAC=true, route
-    // to the real /medevac intake (Phase 12 PR 1 §4.1
-    // create_medevac_request_guest); otherwise fall back to
-    // /request so the CTA is never broken if the medevac flag is
-    // off. Mirrors the cargo CTA pattern above + matches the
-    // gating discipline used by the /medevac page itself and the
-    // /admin/medevac pages.
-    cta:
-      process.env.ENABLE_MEDEVAC === 'true'
-        ? { href: '/medevac', label: 'احجز إخلاء طبي' }
-        : { href: '/request', label: 'احجز إخلاء طبي' },
-  },
-  {
-    icon: Package,
-    title: 'الشحن المتخصص (Cargo)',
-    description:
-      'شحن جوي للخيول والسيارات الفاخرة والمقتنيات الثمينة بمعايير سرية وأمان عالية.',
-    highlights: [
-      'نقل الخيول والحيوانات الأليفة',
-      'سيارات وعربات نادرة',
-      'مقتنيات حساسة الوقت والقيمة',
-    ],
-    // Round 2 PR #65 P2 #1 — when ENABLE_CARGO=true, route to the
-    // real /cargo intake (Phase 11 PR 1 §4.1 create_cargo_request_guest);
-    // otherwise fall back to /request so the CTA is never broken if
-    // the cargo flag is off in any environment. process.env is read
-    // at module load (Server Component → build-time substitution by
-    // Next.js), matching the gating discipline used by the
-    // /cargo page itself and the /admin/cargo pages.
-    cta:
-      process.env.ENABLE_CARGO === 'true'
-        ? { href: '/cargo', label: 'اطلب عرض شحن' }
-        : { href: '/request', label: 'اطلب عرض شحن' },
-  },
+  // 2026-06 scope focus (charter / empty legs / privilege) — hidden
+  // verticals drop out of the marketing grid entirely: a visible card
+  // whose CTA falls back to /request would advertise a service the
+  // platform no longer offers. Flipping the flag back on restores the
+  // card with its real intake route.
+  ...(process.env.ENABLE_MEDEVAC === 'true'
+    ? [
+        {
+          icon: HeartPulse,
+          title: 'الإخلاء الطبي (MedEvac)',
+          description:
+            'نقل المرضى بطائرات مجهّزة طبياً مع طاقم تخصصي، بتنسيق محلي ودولي.',
+          highlights: [
+            'تنسيق طبي عبر مشغّلين معتمدين',
+            'مستويات خدمة BMT • ALS • CCT',
+            'تنسيق مع المستشفيات والتأمين',
+          ],
+          cta: { href: '/medevac', label: 'احجز إخلاء طبي' },
+        } satisfies Service,
+      ]
+    : []),
+  ...(process.env.ENABLE_CARGO === 'true'
+    ? [
+        {
+          icon: Package,
+          title: 'الشحن المتخصص (Cargo)',
+          description:
+            'شحن جوي للخيول والسيارات الفاخرة والمقتنيات الثمينة بمعايير سرية وأمان عالية.',
+          highlights: [
+            'نقل الخيول والحيوانات الأليفة',
+            'سيارات وعربات نادرة',
+            'مقتنيات حساسة الوقت والقيمة',
+          ],
+          cta: { href: '/cargo', label: 'اطلب عرض شحن' },
+        } satisfies Service,
+      ]
+    : []),
   {
     icon: Handshake,
     title: 'شراكة المشغّلين (Operators)',
@@ -98,6 +91,16 @@ const SERVICES: Service[] = [
   },
 ];
 
+// Arabic 3–10 counted nouns use the bare form ("ثلاث خدمات"). Derived from
+// the flag-filtered list so the headline never claims more services than
+// the grid actually shows.
+const SERVICES_COUNT_AR: Record<number, string> = {
+  3: 'ثلاث خدمات',
+  4: 'أربع خدمات',
+  5: 'خمس خدمات',
+};
+const SERVICES_HEADLINE = `${SERVICES_COUNT_AR[SERVICES.length] ?? 'خدماتنا'}. تجربة واحدة لا تُنسى.`;
+
 export function Services() {
   return (
     <section
@@ -110,7 +113,7 @@ export function Services() {
             خدماتنا
           </span>
           <h2 className="font-ar mt-6 text-3xl leading-tight text-ink sm:text-4xl md:text-5xl">
-            خمس خدمات. تجربة واحدة لا تُنسى.
+            {SERVICES_HEADLINE}
           </h2>
           <p className="font-ar mx-auto mt-4 max-w-2xl text-sm leading-7 text-ink-secondary sm:text-base">
             من أول طلب رحلة حتى الهبوط، نوفر لك تجربة طيران خاص متكاملة
