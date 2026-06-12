@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 };
 
 interface TripsPageProps {
-  searchParams?: { status?: string };
+  searchParams?: Promise<{ status?: string }>;
 }
 
 function parseStatus(raw: string | undefined): TripRequestStatus | 'all' {
@@ -31,7 +31,7 @@ function parseStatus(raw: string | undefined): TripRequestStatus | 'all' {
 }
 
 export default async function AdminTripsPage({ searchParams }: TripsPageProps) {
-  const status = parseStatus(searchParams?.status);
+  const status = parseStatus(((await searchParams) ?? {}).status);
   const [trips, counts] = await Promise.all([
     listTrips({ status, limit: 200 }),
     countTripsByStatus(),

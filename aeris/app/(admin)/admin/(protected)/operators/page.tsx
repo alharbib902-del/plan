@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  searchParams?: { filter?: string };
+  searchParams?: Promise<{ filter?: string }>;
 }
 
 function parseFilter(raw: string | undefined): OperatorListFilter {
@@ -40,7 +40,7 @@ export default async function AdminOperatorsPage({ searchParams }: PageProps) {
     notFound();
   }
 
-  const filter = parseFilter(searchParams?.filter);
+  const filter = parseFilter(((await searchParams) ?? {}).filter);
   const [operators, counts, alertStatus] = await Promise.all([
     listOperators({ filter, limit: 200 }),
     countOperatorsByStatus(),

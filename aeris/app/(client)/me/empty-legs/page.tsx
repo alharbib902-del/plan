@@ -42,7 +42,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  searchParams?: { tab?: string };
+  searchParams?: Promise<{ tab?: string }>;
 }
 
 export default async function ClientMeEmptyLegsPage({
@@ -52,7 +52,9 @@ export default async function ClientMeEmptyLegsPage({
   if (process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL !== 'true') notFound();
 
   const session = await requireClientSession();
-  const tab = searchParams?.tab === 'browse-all' ? 'browse-all' : 'matches';
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const tab =
+    resolvedSearchParams.tab === 'browse-all' ? 'browse-all' : 'matches';
 
   const [matches, available] = await Promise.all([
     listMatchedEmptyLegsForClient(session.client_id),

@@ -18,11 +18,11 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  searchParams?: {
+  searchParams?: Promise<{
     departure?: string;
     minPassengers?: string;
     maxPrice?: string;
-  };
+  }>;
 }
 
 function parseNumber(raw: string | undefined): number | null {
@@ -38,9 +38,10 @@ export default async function PublicEmptyLegsListPage({
     notFound();
   }
 
-  const departure = searchParams?.departure?.trim() || null;
-  const minPassengers = parseNumber(searchParams?.minPassengers);
-  const maxPrice = parseNumber(searchParams?.maxPrice);
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const departure = resolvedSearchParams.departure?.trim() || null;
+  const minPassengers = parseNumber(resolvedSearchParams.minPassengers);
+  const maxPrice = parseNumber(resolvedSearchParams.maxPrice);
 
   const [legs, distinctDepartures] = await Promise.all([
     listPublicAvailableLegs({

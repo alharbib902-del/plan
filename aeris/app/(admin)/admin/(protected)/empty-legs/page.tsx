@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-  searchParams?: { status?: string };
+  searchParams?: Promise<{ status?: string }>;
 }
 
 function parseFilter(raw: string | undefined): EmptyLegListFilter {
@@ -39,7 +39,7 @@ export default async function AdminEmptyLegsPage({ searchParams }: PageProps) {
     notFound();
   }
 
-  const filter = parseFilter(searchParams?.status);
+  const filter = parseFilter(((await searchParams) ?? {}).status);
   const [legs, counts] = await Promise.all([
     listEmptyLegs({ filter, limit: 200 }),
     countEmptyLegsByStatus(),

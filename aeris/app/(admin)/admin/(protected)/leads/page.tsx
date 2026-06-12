@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 };
 
 interface LeadsPageProps {
-  searchParams?: { status?: string };
+  searchParams?: Promise<{ status?: string }>;
 }
 
 function parseStatus(raw: string | undefined): LeadStatusValue | 'all' {
@@ -27,7 +27,7 @@ function parseStatus(raw: string | undefined): LeadStatusValue | 'all' {
 }
 
 export default async function AdminLeadsPage({ searchParams }: LeadsPageProps) {
-  const status = parseStatus(searchParams?.status);
+  const status = parseStatus(((await searchParams) ?? {}).status);
   const [leads, counts] = await Promise.all([
     listLeads({ status, limit: 200 }),
     countLeadsByStatus(),
