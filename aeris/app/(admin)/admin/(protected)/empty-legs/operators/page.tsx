@@ -26,7 +26,7 @@ interface PageProps {
   // a banner naming the operator + propagate the param onto
   // each stub's Convert link so the convert page lands with
   // the target pre-selected.
-  searchParams?: { convert_target?: string };
+  searchParams?: Promise<{ convert_target?: string }>;
 }
 
 export default async function AdminOperatorStubsPage({
@@ -36,7 +36,8 @@ export default async function AdminOperatorStubsPage({
     notFound();
   }
 
-  const convertTargetId = searchParams?.convert_target ?? null;
+  const convertTargetId =
+    ((await searchParams) ?? {}).convert_target ?? null;
   const convertTargetOperator =
     convertTargetId && process.env.ENABLE_OPERATOR_PORTAL_ADMIN === 'true'
       ? await getOperatorById(convertTargetId)
