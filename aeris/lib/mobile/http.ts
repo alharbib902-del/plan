@@ -46,6 +46,7 @@ const ERROR_STATUS: Record<string, number> = {
   session_expired: 401,
   invalid_token_hash: 401,
   invalid_credentials: 401,
+  current_password_invalid: 401,
   // 403 — flag / state / lockout
   flag_disabled: 403,
   account_not_active: 403,
@@ -55,6 +56,7 @@ const ERROR_STATUS: Record<string, number> = {
   // 404 — owned resource not found
   request_not_found: 404,
   leg_not_found: 404,
+  booking_not_found: 404,
   // 409 — conflict (concurrent / state collision). No conflict
   // semantics exist in PR1 (config/login/logout/session), but the
   // §3 contract reserves 409, so the known conflict-wire codes are
@@ -75,6 +77,8 @@ const ERROR_STATUS: Record<string, number> = {
   rpc_failed: 502,
   rpc_error: 502,
   server_error: 502,
+  update_failed: 502,
+  lookup_failed: 502,
   bcrypt_failed: 500,
   storage_error: 503,
   secret_missing: 503,
@@ -188,9 +192,18 @@ export async function readJsonBody<T>(
     // all-optional inputs still work.
     return { ok: true, value: {} as T };
   }
+  let parsed: unknown;
   try {
-    return { ok: true, value: JSON.parse(text) as T };
+    parsed = JSON.parse(text);
   } catch {
     return { ok: false, error: 'malformed_body' };
   }
+  // Every mobile endpoint expects a keyed JSON OBJECT. Reject a bare
+  // null / array / primitive body up front so a `null`/`[]`/`"x"`/`5`
+  // body is a clean malformed_body (400) instead of a downstream
+  // TypeError (raw 500) when a route reads body.value.<field>.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'malformed_body' };
+  }
+  return { ok: true, value: parsed as T };
 }

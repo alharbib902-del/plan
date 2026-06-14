@@ -8,19 +8,8 @@ import {
 } from '@/lib/rate-limit/public-action';
 import type { PublicActionAttemptOutcome } from '@/lib/rate-limit/public-action-core';
 import { mobileError, withCors } from '@/lib/mobile/http';
-import {
-  MOBILE_MUTATION_ACTION,
-  mobileMutationActorIdentity,
-  mobileRateLimitDenialCode,
-  mobileRateLimitDenialOutcome,
-  mutationOutcomeForError,
-} from '@/lib/mobile/mutation-rate-limit-core';
 
-// Re-exported so the route handlers keep importing it from this
-// server module (the pure mapping lives in the -core sibling, which
-// the unit suite imports directly — it can't load this server-only
-// module under tsx).
-export { mutationOutcomeForError };
+const ACTION = 'client_authed_mutation';
 
 export type MobileMutationRateLimitResult =
   | { ok: true; actorFingerprint: string }
@@ -31,8 +20,8 @@ export async function checkMobileMutationRateLimit(
   tokenHash: string
 ): Promise<MobileMutationRateLimitResult> {
   const verdict = await checkPublicActionRateLimitForIdentity(
-    MOBILE_MUTATION_ACTION,
-    mobileMutationActorIdentity(tokenHash)
+    ACTION,
+    `token_hash:${tokenHash}`
   );
 
   if (verdict.ok) {
@@ -40,9 +29,11 @@ export async function checkMobileMutationRateLimit(
   }
 
   await recordPublicActionAttempt(
-    MOBILE_MUTATION_ACTION,
+    ACTION,
     verdict.actorFingerprint,
-    mobileRateLimitDenialOutcome(verdict.reason)
+    verdict.reason === 'secret_missing' || verdict.reason === 'storage_error'
+      ? 'rpc_error'
+      : 'rate_limited'
   );
 
   return {
@@ -50,7 +41,9 @@ export async function checkMobileMutationRateLimit(
     response: withCors(
       req,
       mobileError(
-        mobileRateLimitDenialCode(verdict.reason),
+        verdict.reason === 'secret_missing' || verdict.reason === 'storage_error'
+          ? verdict.reason
+          : 'rate_limited',
         { retry_after: verdict.retryAfterSeconds },
         {
           headers: { 'Retry-After': String(verdict.retryAfterSeconds) },
@@ -64,9 +57,28 @@ export async function recordMobileMutationAttempt(
   actorFingerprint: string,
   outcome: PublicActionAttemptOutcome
 ): Promise<void> {
-  await recordPublicActionAttempt(
-    MOBILE_MUTATION_ACTION,
-    actorFingerprint,
-    outcome
-  );
+  await recordPublicActionAttempt(ACTION, actorFingerprint, outcome);
+}
+
+export function mutationOutcomeForError(
+  code: string
+): PublicActionAttemptOutcome {
+  if (code === 'validation_failed' || code === 'malformed_body') {
+    return 'validation_failed';
+  }
+  if (
+    code === 'rpc_failed' ||
+    code === 'rpc_error' ||
+    code === 'storage_error' ||
+    code === 'secret_missing' ||
+    // server/dependency/crypto faults — not client-input errors, so they
+    // attribute to rpc_error in the rate-limit ledger (label only; any
+    // non-success already counts toward the cap).
+    code === 'lookup_failed' ||
+    code === 'update_failed' ||
+    code === 'bcrypt_failed'
+  ) {
+    return 'rpc_error';
+  }
+  return 'validation_failed';
 }

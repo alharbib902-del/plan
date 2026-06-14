@@ -8,18 +8,14 @@ import {
 } from '@/lib/clients/auth';
 import { hashSessionToken } from '@/lib/clients/session-token';
 import { extractBearerToken } from '@/lib/mobile/bearer';
-import {
-  resolveBearerSession,
-  type RequireClientBearerOptions,
-} from '@/lib/mobile/bearer-gate';
+import { resolveBearerSession } from '@/lib/mobile/bearer-gate';
 import { mobileError } from '@/lib/mobile/http';
 
-// Re-export the pure parser + option type so server callers can keep
-// importing them from the auth module (the unit suite imports the
-// pure `@/lib/mobile/bearer` + `@/lib/mobile/bearer-gate` directly —
-// it can't import this `server-only` module under tsx).
+// Re-export the pure parser so server callers can keep importing
+// it from the auth module (the unit suite imports the pure
+// `@/lib/mobile/bearer` directly — it can't import this
+// `server-only` module under tsx).
 export { extractBearerToken };
-export type { RequireClientBearerOptions };
 
 /**
  * Bearer-token session guard for `/api/v1/mobile/*`.
@@ -40,6 +36,11 @@ export type { RequireClientBearerOptions };
  * the gap server-side.
  */
 
+export interface RequireClientBearerOptions {
+  /** Allow a session with password_must_change=true (default false). */
+  allowPasswordChange?: boolean;
+}
+
 export type RequireClientBearerResult =
   | { ok: true; session: ClientSessionContext; token_hash: string }
   | { ok: false; response: NextResponse };
@@ -48,16 +49,8 @@ export async function requireClientBearer(
   req: Request,
   opts: RequireClientBearerOptions = {}
 ): Promise<RequireClientBearerResult> {
-  // Portal flag gates the whole authed surface (fail-closed).
-  if (process.env.ENABLE_CLIENT_PORTAL !== 'true') {
-    return { ok: false, response: mobileError('flag_disabled') };
-  }
-
+  const portalEnabled = process.env.ENABLE_CLIENT_PORTAL === 'true';
   const token = extractBearerToken(req);
-  if (!token) {
-    return { ok: false, response: mobileError('missing_token') };
-  }
-
   // `invalid_token_hash` from the RPC is unreachable on any
   // validate-by-hash path (Bearer here, cookie in
   // validateClientSession): we always pass `hashSessionToken(...)`,
@@ -65,16 +58,26 @@ export async function requireClientBearer(
   // so the RPC's `_is_sha256_hex` guard never fails — a forged
   // token hashes to a valid-but-unmatched digest → `invalid_session`.
   // The guard stays as a DB-boundary defence + serves the
-  // hash-as-text reset-token RPCs. `no_cookie` likewise cannot
-  // occur here (it is cookie-path-only). All map to 401.
-  const tokenHash = hashSessionToken(token);
-  const validation = await validateClientSessionByHash(tokenHash);
+  // hash-as-text reset-token RPCs.
+  const tokenHash = token ? hashSessionToken(token) : null;
+  const validation =
+    portalEnabled && tokenHash
+      ? await validateClientSessionByHash(tokenHash)
+      : undefined;
 
-  // Reason normalization + password_must_change lockout live in the
-  // pure gate so the mobile unit suite can pin them without a session
-  // store; the http status map turns the code into 401/403/502.
-  const decision = resolveBearerSession(validation, opts);
-  if (!decision.ok) return { ok: false, response: mobileError(decision.code) };
+  // All gate branches (flag / missing-token / reason-normalisation /
+  // password_must_change lockout) live in the pure resolveBearerSession
+  // so the unit suite can pin them without a session store.
+  const decision = resolveBearerSession({
+    portalEnabled,
+    hasToken: token !== null,
+    validation,
+    allowPasswordChange: opts.allowPasswordChange,
+  });
+  if (!decision.ok) {
+    return { ok: false, response: mobileError(decision.code) };
+  }
 
-  return { ok: true, session: decision.session, token_hash: tokenHash };
+  // decision.ok ⇒ portal + token were present ⇒ tokenHash is non-null.
+  return { ok: true, session: decision.session, token_hash: tokenHash! };
 }

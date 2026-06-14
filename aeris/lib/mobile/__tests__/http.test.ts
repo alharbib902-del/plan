@@ -150,6 +150,16 @@ await test('readJsonBody rejects malformed JSON', async () => {
   if (!r.ok) assert.equal(r.error, 'malformed_body');
 });
 
+await test('readJsonBody rejects non-object JSON (null/array/primitive)', async () => {
+  // A bare null/array/primitive body must not reach a route as body.value
+  // (would TypeError on body.value.<field> → raw 500).
+  for (const raw of ['null', '[]', '"x"', '5', 'true']) {
+    const r = await readJsonBody(jsonRequest(raw));
+    assert.ok(!r.ok, `body ${raw} must be rejected`);
+    if (!r.ok) assert.equal(r.error, 'malformed_body');
+  }
+});
+
 await test('readJsonBody rejects oversized declared content-length', async () => {
   const r = await readJsonBody(jsonRequest('{}', { 'content-length': '100' }), 10);
   assert.ok(!r.ok);
@@ -180,6 +190,17 @@ await test('statusForError maps conflict codes to 409', () => {
   ]) {
     assert.equal(statusForError(c), 409, `${c} should be 409`);
   }
+});
+
+await test('statusForError maps server-side write/dependency faults to 5xx', () => {
+  assert.equal(statusForError('update_failed'), 502);
+  assert.equal(statusForError('rpc_failed'), 502);
+  assert.equal(statusForError('server_error'), 502);
+  assert.equal(statusForError('lookup_failed'), 502);
+});
+
+await test('statusForError maps current_password_invalid to 401', () => {
+  assert.equal(statusForError('current_password_invalid'), 401);
 });
 
 await test('mobileError attaches custom headers (Retry-After on 429)', async () => {

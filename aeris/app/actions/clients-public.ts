@@ -4,10 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import {
-  hashClientPassword,
-  verifyClientPassword,
-} from '@/lib/clients/password';
+import { hashClientPassword } from '@/lib/clients/password';
 import {
   setClientSessionCookie,
   clearClientSessionCookie,
@@ -18,6 +15,10 @@ import {
   runClientLogin,
   runClientLogout,
 } from '@/lib/clients/core/auth-core';
+import {
+  runUpdateClientProfile,
+  runChangeClientPassword,
+} from '@/lib/clients/core/profile-core';
 import {
   mintClientPasswordResetToken,
   verifyClientPasswordResetToken,
@@ -30,8 +31,6 @@ import {
   clientLoginSchema,
   clientRequestPasswordResetSchema,
   clientVerifyPasswordResetSchema,
-  clientChangePasswordSchema,
-  clientUpdateProfileSchema,
 } from '@/lib/validators/clients';
 /**
  * Phase 9 PR 1 — public + authed client portal Server Actions.
@@ -504,72 +503,9 @@ export async function clientChangePassword(input: {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const session = await requireClientSession();
-
-  const parsed = clientChangePasswordSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: 'validation_failed',
-      field_errors: fieldErrorsFromZod(parsed.error.issues),
-    };
-  }
-
-  const client = createAdminClient();
-
-  // Lookup current password hash via the existing login_lookup
-  // RPC (we don't have the email handy in the session ctx, so
-  // SELECT directly against the clients row pinned to the
-  // session client_id).
-  const { data: clientRow, error: rowErr } = await client
-    .from('clients')
-    .select('password_hash')
-    .eq('id', session.client_id)
-    .maybeSingle();
-  if (rowErr || !clientRow) {
-    console.error(
-      '[clients-public.clientChangePassword] lookup error',
-      rowErr
-    );
-    return { ok: false, error: 'lookup_failed' };
-  }
-
-  const currentOk = await verifyClientPassword(
-    parsed.data.current_password,
-    (clientRow as { password_hash: string }).password_hash
-  );
-  if (!currentOk) {
-    return { ok: false, error: 'current_password_invalid' };
-  }
-
-  let newHash: string;
-  try {
-    newHash = await hashClientPassword(parsed.data.new_password);
-  } catch (err) {
-    console.error(
-      '[clients-public.clientChangePassword] bcrypt failed',
-      err
-    );
-    return { ok: false, error: 'bcrypt_failed' };
-  }
-
-  const { error: updateErr } = await client
-    .from('clients')
-    .update({
-      password_hash: newHash,
-      password_must_change: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', session.client_id);
-  if (updateErr) {
-    console.error(
-      '[clients-public.clientChangePassword] update error',
-      updateErr
-    );
-    return { ok: false, error: 'update_failed' };
-  }
-
-  revalidatePath('/me/profile');
-  return { ok: true };
+  const result = await runChangeClientPassword(session.client_id, input);
+  if (result.ok) revalidatePath('/me/profile');
+  return result;
 }
 
 // ============================================================
@@ -588,34 +524,12 @@ export async function clientUpdateProfile(input: {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const session = await requireClientSession();
-
-  const parsed = clientUpdateProfileSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: 'validation_failed',
-      field_errors: fieldErrorsFromZod(parsed.error.issues),
-    };
+  const result = await runUpdateClientProfile(session.client_id, input);
+  if (result.ok) {
+    revalidatePath('/me/profile');
+    revalidatePath('/me');
   }
-
-  const client = createAdminClient();
-  const { error } = await client
-    .from('clients')
-    .update({
-      full_name: parsed.data.full_name,
-      contact_phone: parsed.data.phone,
-      marketing_opt_in: parsed.data.marketing_opt_in,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', session.client_id);
-  if (error) {
-    console.error('[clients-public.clientUpdateProfile] error', error);
-    return { ok: false, error: 'update_failed' };
-  }
-
-  revalidatePath('/me/profile');
-  revalidatePath('/me');
-  return { ok: true };
+  return result;
 }
 
 // ============================================================

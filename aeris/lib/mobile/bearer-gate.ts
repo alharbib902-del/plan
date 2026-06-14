@@ -1,54 +1,67 @@
-// No 'server-only' import on purpose — this is the PURE post-
-// validation decision of requireClientBearer, split out so the tsx
-// unit suite can pin the password_must_change lockout + the
-// expired→session_expired reason normalization without a live
-// session store. The `import type` below is erased at compile, so
-// pulling these types from the server-only auth module is safe here.
-
 import type {
-  ClientSessionContext,
   ValidateClientSessionResult,
+  ClientSessionContext,
 } from '@/lib/clients/auth';
 
-export interface RequireClientBearerOptions {
-  /** Allow a session with password_must_change=true (default false). */
-  allowPasswordChange?: boolean;
-}
+/**
+ * PURE Bearer-session gate decision (NO 'server-only', NO I/O) so the
+ * tsx unit suite can pin every route-gate branch without a session
+ * store or Next runtime. `requireClientBearer` (server-only) does the
+ * I/O (flag read, token parse, DB validation) then defers the decision
+ * to this function — single source of truth for the gate.
+ *
+ * Type-only imports from the server-only `@/lib/clients/auth` are
+ * erased at runtime, so importing them here does not pull the
+ * server-only shim.
+ */
 
-export type BearerSessionDecision =
+export type BearerGateDecision =
   | { ok: true; session: ClientSessionContext }
   | { ok: false; code: string };
 
-/**
- * Maps a validated-session result + options → the final Bearer
- * decision (wire error code or the session).
- *
- *  - The internal `expired` reason is normalised to the wire code
- *    `session_expired`; every other reason passes through (the http
- *    status map turns them into 401/403/502).
- *  - `password_must_change=true` is rejected as `password_change_required`
- *    (403) on EVERY authed endpoint EXCEPT the escape hatches that
- *    pass `allowPasswordChange: true` (/me/session, /auth/logout,
- *    /auth/change-password). The web layout never enforced this, so
- *    the mobile contract closes the gap server-side.
- */
+export interface ResolveBearerSessionInput {
+  /** ENABLE_CLIENT_PORTAL === 'true' (fail-closed). */
+  portalEnabled: boolean;
+  /** A non-empty Bearer token was present on the request. */
+  hasToken: boolean;
+  /** Result of validateClientSessionByHash — present only when portal+token are ok. */
+  validation?: ValidateClientSessionResult;
+  /** Allow a session with password_must_change=true (escape hatches). */
+  allowPasswordChange?: boolean;
+}
+
 export function resolveBearerSession(
-  validation: ValidateClientSessionResult,
-  options: RequireClientBearerOptions = {}
-): BearerSessionDecision {
-  if (!validation.ok) {
-    return {
-      ok: false,
-      code:
-        validation.reason === 'expired'
-          ? 'session_expired'
-          : validation.reason,
-    };
+  input: ResolveBearerSessionInput
+): BearerGateDecision {
+  // 1. Portal flag (fail-closed) gates the whole authed surface.
+  if (!input.portalEnabled) return { ok: false, code: 'flag_disabled' };
+
+  // 2. No Bearer token.
+  if (!input.hasToken) return { ok: false, code: 'missing_token' };
+
+  // Defensive: portal+token ok but no validation supplied → treat as
+  // invalid (should not happen on the real path).
+  const v = input.validation;
+  if (!v) return { ok: false, code: 'invalid_session' };
+
+  // 3. Session invalid — normalise `expired`→`session_expired` and
+  // `no_cookie` (cookie-path-only, unreachable here) → `invalid_session`;
+  // pass the rest (invalid_session / account_not_active / invalid_token_hash
+  // / rpc_error) through to the http status map.
+  if (!v.ok) {
+    const code =
+      v.reason === 'expired'
+        ? 'session_expired'
+        : v.reason === 'no_cookie'
+          ? 'invalid_session'
+          : v.reason;
+    return { ok: false, code };
   }
 
-  if (validation.session.password_must_change && !options.allowPasswordChange) {
+  // 4. password_must_change lockout (unless an escape-hatch route opts out).
+  if (v.session.password_must_change && !input.allowPasswordChange) {
     return { ok: false, code: 'password_change_required' };
   }
 
-  return { ok: true, session: validation.session };
+  return { ok: true, session: v.session };
 }
