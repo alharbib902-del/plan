@@ -4,6 +4,7 @@ import { resolveClientRequestContext } from '@/lib/clients/core/request-context'
 import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import { runReserveEmptyLeg } from '@/lib/empty-legs/core/empty-legs-core';
 import { requireClientBearer } from '@/lib/mobile/auth';
+import { buildReserveResponseBody } from '@/lib/mobile/empty-legs-route-helpers';
 import {
   mobileError,
   mobileOk,
@@ -73,15 +74,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   return withCors(
     req,
-    mobileOk({
-      leg_id: result.leg_id,
-      reserved_at: result.reserved_at,
-      expires_at: result.expires_at,
-      // Strip the SAR figure server-side when pricing is hidden.
-      ...(clientPricingVisible()
-        ? { price_at_reservation_sar: result.price_at_reservation }
-        : {}),
-    })
+    mobileOk(buildReserveResponseBody(result, clientPricingVisible()))
   );
 }
 

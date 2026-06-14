@@ -8,13 +8,18 @@ import {
 } from '@/lib/clients/auth';
 import { hashSessionToken } from '@/lib/clients/session-token';
 import { extractBearerToken } from '@/lib/mobile/bearer';
+import {
+  resolveBearerSession,
+  type RequireClientBearerOptions,
+} from '@/lib/mobile/bearer-gate';
 import { mobileError } from '@/lib/mobile/http';
 
-// Re-export the pure parser so server callers can keep importing
-// it from the auth module (the unit suite imports the pure
-// `@/lib/mobile/bearer` directly — it can't import this
-// `server-only` module under tsx).
+// Re-export the pure parser + option type so server callers can keep
+// importing them from the auth module (the unit suite imports the
+// pure `@/lib/mobile/bearer` + `@/lib/mobile/bearer-gate` directly —
+// it can't import this `server-only` module under tsx).
 export { extractBearerToken };
+export type { RequireClientBearerOptions };
 
 /**
  * Bearer-token session guard for `/api/v1/mobile/*`.
@@ -34,11 +39,6 @@ export { extractBearerToken };
  * web layout never enforced this, so the mobile contract closes
  * the gap server-side.
  */
-
-export interface RequireClientBearerOptions {
-  /** Allow a session with password_must_change=true (default false). */
-  allowPasswordChange?: boolean;
-}
 
 export type RequireClientBearerResult =
   | { ok: true; session: ClientSessionContext; token_hash: string }
@@ -68,19 +68,13 @@ export async function requireClientBearer(
   // hash-as-text reset-token RPCs. `no_cookie` likewise cannot
   // occur here (it is cookie-path-only). All map to 401.
   const tokenHash = hashSessionToken(token);
-  const result = await validateClientSessionByHash(tokenHash);
-  if (!result.ok) {
-    // Normalise the internal `expired` reason to the wire code
-    // `session_expired`; pass the rest through (401/403/502 via
-    // the http status map).
-    const code =
-      result.reason === 'expired' ? 'session_expired' : result.reason;
-    return { ok: false, response: mobileError(code) };
-  }
+  const validation = await validateClientSessionByHash(tokenHash);
 
-  if (result.session.password_must_change && !opts.allowPasswordChange) {
-    return { ok: false, response: mobileError('password_change_required') };
-  }
+  // Reason normalization + password_must_change lockout live in the
+  // pure gate so the mobile unit suite can pin them without a session
+  // store; the http status map turns the code into 401/403/502.
+  const decision = resolveBearerSession(validation, opts);
+  if (!decision.ok) return { ok: false, response: mobileError(decision.code) };
 
-  return { ok: true, session: result.session, token_hash: tokenHash };
+  return { ok: true, session: decision.session, token_hash: tokenHash };
 }

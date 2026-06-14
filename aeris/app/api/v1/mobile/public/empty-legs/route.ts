@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { flagOn } from '@/lib/config/feature-flags';
 import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import { listPublicAvailableLegs } from '@/lib/empty-legs/public-queries';
+import { parsePublicEmptyLegsQuery } from '@/lib/mobile/empty-legs-route-helpers';
 import {
   mobileError,
   mobileOk,
@@ -27,37 +28,20 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const runtime = 'nodejs';
 
-function parseIntParam(value: string | null, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
-
 export async function GET(req: Request): Promise<NextResponse> {
   if (!flagOn('ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE')) {
     return withCors(req, mobileError('flag_disabled'));
   }
 
-  const url = new URL(req.url);
-  const departure = (url.searchParams.get('departure') ?? '').slice(0, 64);
-  const minPassengersRaw = url.searchParams.get('min_passengers');
-  const limit = Math.max(1, Math.min(parseIntParam(url.searchParams.get('limit'), 50), 50));
   const pricingVisible = clientPricingVisible();
+  const query = parsePublicEmptyLegsQuery(
+    new URL(req.url).searchParams,
+    pricingVisible
+  );
 
   let legs: Awaited<ReturnType<typeof listPublicAvailableLegs>>;
   try {
-    legs = await listPublicAvailableLegs({
-      departure: departure.length > 0 ? departure : null,
-      minPassengers: minPassengersRaw ? parseIntParam(minPassengersRaw, 0) : null,
-      // Drop the price filter entirely when prices are hidden
-      // (prevents SAR inference via the filter).
-      maxPrice: pricingVisible
-        ? (() => {
-            const mp = url.searchParams.get('max_price');
-            return mp ? parseIntParam(mp, 0) : null;
-          })()
-        : null,
-      limit,
-    });
+    legs = await listPublicAvailableLegs(query);
   } catch (err) {
     console.error('[mobile.public.empty-legs.list] read failed', err);
     return withCors(req, mobileError('rpc_failed'));
