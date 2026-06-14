@@ -3,13 +3,12 @@
 import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 
-import { createAdminClient } from '@/lib/supabase/admin';
 import { requireClientSession } from '@/lib/clients/auth';
-import { notificationPreferencesSchema } from '@/lib/validators/clients';
 import {
   runReserveEmptyLeg,
   runReleaseEmptyLeg,
 } from '@/lib/empty-legs/core/empty-legs-core';
+import { runUpdateNotificationPreferences } from '@/lib/clients/core/profile-core';
 
 /**
  * Phase 10 PR 1 — authenticated client Server Actions for the
@@ -35,17 +34,6 @@ export type ClientEmptyLegsActionFailure = {
 
 function isPortalDisabled(): boolean {
   return process.env.ENABLE_CLIENT_EMPTY_LEGS_PORTAL !== 'true';
-}
-
-function fieldErrorsFromZod(
-  issues: { path: (string | number)[]; message: string }[]
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.join('.');
-    if (path) out[path] = issue.message;
-  }
-  return out;
 }
 
 async function clientIp(): Promise<string | null> {
@@ -145,38 +133,13 @@ export async function updateMyNotificationPreferences(input: {
 }): Promise<UpdateMyNotificationPreferencesResult> {
   // Codex round 1 PR #63 P2 #2 fix — do NOT gate behind
   // ENABLE_CLIENT_EMPTY_LEGS_PORTAL. The /me/notifications page
-  // intentionally stays available pre-activation so clients can
-  // set their empty-leg preferences early.
-
+  // intentionally stays available pre-activation. Delegates to the
+  // shared core (PR4 4c) — same validation + wire codes as before.
   const session = await requireClientSession();
-
-  const parsed = notificationPreferencesSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: 'invalid_input',
-      field_errors: fieldErrorsFromZod(parsed.error.issues),
-    };
-  }
-
-  try {
-    const admin = createAdminClient();
-    const { error } = await admin
-      .from('clients')
-      .update({
-        notification_preferences: parsed.data,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', session.client_id);
-    if (error) {
-      console.error('[clients-empty-legs.updatePrefs] update error', error);
-      return { ok: false, error: 'server_error' };
-    }
-  } catch (err) {
-    console.error('[clients-empty-legs.updatePrefs] threw', err);
-    return { ok: false, error: 'server_error' };
-  }
-
-  revalidatePath('/me/notifications');
-  return { ok: true };
+  const result = await runUpdateNotificationPreferences(
+    session.client_id,
+    input
+  );
+  if (result.ok) revalidatePath('/me/notifications');
+  return result;
 }

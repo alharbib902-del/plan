@@ -1,11 +1,18 @@
 import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { clientUpdateProfileSchema } from '@/lib/validators/clients';
+import {
+  clientUpdateProfileSchema,
+  notificationPreferencesSchema,
+} from '@/lib/validators/clients';
 import {
   mapClientProfileRow,
   type ClientProfile,
 } from '@/lib/mobile/serializers/profile';
+import {
+  mapNotificationPreferences,
+  type NotificationPreferences,
+} from '@/lib/mobile/serializers/notifications';
 
 /**
  * Transport-neutral client-profile core (PR4 slice 4b).
@@ -87,6 +94,69 @@ export async function runUpdateClientProfile(
   if (error) {
     console.error('[profile-core.updateProfile] update error', error);
     return { ok: false, error: 'update_failed' };
+  }
+  return { ok: true };
+}
+
+// ============================================================
+// Notification preferences (read + update) — slice 4c
+// ============================================================
+
+export async function runGetNotificationPreferences(
+  clientId: string
+): Promise<NotificationPreferences> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from('clients')
+    .select('notification_preferences')
+    .eq('id', clientId)
+    .maybeSingle();
+  if (error) {
+    console.error('[profile-core.getNotifPrefs] read error', error);
+    throw new Error(`runGetNotificationPreferences failed: ${error.message}`);
+  }
+  const prefs =
+    (
+      data as {
+        notification_preferences?: Record<string, unknown> | null;
+      } | null
+    )?.notification_preferences ?? null;
+  return mapNotificationPreferences(prefs);
+}
+
+export type UpdateNotifPrefsResult = { ok: true } | ProfileCoreFailure;
+
+export async function runUpdateNotificationPreferences(
+  clientId: string,
+  input: { empty_legs: { email: boolean; wa_link: boolean }; marketing: boolean }
+): Promise<UpdateNotifPrefsResult> {
+  // Returns the web action's EXISTING wire codes (invalid_input /
+  // server_error) so the web updateMyNotificationPreferences can
+  // delegate here with identical error display (parity, no drift).
+  const parsed = notificationPreferencesSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'invalid_input',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    };
+  }
+  try {
+    const admin = createAdminClient();
+    const { error } = await admin
+      .from('clients')
+      .update({
+        notification_preferences: parsed.data,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', clientId);
+    if (error) {
+      console.error('[profile-core.updateNotifPrefs] update error', error);
+      return { ok: false, error: 'server_error' };
+    }
+  } catch (err) {
+    console.error('[profile-core.updateNotifPrefs] threw', err);
+    return { ok: false, error: 'server_error' };
   }
   return { ok: true };
 }
