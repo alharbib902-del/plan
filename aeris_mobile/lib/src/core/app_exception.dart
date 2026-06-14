@@ -1,0 +1,48 @@
+/// Typed transport error carrying the opaque wire `error` code
+/// returned by `/api/v1/mobile/*` ({ ok:false, error:'<code>' }).
+///
+/// The Arabic dictionary is PORTED from the web's
+/// `lib/i18n/clients-ar.ts` + the mobile-layer codes
+/// (`lib/mobile/http.ts`). The wire stays code-based so
+/// enumeration-safe codes (e.g. invalid_credentials) keep their
+/// meaning; the app does the localisation here.
+class AppException implements Exception {
+  const AppException(this.code, {this.retryAfterSeconds, this.fieldErrors});
+
+  final String code;
+  final int? retryAfterSeconds;
+  final Map<String, String>? fieldErrors;
+
+  String get messageAr => errorMessageAr(code);
+
+  @override
+  String toString() => 'AppException($code)';
+}
+
+const String _fallbackAr = 'حدث خطأ غير متوقّع، يرجى المحاولة لاحقاً';
+
+const Map<String, String> _ar = {
+  // credentials / session
+  'invalid_credentials': 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+  'account_not_active': 'هذا الحساب غير مفعّل، تواصل مع الدعم',
+  'missing_token': 'انتهت الجلسة، يرجى تسجيل الدخول من جديد',
+  'invalid_session': 'انتهت الجلسة، يرجى تسجيل الدخول من جديد',
+  'session_expired': 'انتهت جلستك، يرجى تسجيل الدخول من جديد',
+  'expired': 'انتهت جلستك، يرجى تسجيل الدخول من جديد',
+  'password_change_required': 'يجب تغيير كلمة المرور قبل المتابعة',
+  // input / flags
+  'validation_failed': 'يرجى التحقّق من البيانات المُدخلة',
+  'flag_disabled': 'هذه الخدمة غير متاحة حالياً',
+  'body_too_large': 'حجم الطلب كبير جداً',
+  'malformed_body': 'طلب غير صالح',
+  // throttle
+  'rate_limited': 'محاولات كثيرة، يرجى المحاولة بعد قليل',
+  // dependency / network
+  'rpc_failed': 'تعذّر إتمام الطلب، حاول مرة أخرى',
+  'rpc_error': 'تعذّر إتمام الطلب، حاول مرة أخرى',
+  'storage_error': 'الخدمة مشغولة مؤقتاً، حاول لاحقاً',
+  'secret_missing': 'الخدمة غير مهيّأة حالياً',
+  'network_error': 'تعذّر الاتصال بالخادم، تحقّق من اتصالك',
+};
+
+String errorMessageAr(String code) => _ar[code] ?? _fallbackAr;
