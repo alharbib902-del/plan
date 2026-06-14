@@ -76,6 +76,7 @@
     "test:mobile-airports": "tsx lib/mobile/__tests__/airports.test.ts",
     "test:mobile-empty-legs-serializer": "tsx lib/mobile/__tests__/empty-legs-serializer.test.ts",
     "test:mobile-bookings-serializer": "tsx lib/mobile/__tests__/bookings-serializer.test.ts",
+    "test:mobile-profile-serializer": "tsx lib/mobile/__tests__/profile-serializer.test.ts",
     "test:mobile-flags": "tsx lib/config/__tests__/mobile-flags.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

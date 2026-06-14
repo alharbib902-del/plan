@@ -18,6 +18,7 @@ import {
   runClientLogin,
   runClientLogout,
 } from '@/lib/clients/core/auth-core';
+import { runUpdateClientProfile } from '@/lib/clients/core/profile-core';
 import {
   mintClientPasswordResetToken,
   verifyClientPasswordResetToken,
@@ -31,7 +32,6 @@ import {
   clientRequestPasswordResetSchema,
   clientVerifyPasswordResetSchema,
   clientChangePasswordSchema,
-  clientUpdateProfileSchema,
 } from '@/lib/validators/clients';
 /**
  * Phase 9 PR 1 — public + authed client portal Server Actions.
@@ -588,34 +588,12 @@ export async function clientUpdateProfile(input: {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
   const session = await requireClientSession();
-
-  const parsed = clientUpdateProfileSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: 'validation_failed',
-      field_errors: fieldErrorsFromZod(parsed.error.issues),
-    };
+  const result = await runUpdateClientProfile(session.client_id, input);
+  if (result.ok) {
+    revalidatePath('/me/profile');
+    revalidatePath('/me');
   }
-
-  const client = createAdminClient();
-  const { error } = await client
-    .from('clients')
-    .update({
-      full_name: parsed.data.full_name,
-      contact_phone: parsed.data.phone,
-      marketing_opt_in: parsed.data.marketing_opt_in,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', session.client_id);
-  if (error) {
-    console.error('[clients-public.clientUpdateProfile] error', error);
-    return { ok: false, error: 'update_failed' };
-  }
-
-  revalidatePath('/me/profile');
-  revalidatePath('/me');
-  return { ok: true };
+  return result;
 }
 
 // ============================================================

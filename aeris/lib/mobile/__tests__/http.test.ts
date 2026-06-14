@@ -182,6 +182,12 @@ await test('statusForError maps conflict codes to 409', () => {
   }
 });
 
+await test('statusForError maps server-side write/dependency faults to 5xx', () => {
+  assert.equal(statusForError('update_failed'), 502);
+  assert.equal(statusForError('rpc_failed'), 502);
+  assert.equal(statusForError('server_error'), 502);
+});
+
 await test('mobileError attaches custom headers (Retry-After on 429)', async () => {
   const res = mobileError(
     'rate_limited',

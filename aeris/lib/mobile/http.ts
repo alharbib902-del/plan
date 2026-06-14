@@ -76,6 +76,7 @@ const ERROR_STATUS: Record<string, number> = {
   rpc_failed: 502,
   rpc_error: 502,
   server_error: 502,
+  update_failed: 502,
   bcrypt_failed: 500,
   storage_error: 503,
   secret_missing: 503,
