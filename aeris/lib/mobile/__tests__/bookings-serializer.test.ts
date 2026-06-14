@@ -136,7 +136,6 @@ const EXPECTED_KEYS = new Set([
   'zatca_invoice_url',
   'trip_request_id',
   'loyalty_points_earned',
-  'cancellation_reason',
   'cancelled_at',
   'created_at',
   'updated_at',

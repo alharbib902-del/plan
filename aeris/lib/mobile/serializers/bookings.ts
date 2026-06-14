@@ -55,7 +55,9 @@ export function serializeBookingForMobile(row: BookingRow) {
     // Misc client-visible
     trip_request_id: row.trip_request_id,
     loyalty_points_earned: row.loyalty_points_earned,
-    cancellation_reason: row.cancellation_reason,
+    // cancellation_reason intentionally NOT exposed: in practice it is an
+    // internal-notes placeholder (only ever SET to NULL today) and the web
+    // client UI never renders it. cancelled_at (the timestamp) is fine.
     cancelled_at: row.cancelled_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
