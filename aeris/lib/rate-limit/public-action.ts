@@ -91,6 +91,15 @@ async function currentActorFingerprint(
   return fingerprintPublicActionActor(identity, action, secret);
 }
 
+async function actorFingerprintForIdentity(
+  action: PublicAction,
+  actorIdentity: string
+): Promise<string | null> {
+  const secret = fingerprintSecret();
+  if (!secret) return null;
+  return fingerprintPublicActionActor(actorIdentity, action, secret);
+}
+
 function normalizeRows(rows: unknown[] | null): PublicActionAttemptRow[] {
   return (rows ?? []).flatMap((row) => {
     if (!row || typeof row !== 'object') return [];
@@ -113,8 +122,26 @@ function normalizeRows(rows: unknown[] | null): PublicActionAttemptRow[] {
 export async function checkPublicActionRateLimit(
   action: PublicAction
 ): Promise<PublicActionRateLimitCheck> {
-  const config = PUBLIC_ACTION_LIMITS[action];
   const actorFingerprint = await currentActorFingerprint(action);
+  return checkPublicActionRateLimitForFingerprint(action, actorFingerprint);
+}
+
+export async function checkPublicActionRateLimitForIdentity(
+  action: PublicAction,
+  actorIdentity: string
+): Promise<PublicActionRateLimitCheck> {
+  const actorFingerprint = await actorFingerprintForIdentity(
+    action,
+    actorIdentity
+  );
+  return checkPublicActionRateLimitForFingerprint(action, actorFingerprint);
+}
+
+async function checkPublicActionRateLimitForFingerprint(
+  action: PublicAction,
+  actorFingerprint: string | null
+): Promise<PublicActionRateLimitCheck> {
+  const config = PUBLIC_ACTION_LIMITS[action];
   if (!actorFingerprint) {
     console.error(
       '[public-action-rate-limit] fingerprint secret missing — denying',

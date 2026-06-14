@@ -41,7 +41,7 @@ export interface RequireClientBearerOptions {
 }
 
 export type RequireClientBearerResult =
-  | { ok: true; session: ClientSessionContext }
+  | { ok: true; session: ClientSessionContext; token_hash: string }
   | { ok: false; response: NextResponse };
 
 export async function requireClientBearer(
@@ -67,7 +67,8 @@ export async function requireClientBearer(
   // The guard stays as a DB-boundary defence + serves the
   // hash-as-text reset-token RPCs. `no_cookie` likewise cannot
   // occur here (it is cookie-path-only). All map to 401.
-  const result = await validateClientSessionByHash(hashSessionToken(token));
+  const tokenHash = hashSessionToken(token);
+  const result = await validateClientSessionByHash(tokenHash);
   if (!result.ok) {
     // Normalise the internal `expired` reason to the wire code
     // `session_expired`; pass the rest through (401/403/502 via
@@ -81,5 +82,5 @@ export async function requireClientBearer(
     return { ok: false, response: mobileError('password_change_required') };
   }
 
-  return { ok: true, session: result.session };
+  return { ok: true, session: result.session, token_hash: tokenHash };
 }

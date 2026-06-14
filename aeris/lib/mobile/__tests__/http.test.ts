@@ -74,9 +74,19 @@ await test('statusForError maps session errors to 401', () => {
 });
 
 await test('statusForError maps flag/state/lockout to 403', () => {
-  for (const c of ['flag_disabled', 'account_not_active', 'password_change_required']) {
+  for (const c of [
+    'flag_disabled',
+    'account_not_active',
+    'password_change_required',
+    'client_not_active',
+    'client_not_found',
+  ]) {
     assert.equal(statusForError(c), 403, `${c} should be 403`);
   }
+});
+
+await test('statusForError maps owned-resource miss to 404', () => {
+  assert.equal(statusForError('request_not_found'), 404);
 });
 
 await test('statusForError maps throttle to 429 and validation to 400', () => {
@@ -161,6 +171,10 @@ await test('statusForError maps conflict codes to 409', () => {
   for (const c of [
     'leg_already_reserved',
     'offer_not_pending',
+    'offer_expired',
+    'trip_not_open',
+    'accept_failed',
+    'decline_not_allowed',
     'cancel_not_allowed',
     'booking_has_active_payment',
   ]) {
