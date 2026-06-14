@@ -64,9 +64,28 @@ export async function recordMobileMutationAttempt(
   actorFingerprint: string,
   outcome: PublicActionAttemptOutcome
 ): Promise<void> {
-  await recordPublicActionAttempt(
-    MOBILE_MUTATION_ACTION,
-    actorFingerprint,
-    outcome
-  );
+  await recordPublicActionAttempt(ACTION, actorFingerprint, outcome);
+}
+
+export function mutationOutcomeForError(
+  code: string
+): PublicActionAttemptOutcome {
+  if (code === 'validation_failed' || code === 'malformed_body') {
+    return 'validation_failed';
+  }
+  if (
+    code === 'rpc_failed' ||
+    code === 'rpc_error' ||
+    code === 'storage_error' ||
+    code === 'secret_missing' ||
+    // server/dependency/crypto faults — not client-input errors, so they
+    // attribute to rpc_error in the rate-limit ledger (label only; any
+    // non-success already counts toward the cap).
+    code === 'lookup_failed' ||
+    code === 'update_failed' ||
+    code === 'bcrypt_failed'
+  ) {
+    return 'rpc_error';
+  }
+  return 'validation_failed';
 }

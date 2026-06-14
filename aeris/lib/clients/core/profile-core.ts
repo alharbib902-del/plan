@@ -2,8 +2,13 @@ import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
+  hashClientPassword,
+  verifyClientPassword,
+} from '@/lib/clients/password';
+import {
   clientUpdateProfileSchema,
   notificationPreferencesSchema,
+  clientChangePasswordSchema,
 } from '@/lib/validators/clients';
 import {
   mapClientProfileRow,
@@ -158,5 +163,73 @@ export async function runUpdateNotificationPreferences(
     console.error('[profile-core.updateNotifPrefs] threw', err);
     return { ok: false, error: 'server_error' };
   }
+  return { ok: true };
+}
+
+// ============================================================
+// Change password — slice 4f
+// ============================================================
+
+export type ChangePasswordResult = { ok: true } | ProfileCoreFailure;
+
+/**
+ * Verify the current password (bcrypt) then set the new one + clear
+ * password_must_change. Returns the web action's EXISTING wire codes
+ * (validation_failed / lookup_failed / current_password_invalid /
+ * bcrypt_failed / update_failed) so the web clientChangePassword can
+ * delegate here with identical behaviour. clientId comes from the
+ * caller's validated session; the read/write are pinned to it.
+ */
+export async function runChangeClientPassword(
+  clientId: string,
+  input: { current_password: string; new_password: string }
+): Promise<ChangePasswordResult> {
+  const parsed = clientChangePasswordSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: 'validation_failed',
+      field_errors: fieldErrorsFromZod(parsed.error.issues),
+    };
+  }
+
+  const admin = createAdminClient();
+  const { data: clientRow, error: rowErr } = await admin
+    .from('clients')
+    .select('password_hash')
+    .eq('id', clientId)
+    .maybeSingle();
+  if (rowErr || !clientRow) {
+    console.error('[profile-core.changePassword] lookup error', rowErr);
+    return { ok: false, error: 'lookup_failed' };
+  }
+
+  const currentOk = await verifyClientPassword(
+    parsed.data.current_password,
+    (clientRow as { password_hash: string }).password_hash
+  );
+  if (!currentOk) return { ok: false, error: 'current_password_invalid' };
+
+  let newHash: string;
+  try {
+    newHash = await hashClientPassword(parsed.data.new_password);
+  } catch (err) {
+    console.error('[profile-core.changePassword] bcrypt failed', err);
+    return { ok: false, error: 'bcrypt_failed' };
+  }
+
+  const { error: updateErr } = await admin
+    .from('clients')
+    .update({
+      password_hash: newHash,
+      password_must_change: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', clientId);
+  if (updateErr) {
+    console.error('[profile-core.changePassword] update error', updateErr);
+    return { ok: false, error: 'update_failed' };
+  }
+
   return { ok: true };
 }
