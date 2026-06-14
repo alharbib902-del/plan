@@ -33,7 +33,10 @@ export async function GET(req: Request): Promise<NextResponse> {
   if (!auth.ok) return withCors(req, auth.response);
 
   const url = new URL(req.url);
-  const q = url.searchParams.get('q') ?? '';
+  // Cap the query length so the per-row includes/startsWith scan cost is
+  // bounded regardless of caller input (the table is read whole + filtered
+  // in memory; small static reference data).
+  const q = (url.searchParams.get('q') ?? '').slice(0, 64);
   const limit = parseLimit(url.searchParams.get('limit'));
   const privateCapable = parsePrivateCapable(
     url.searchParams.get('private_capable')

@@ -50,7 +50,7 @@ const ERROR_STATUS: Record<string, number> = {
   password_change_required: 403,
   client_not_active: 403,
   client_not_found: 403,
-  // 404 â€” owned resource not found
+  // 404 — owned resource not found
   request_not_found: 404,
   // 409 — conflict (concurrent / state collision). No conflict
   // semantics exist in PR1 (config/login/logout/session), but the

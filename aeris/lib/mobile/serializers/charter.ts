@@ -45,6 +45,10 @@ export function serializeTripRequestForMobile(row: TripRequestRow) {
   };
 }
 
+// SECURITY: UnifiedOfferRow carries operator PII (operator_phone/email) +
+// dispatch internals (target_phone, dispatch_round_id/target_id) for the
+// admin/dispatch surfaces. This is a strict positive allowlist — keep it that
+// way; never spread `...row`, or that PII leaks to the client.
 export function serializeOfferForMobile(
   row: UnifiedOfferRow,
   tripStatus: TripRequestStatus
