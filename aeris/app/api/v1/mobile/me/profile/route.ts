@@ -68,10 +68,19 @@ export async function PATCH(req: Request): Promise<NextResponse> {
     return withCors(req, mobileError(body.error));
   }
 
+  // FULL-REPLACEMENT semantics (NOT a partial patch): the client must send
+  // ALL editable fields. marketing_opt_in is required EXPLICITLY here so a
+  // missing flag is rejected rather than silently written as `false`
+  // (full_name/phone are already required by clientUpdateProfileSchema).
+  if (typeof body.value.marketing_opt_in !== 'boolean') {
+    await recordMobileMutationAttempt(rl.actorFingerprint, 'validation_failed');
+    return withCors(req, mobileError('validation_failed'));
+  }
+
   const result = await runUpdateClientProfile(auth.session.client_id, {
     full_name: typeof body.value.full_name === 'string' ? body.value.full_name : '',
     phone: typeof body.value.phone === 'string' ? body.value.phone : '',
-    marketing_opt_in: body.value.marketing_opt_in === true,
+    marketing_opt_in: body.value.marketing_opt_in,
   });
 
   await recordMobileMutationAttempt(
