@@ -17,6 +17,7 @@
     "test:checkout-whatsapp": "tsx lib/checkout/__tests__/whatsapp-message.test.ts",
     "test:checkout-site-url": "tsx lib/checkout/__tests__/site-url.test.ts",
     "test:empty-legs-curve": "tsx lib/empty-legs/__tests__/auction-curve.test.ts",
+    "test:empty-legs-sanitize-departure": "tsx lib/empty-legs/__tests__/sanitize-departure.test.ts",
     "test:empty-legs-token": "tsx lib/empty-legs/__tests__/reservation-token.test.ts",
     "test:empty-legs-matching": "tsx lib/empty-legs/__tests__/matching.test.ts",
     "test:empty-legs-frequency-cap": "tsx lib/empty-legs/__tests__/frequency-cap.test.ts",

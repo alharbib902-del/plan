@@ -20,6 +20,7 @@
 import { unstable_noStore as noStore } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { sanitizeDepartureFilter } from '@/lib/empty-legs/sanitize-departure';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 
 const TABLE = 'empty_legs';
@@ -55,12 +56,18 @@ export async function listPublicAvailableLegs(
   if (typeof maxPrice === 'number' && Number.isFinite(maxPrice)) {
     query = query.lte('current_price', maxPrice);
   }
-  if (departure && departure.trim().length > 0) {
-    const trimmed = departure.trim().toUpperCase();
-    // Match either IATA exact or freeform prefix.
-    query = query.or(
-      `departure_airport.eq.${trimmed},departure_airport_freeform_snapshot.ilike.${trimmed}%`
-    );
+  if (departure) {
+    // Strip PostgREST `.or()` metacharacters before interpolation — the
+    // value is caller-supplied from public surfaces and supabase-js does
+    // not escape `.or(...)` (filter-injection guard). See sanitize-departure.
+    const sanitized = sanitizeDepartureFilter(departure);
+    if (sanitized.length > 0) {
+      const needle = sanitized.toUpperCase();
+      // Match either IATA exact or freeform prefix.
+      query = query.or(
+        `departure_airport.eq.${needle},departure_airport_freeform_snapshot.ilike.${needle}%`
+      );
+    }
   }
 
   const { data, error } = await query;
