@@ -26,6 +26,17 @@ const ERROR_STATUS: Record<string, number> = {
   malformed_body: 400,
   body_too_large: 413,
   ip_required: 400,
+  invalid_trip_type: 400,
+  invalid_legs: 400,
+  invalid_iata: 400,
+  departure_airport_unknown: 400,
+  arrival_airport_unknown: 400,
+  invalid_departure_date: 400,
+  invalid_return_date: 400,
+  invalid_passengers: 400,
+  invalid_aircraft_pref: 400,
+  special_requests_too_long: 400,
+  unknown_source: 400,
   // 401 — session / credentials
   missing_token: 401,
   invalid_session: 401,
@@ -37,6 +48,10 @@ const ERROR_STATUS: Record<string, number> = {
   flag_disabled: 403,
   account_not_active: 403,
   password_change_required: 403,
+  client_not_active: 403,
+  client_not_found: 403,
+  // 404 — owned resource not found
+  request_not_found: 404,
   // 409 — conflict (concurrent / state collision). No conflict
   // semantics exist in PR1 (config/login/logout/session), but the
   // §3 contract reserves 409, so the known conflict-wire codes are
@@ -44,6 +59,10 @@ const ERROR_STATUS: Record<string, number> = {
   // (reserve / accept / pay) honours the status automatically.
   leg_already_reserved: 409,
   offer_not_pending: 409,
+  offer_expired: 409,
+  trip_not_open: 409,
+  accept_failed: 409,
+  decline_not_allowed: 409,
   cancel_not_allowed: 409,
   booking_has_active_payment: 409,
   // 429 — throttle

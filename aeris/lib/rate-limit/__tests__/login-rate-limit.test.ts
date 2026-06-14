@@ -19,6 +19,16 @@ for (const action of ['client_login', 'operator_login'] as const) {
   assert.equal(cfg.maxAttempts, 10, `${action} attempt cap = 10`);
 }
 
+assert.ok(
+  PUBLIC_ACTION_LIMITS.client_authed_mutation,
+  'client_authed_mutation must have a rate-limit config'
+);
+assert.equal(
+  PUBLIC_ACTION_LIMITS.client_authed_mutation.maxAttempts,
+  40,
+  'client_authed_mutation attempt cap = 40'
+);
+
 const now = new Date('2026-06-02T12:00:00Z');
 
 // 5 auth failures inside the failure window -> locked.

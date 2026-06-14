@@ -158,6 +158,20 @@ test('same identity across different actions → different fingerprints', () => 
   assert.notEqual(a, b);
 });
 
+test('token-derived identity fingerprints independently from IP identities', () => {
+  const tokenScoped = fingerprintPublicActionActor(
+    'token_hash:abc123',
+    'client_authed_mutation',
+    'test-secret-32-bytes-long-aaaaaa'
+  );
+  const ipScoped = fingerprintPublicActionActor(
+    'ip:1.2.3.4',
+    'client_authed_mutation',
+    'test-secret-32-bytes-long-aaaaaa'
+  );
+  assert.notEqual(tokenScoped, ipScoped);
+});
+
 test('same identity + same action → stable fingerprint', () => {
   const a = fingerprintPublicActionActor(
     'ip:1.2.3.4',
@@ -310,11 +324,14 @@ test('future timestamps are dropped (defense against clock skew)', () => {
 // Limit configuration sanity
 // ============================================================
 
-test('all four actions have a config', () => {
+test('all public, login, and mobile mutation actions have a config', () => {
   assert.ok(PUBLIC_ACTION_LIMITS.flight_request);
   assert.ok(PUBLIC_ACTION_LIMITS.empty_leg_reserve);
   assert.ok(PUBLIC_ACTION_LIMITS.cargo_intake);
   assert.ok(PUBLIC_ACTION_LIMITS.medevac_intake);
+  assert.ok(PUBLIC_ACTION_LIMITS.client_login);
+  assert.ok(PUBLIC_ACTION_LIMITS.operator_login);
+  assert.ok(PUBLIC_ACTION_LIMITS.client_authed_mutation);
 });
 
 test('failure caps are reasonable (≥3, ≤10)', () => {

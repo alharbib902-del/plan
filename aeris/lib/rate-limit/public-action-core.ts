@@ -24,7 +24,8 @@ export type PublicAction =
   | 'cargo_intake'
   | 'medevac_intake'
   | 'client_login'
-  | 'operator_login';
+  | 'operator_login'
+  | 'client_authed_mutation';
 
 export type PublicActionAttemptOutcome =
   | 'success'
@@ -116,6 +117,15 @@ export const PUBLIC_ACTION_LIMITS: Record<
     maxFailures: 5,
     attemptWindowMs: 60 * 60 * 1000,
     maxAttempts: 10,
+  },
+  // Mobile Bearer-token mutations (create/cancel/accept/decline).
+  // Keyed by the session token hash (HMAC-scoped before storage), not IP,
+  // so two legitimate clients behind the same NAT do not throttle each other.
+  client_authed_mutation: {
+    failureWindowMs: 15 * 60 * 1000,
+    maxFailures: 10,
+    attemptWindowMs: 60 * 60 * 1000,
+    maxAttempts: 40,
   },
 };
 
