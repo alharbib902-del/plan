@@ -9,13 +9,15 @@ import {
   verifyClientPassword,
 } from '@/lib/clients/password';
 import {
-  mintClientSessionToken,
   setClientSessionCookie,
   clearClientSessionCookie,
   getRawSessionTokenFromCookie,
-  hashSessionToken,
   requireClientSession,
 } from '@/lib/clients/auth';
+import {
+  runClientLogin,
+  runClientLogout,
+} from '@/lib/clients/core/auth-core';
 import {
   mintClientPasswordResetToken,
   verifyClientPasswordResetToken,
@@ -31,11 +33,6 @@ import {
   clientChangePasswordSchema,
   clientUpdateProfileSchema,
 } from '@/lib/validators/clients';
-import {
-  checkPublicActionRateLimit,
-  recordPublicActionAttempt,
-} from '@/lib/rate-limit/public-action';
-
 /**
  * Phase 9 PR 1 — public + authed client portal Server Actions.
  *
@@ -240,114 +237,25 @@ export async function clientLogin(input: {
   password: string;
   remember_me: boolean;
 }): Promise<ClientLoginResult> {
-  if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
-
-  // SEC-02 — per-IP login rate-limit (credential stuffing / brute force).
-  const rl = await checkPublicActionRateLimit('client_login');
-  if (!rl.ok) {
-    if (rl.reason !== 'storage_error' && rl.reason !== 'secret_missing') {
-      await recordPublicActionAttempt(
-        'client_login',
-        rl.actorFingerprint,
-        'rate_limited'
-      );
-    }
-    return { ok: false, error: 'rate_limited' };
+  // Single source of truth: the web (cookie) and mobile (Bearer)
+  // surfaces both delegate to `runClientLogin`, so credential
+  // checks / rate-limit / session minting can never drift. The
+  // web boundary's ONLY extra step is setting the httpOnly
+  // cookie from the minted raw token; the prior return shape
+  // ({ ok, client_id } / { ok:false, error, field_errors? }) is
+  // preserved exactly.
+  const result = await runClientLogin(input, {
+    ip: await clientIp(),
+    userAgent: await userAgent(),
+  });
+  if (!result.ok) {
+    return result.field_errors
+      ? { ok: false, error: result.error, field_errors: result.field_errors }
+      : { ok: false, error: result.error };
   }
 
-  const parsed = clientLoginSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: 'validation_failed',
-      field_errors: fieldErrorsFromZod(parsed.error.issues),
-    };
-  }
-
-  const client = looseClient();
-  const { data: lookupData, error: lookupErr } = await client.rpc(
-    'client_login_lookup',
-    { p_email: parsed.data.email }
-  );
-  if (lookupErr) {
-    console.error('[clients-public.clientLogin] lookup rpc error', lookupErr);
-    return { ok: false, error: 'rpc_failed' };
-  }
-
-  const lookup = lookupData as unknown as
-    | {
-        ok: true;
-        client_id: string;
-        password_hash: string;
-        signup_status: 'active' | 'suspended' | 'deleted';
-        password_must_change: boolean;
-      }
-    | { ok: false; error: string };
-
-  if (!lookup.ok) {
-    // Opaque — never leak whether email exists
-    await recordPublicActionAttempt(
-      'client_login',
-      rl.actorFingerprint,
-      'auth_failed'
-    );
-    return { ok: false, error: 'invalid_credentials' };
-  }
-  if (lookup.signup_status !== 'active') {
-    await recordPublicActionAttempt(
-      'client_login',
-      rl.actorFingerprint,
-      'auth_failed'
-    );
-    return { ok: false, error: 'account_not_active' };
-  }
-
-  const passwordOk = await verifyClientPassword(
-    parsed.data.password,
-    lookup.password_hash
-  );
-  if (!passwordOk) {
-    await recordPublicActionAttempt(
-      'client_login',
-      rl.actorFingerprint,
-      'auth_failed'
-    );
-    return { ok: false, error: 'invalid_credentials' };
-  }
-
-  const minted = mintClientSessionToken(parsed.data.remember_me);
-
-  const { data: sessionData, error: sessionErr } = await client.rpc(
-    'client_login_create_session',
-    {
-      p_client_id: lookup.client_id,
-      p_session_token_hash: minted.token_hash,
-      p_remember_me: parsed.data.remember_me,
-      p_ip: await clientIp(),
-      p_user_agent: await userAgent(),
-    }
-  );
-  if (sessionErr) {
-    console.error(
-      '[clients-public.clientLogin] session rpc error',
-      sessionErr
-    );
-    return { ok: false, error: 'rpc_failed' };
-  }
-  const session = sessionData as unknown as
-    | { ok: true; session_id: string; expires_at: string }
-    | { ok: false; error: string };
-  if (!session.ok) {
-    return { ok: false, error: session.error };
-  }
-
-  await setClientSessionCookie(minted.raw_token, parsed.data.remember_me);
-  await recordPublicActionAttempt(
-    'client_login',
-    rl.actorFingerprint,
-    'success'
-  );
-  return { ok: true, client_id: lookup.client_id };
+  await setClientSessionCookie(result.raw_token, result.remember_me);
+  return { ok: true, client_id: result.client_id };
 }
 
 // ============================================================
@@ -359,22 +267,9 @@ export type ClientLogoutResult = { ok: true } | ClientPublicActionFailure;
 export async function clientLogout(): Promise<ClientLogoutResult> {
   if (isPortalDisabled()) return { ok: false, error: 'flag_disabled' };
 
-  const raw = await getRawSessionTokenFromCookie();
-  if (!raw) {
-    await clearClientSessionCookie();
-    return { ok: true };
-  }
-
-  const tokenHash = hashSessionToken(raw);
-  const client = looseClient();
-  const { error } = await client.rpc('client_logout', {
-    p_session_token_hash: tokenHash,
-  });
-  if (error) {
-    console.error('[clients-public.clientLogout] rpc error', error);
-    // Always clear cookie regardless of RPC outcome
-  }
-
+  // Delegate revocation to the shared core (idempotent), then
+  // always clear the cookie regardless of the RPC outcome.
+  await runClientLogout(await getRawSessionTokenFromCookie());
   await clearClientSessionCookie();
   return { ok: true };
 }

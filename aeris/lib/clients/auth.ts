@@ -109,12 +109,18 @@ export type ValidateClientSessionResult =
         | 'rpc_error';
     };
 
-export async function validateClientSession(): Promise<ValidateClientSessionResult> {
-  const raw = await getRawSessionTokenFromCookie();
-  if (!raw) return { ok: false, reason: 'no_cookie' };
-
-  const tokenHash = hashSessionToken(raw);
-
+/**
+ * Transport-neutral session validation. Takes the
+ * `sha256(rawToken)` hash directly (NOT `cookies()`), calls the
+ * `client_session_validate` SECURITY DEFINER RPC, and maps the
+ * result. This is the shared core used by BOTH the cookie path
+ * (`validateClientSession`, web) and the Bearer path
+ * (`requireClientSessionFromBearer`, mobile API) so the two
+ * surfaces can never drift in how a session is judged valid.
+ */
+export async function validateClientSessionByHash(
+  tokenHash: string
+): Promise<ValidateClientSessionResult> {
   const client = createAdminClient();
   // Cast the WHOLE client to a structural type containing
   // the loose-name `rpc` method, then invoke as a method
@@ -170,6 +176,12 @@ export async function validateClientSession(): Promise<ValidateClientSessionResu
       password_must_change: result.password_must_change,
     },
   };
+}
+
+export async function validateClientSession(): Promise<ValidateClientSessionResult> {
+  const raw = await getRawSessionTokenFromCookie();
+  if (!raw) return { ok: false, reason: 'no_cookie' };
+  return validateClientSessionByHash(hashSessionToken(raw));
 }
 
 /**
