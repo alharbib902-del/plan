@@ -64,7 +64,17 @@ export interface ClientPrivilegeDashboard {
  */
 export async function readClientPrivilegeDashboard(): Promise<ClientPrivilegeDashboard> {
   const session = await requireClientSession();
+  return readClientPrivilegeDashboardById(session.client_id);
+}
 
+/**
+ * Transport-neutral variant (PR4 4d) — takes clientId explicitly so the
+ * mobile Bearer route can call it. The cookie wrapper above keeps
+ * requireClientSession(); this body is otherwise unchanged.
+ */
+export async function readClientPrivilegeDashboardById(
+  clientId: string
+): Promise<ClientPrivilegeDashboard> {
   const admin = createAdminClient() as unknown as LooseClient;
 
   const { data: clientRow, error: clientErr } = await admin
@@ -81,7 +91,7 @@ export async function readClientPrivilegeDashboard(): Promise<ClientPrivilegeDas
         'two_factor_enabled',
       ].join(',')
     )
-    .eq('id', session.client_id)
+    .eq('id', clientId)
     .single();
 
   if (clientErr || !clientRow) {
@@ -95,7 +105,7 @@ export async function readClientPrivilegeDashboard(): Promise<ClientPrivilegeDas
     .select(
       'id, client_id, event_type, amount_sar, balance_after_sar, booking_id, source_change_log_id, source_subscription_id, admin_actor_cookie_fingerprint, admin_reason, cashback_expiry_at, created_at'
     )
-    .eq('client_id', session.client_id)
+    .eq('client_id', clientId)
     .order('created_at', { ascending: false })
     .limit(10);
 
@@ -110,7 +120,7 @@ export async function readClientPrivilegeDashboard(): Promise<ClientPrivilegeDas
     .select(
       'id, client_id, from_tier, to_tier, reason, qualified_spend_12m_sar, grace_started_at, admin_actor_cookie_fingerprint, admin_reason, lock_until, source_booking_id, created_at'
     )
-    .eq('client_id', session.client_id)
+    .eq('client_id', clientId)
     .order('created_at', { ascending: false })
     .limit(5);
 
@@ -125,7 +135,7 @@ export async function readClientPrivilegeDashboard(): Promise<ClientPrivilegeDas
   } & ClientPrivilegeColumns;
 
   return {
-    client_id: session.client_id,
+    client_id: clientId,
     full_name: c.full_name,
     privilege: {
       privilege_tier: c.privilege_tier,
@@ -154,6 +164,16 @@ export async function readClientLedgerHistory(args: {
   ledger: ClientLoyaltyLedgerRow[];
 }> {
   const session = await requireClientSession();
+  return readClientLedgerHistoryById(session.client_id, args);
+}
+
+export async function readClientLedgerHistoryById(
+  clientId: string,
+  args: { limit?: number } = {}
+): Promise<{
+  client_id: string;
+  ledger: ClientLoyaltyLedgerRow[];
+}> {
   const limit = args.limit ?? 100;
 
   const admin = createAdminClient() as unknown as LooseClient;
@@ -163,7 +183,7 @@ export async function readClientLedgerHistory(args: {
     .select(
       'id, client_id, event_type, amount_sar, balance_after_sar, booking_id, source_change_log_id, source_subscription_id, admin_actor_cookie_fingerprint, admin_reason, cashback_expiry_at, created_at'
     )
-    .eq('client_id', session.client_id)
+    .eq('client_id', clientId)
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -172,7 +192,7 @@ export async function readClientLedgerHistory(args: {
   }
 
   return {
-    client_id: session.client_id,
+    client_id: clientId,
     ledger: (data ?? []) as ClientLoyaltyLedgerRow[],
   };
 }
