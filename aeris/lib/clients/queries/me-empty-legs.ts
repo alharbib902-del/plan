@@ -4,6 +4,7 @@ import { unstable_noStore as noStore } from 'next/cache';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isUuid } from '@/lib/utils/uuid';
+import { clientPricingVisible } from '@/lib/empty-legs/pricing-visibility';
 import type { EmptyLegRow } from '@/lib/empty-legs/types';
 
 /**
@@ -38,12 +39,20 @@ export async function listAvailableEmptyLegs(
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
 
+  // When client pricing is hidden (request-to-book), ordering by
+  // current_price would leak the relative price RANK even though the
+  // SAR figures are stripped — so fall back to the public list's
+  // urgency ordering (auction closing soonest). Price ordering is used
+  // only when prices are actually visible to the client.
+  const orderColumn = clientPricingVisible()
+    ? 'current_price'
+    : 'auction_window_end_at';
   const { data, error } = await admin
     .from('empty_legs')
     .select('*')
     .eq('status', 'available')
     .gt('auction_window_end_at', nowIso)
-    .order('current_price', { ascending: true })
+    .order(orderColumn, { ascending: true })
     .limit(limit);
 
   if (error) {

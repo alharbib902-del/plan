@@ -8,8 +8,19 @@ import {
 } from '@/lib/rate-limit/public-action';
 import type { PublicActionAttemptOutcome } from '@/lib/rate-limit/public-action-core';
 import { mobileError, withCors } from '@/lib/mobile/http';
+import {
+  MOBILE_MUTATION_ACTION,
+  mobileMutationActorIdentity,
+  mobileRateLimitDenialCode,
+  mobileRateLimitDenialOutcome,
+  mutationOutcomeForError,
+} from '@/lib/mobile/mutation-rate-limit-core';
 
-const ACTION = 'client_authed_mutation';
+// Re-exported so the route handlers keep importing it from this
+// server module (the pure mapping lives in the -core sibling, which
+// the unit suite imports directly — it can't load this server-only
+// module under tsx).
+export { mutationOutcomeForError };
 
 export type MobileMutationRateLimitResult =
   | { ok: true; actorFingerprint: string }
@@ -20,8 +31,8 @@ export async function checkMobileMutationRateLimit(
   tokenHash: string
 ): Promise<MobileMutationRateLimitResult> {
   const verdict = await checkPublicActionRateLimitForIdentity(
-    ACTION,
-    `token_hash:${tokenHash}`
+    MOBILE_MUTATION_ACTION,
+    mobileMutationActorIdentity(tokenHash)
   );
 
   if (verdict.ok) {
@@ -29,11 +40,9 @@ export async function checkMobileMutationRateLimit(
   }
 
   await recordPublicActionAttempt(
-    ACTION,
+    MOBILE_MUTATION_ACTION,
     verdict.actorFingerprint,
-    verdict.reason === 'secret_missing' || verdict.reason === 'storage_error'
-      ? 'rpc_error'
-      : 'rate_limited'
+    mobileRateLimitDenialOutcome(verdict.reason)
   );
 
   return {
@@ -41,9 +50,7 @@ export async function checkMobileMutationRateLimit(
     response: withCors(
       req,
       mobileError(
-        verdict.reason === 'secret_missing' || verdict.reason === 'storage_error'
-          ? verdict.reason
-          : 'rate_limited',
+        mobileRateLimitDenialCode(verdict.reason),
         { retry_after: verdict.retryAfterSeconds },
         {
           headers: { 'Retry-After': String(verdict.retryAfterSeconds) },
@@ -57,22 +64,9 @@ export async function recordMobileMutationAttempt(
   actorFingerprint: string,
   outcome: PublicActionAttemptOutcome
 ): Promise<void> {
-  await recordPublicActionAttempt(ACTION, actorFingerprint, outcome);
-}
-
-export function mutationOutcomeForError(
-  code: string
-): PublicActionAttemptOutcome {
-  if (code === 'validation_failed' || code === 'malformed_body') {
-    return 'validation_failed';
-  }
-  if (
-    code === 'rpc_failed' ||
-    code === 'rpc_error' ||
-    code === 'storage_error' ||
-    code === 'secret_missing'
-  ) {
-    return 'rpc_error';
-  }
-  return 'validation_failed';
+  await recordPublicActionAttempt(
+    MOBILE_MUTATION_ACTION,
+    actorFingerprint,
+    outcome
+  );
 }
