@@ -55,6 +55,7 @@ const ERROR_STATUS: Record<string, number> = {
   // 404 — owned resource not found
   request_not_found: 404,
   leg_not_found: 404,
+  booking_not_found: 404,
   // 409 — conflict (concurrent / state collision). No conflict
   // semantics exist in PR1 (config/login/logout/session), but the
   // §3 contract reserves 409, so the known conflict-wire codes are
