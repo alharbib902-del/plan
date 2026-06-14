@@ -26,6 +26,8 @@ const ERROR_STATUS: Record<string, number> = {
   malformed_body: 400,
   body_too_large: 413,
   ip_required: 400,
+  invalid_input: 400,
+  alert_invalid: 400,
   invalid_trip_type: 400,
   invalid_legs: 400,
   invalid_iata: 400,
@@ -52,6 +54,7 @@ const ERROR_STATUS: Record<string, number> = {
   client_not_found: 403,
   // 404 — owned resource not found
   request_not_found: 404,
+  leg_not_found: 404,
   // 409 — conflict (concurrent / state collision). No conflict
   // semantics exist in PR1 (config/login/logout/session), but the
   // §3 contract reserves 409, so the known conflict-wire codes are
@@ -65,11 +68,13 @@ const ERROR_STATUS: Record<string, number> = {
   decline_not_allowed: 409,
   cancel_not_allowed: 409,
   booking_has_active_payment: 409,
+  auction_window_closed: 409,
   // 429 — throttle
   rate_limited: 429,
   // 5xx — server / dependency
   rpc_failed: 502,
   rpc_error: 502,
+  server_error: 502,
   bcrypt_failed: 500,
   storage_error: 503,
   secret_missing: 503,
