@@ -228,8 +228,10 @@ export async function runClientAcceptOffer(
   // the ONLY ownership enforcement for accept. The accept_offer SECURITY
   // DEFINER RPC takes no caller identity and performs no ownership check, so
   // any future client-facing caller MUST replicate this pre-SELECT or it
-  // becomes an instant IDOR. (decline folds ownership into its mutating
-  // query, so it is not exposed to this app-only gap.)
+  // becomes an instant IDOR. The SAME applies to decline: its UPDATE is
+  // guarded by offer id + status only (NOT client_id), so its own pre-SELECT
+  // is load-bearing too. Only cancel folds ownership into the mutating query
+  // itself (`.eq('client_id', clientId)` on the UPDATE).
   const loose = looseClient();
   const { data, error } = await loose.rpc('accept_offer', {
     p_source: parsed.data.source,
