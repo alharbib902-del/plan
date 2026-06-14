@@ -42,10 +42,28 @@ class AuthRepository {
   }
 
   Future<ClientSession> fetchSession() async {
-    final res = await _api.getJson('${ApiEnv.apiPrefix}/me/session');
+    // silent: the AuthController owns session-error handling for this
+    // explicit lifecycle call, so the global session hook is suppressed.
+    final res = await _api.getJson(
+      '${ApiEnv.apiPrefix}/me/session',
+      silent: true,
+    );
     final session = res['session'];
     if (session is! Map) throw const AppException('invalid_session');
     return ClientSession.fromJson(Map<String, dynamic>.from(session));
+  }
+
+  /// Unlock path for the `password_must_change` lockout. Throws an
+  /// [AppException] on failure — notably `current_password_invalid`,
+  /// which is NOT a session death (the token stays put).
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _api.postJson('${ApiEnv.apiPrefix}/auth/change-password', {
+      'current_password': currentPassword,
+      'new_password': newPassword,
+    });
   }
 
   Future<void> logout() async {
