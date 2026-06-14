@@ -29,7 +29,16 @@ class AuthRepository {
       throw const AppException('unknown');
     }
     await _tokens.write(token);
-    return fetchSession();
+    try {
+      // Login is atomic: only keep the token once the session is
+      // confirmed. If /me/session fails (even transient network),
+      // drop the just-written token so the app never holds an
+      // unvalidated credential while the form reports failure.
+      return await fetchSession();
+    } catch (_) {
+      await _tokens.clear();
+      rethrow;
+    }
   }
 
   Future<ClientSession> fetchSession() async {

@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for all API calls (login/session/REST). flutter create
+         only adds this to the debug/profile manifests, so release builds
+         would silently lose network access without it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="aeris_mobile"
         android:name="${applicationName}"
