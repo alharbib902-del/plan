@@ -74,6 +74,7 @@
     "test:mobile-http": "tsx lib/mobile/__tests__/http.test.ts",
     "test:mobile-bearer": "tsx lib/mobile/__tests__/bearer.test.ts",
     "test:mobile-bearer-gate": "tsx lib/mobile/__tests__/bearer-gate.test.ts",
+    "test:mobile-empty-legs-routes": "tsx lib/mobile/__tests__/empty-legs-routes.test.ts",
     "test:mobile-airports": "tsx lib/mobile/__tests__/airports.test.ts",
     "test:mobile-empty-legs-serializer": "tsx lib/mobile/__tests__/empty-legs-serializer.test.ts",
     "test:mobile-bookings-serializer": "tsx lib/mobile/__tests__/bookings-serializer.test.ts",

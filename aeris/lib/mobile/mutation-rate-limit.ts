@@ -8,19 +8,8 @@ import {
 } from '@/lib/rate-limit/public-action';
 import type { PublicActionAttemptOutcome } from '@/lib/rate-limit/public-action-core';
 import { mobileError, withCors } from '@/lib/mobile/http';
-import {
-  MOBILE_MUTATION_ACTION,
-  mobileMutationActorIdentity,
-  mobileRateLimitDenialCode,
-  mobileRateLimitDenialOutcome,
-  mutationOutcomeForError,
-} from '@/lib/mobile/mutation-rate-limit-core';
 
-// Re-exported so the route handlers keep importing it from this
-// server module (the pure mapping lives in the -core sibling, which
-// the unit suite imports directly — it can't load this server-only
-// module under tsx).
-export { mutationOutcomeForError };
+const ACTION = 'client_authed_mutation';
 
 export type MobileMutationRateLimitResult =
   | { ok: true; actorFingerprint: string }
@@ -31,8 +20,8 @@ export async function checkMobileMutationRateLimit(
   tokenHash: string
 ): Promise<MobileMutationRateLimitResult> {
   const verdict = await checkPublicActionRateLimitForIdentity(
-    MOBILE_MUTATION_ACTION,
-    mobileMutationActorIdentity(tokenHash)
+    ACTION,
+    `token_hash:${tokenHash}`
   );
 
   if (verdict.ok) {
@@ -40,9 +29,11 @@ export async function checkMobileMutationRateLimit(
   }
 
   await recordPublicActionAttempt(
-    MOBILE_MUTATION_ACTION,
+    ACTION,
     verdict.actorFingerprint,
-    mobileRateLimitDenialOutcome(verdict.reason)
+    verdict.reason === 'secret_missing' || verdict.reason === 'storage_error'
+      ? 'rpc_error'
+      : 'rate_limited'
   );
 
   return {
@@ -50,7 +41,9 @@ export async function checkMobileMutationRateLimit(
     response: withCors(
       req,
       mobileError(
-        mobileRateLimitDenialCode(verdict.reason),
+        verdict.reason === 'secret_missing' || verdict.reason === 'storage_error'
+          ? verdict.reason
+          : 'rate_limited',
         { retry_after: verdict.retryAfterSeconds },
         {
           headers: { 'Retry-After': String(verdict.retryAfterSeconds) },

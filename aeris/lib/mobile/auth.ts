@@ -11,12 +11,11 @@ import { extractBearerToken } from '@/lib/mobile/bearer';
 import { resolveBearerSession } from '@/lib/mobile/bearer-gate';
 import { mobileError } from '@/lib/mobile/http';
 
-// Re-export the pure parser + option type so server callers can keep
-// importing them from the auth module (the unit suite imports the
-// pure `@/lib/mobile/bearer` + `@/lib/mobile/bearer-gate` directly —
-// it can't import this `server-only` module under tsx).
+// Re-export the pure parser so server callers can keep importing
+// it from the auth module (the unit suite imports the pure
+// `@/lib/mobile/bearer` directly — it can't import this
+// `server-only` module under tsx).
 export { extractBearerToken };
-export type { RequireClientBearerOptions };
 
 /**
  * Bearer-token session guard for `/api/v1/mobile/*`.
@@ -36,6 +35,11 @@ export type { RequireClientBearerOptions };
  * web layout never enforced this, so the mobile contract closes
  * the gap server-side.
  */
+
+export interface RequireClientBearerOptions {
+  /** Allow a session with password_must_change=true (default false). */
+  allowPasswordChange?: boolean;
+}
 
 export type RequireClientBearerResult =
   | { ok: true; session: ClientSessionContext; token_hash: string }
