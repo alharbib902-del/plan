@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../auth/auth_controller.dart';
 import '../screens/change_password_screen.dart';
+import '../screens/error_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/splash_screen.dart';
@@ -13,13 +14,15 @@ class Routes {
   static const splash = '/splash';
   static const login = '/login';
   static const changePassword = '/change-password';
+  static const error = '/error';
   static const home = '/home';
 }
 
 /// Central redirect-guard (mirrors the web `requireClientSession`
 /// → redirect behaviour, incl. the `password_must_change` lockout):
 ///   - resolving (no value yet)        → /splash
-///   - unauthenticated / error         → /login
+///   - resolved error (token intact)   → /error (retry — NOT a logout)
+///   - unauthenticated                 → /login
 ///   - password_must_change=true       → /change-password (locked)
 ///   - authenticated                   → /home
 final routerProvider = Provider<GoRouter>((ref) {
@@ -40,19 +43,27 @@ final routerProvider = Provider<GoRouter>((ref) {
         return loc == Routes.splash ? null : Routes.splash;
       }
 
-      final status = auth.valueOrNull;
-      final isUnauth = auth.hasError || status is Unauthenticated || status == null;
+      // A RESOLVED error means the controller hit a non-session-death
+      // fault (network / flag_disabled / account_not_active) and
+      // deliberately kept the token (see session_codes.dart). Show a
+      // retry screen — NEVER a silent /login bounce that masquerades as
+      // a logout for a still-valid session.
+      if (auth.hasError) {
+        return loc == Routes.error ? null : Routes.error;
+      }
 
-      if (isUnauth) {
+      final status = auth.valueOrNull;
+      if (status is Unauthenticated || status == null) {
         return loc == Routes.login ? null : Routes.login;
       }
       if (status is MustChangePassword) {
         return loc == Routes.changePassword ? null : Routes.changePassword;
       }
-      // Authenticated — keep away from the pre-auth screens.
+      // Authenticated — keep away from the pre-auth / error screens.
       if (loc == Routes.login ||
           loc == Routes.splash ||
-          loc == Routes.changePassword) {
+          loc == Routes.changePassword ||
+          loc == Routes.error) {
         return Routes.home;
       }
       return null;
@@ -69,6 +80,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Routes.changePassword,
         builder: (_, _) => const ChangePasswordScreen(),
+      ),
+      GoRoute(
+        path: Routes.error,
+        builder: (_, _) => const ErrorScreen(),
       ),
       GoRoute(
         path: Routes.home,

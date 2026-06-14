@@ -30,6 +30,14 @@ const Map<String, String> _ar = {
   'session_expired': 'انتهت جلستك، يرجى تسجيل الدخول من جديد',
   'expired': 'انتهت جلستك، يرجى تسجيل الدخول من جديد',
   'password_change_required': 'يجب تغيير كلمة المرور قبل المتابعة',
+  // change-password (NOTE: current_password_invalid is a credential error,
+  // NOT a session death — it must never clear the token; see session_codes.dart)
+  'current_password_invalid': 'كلمة المرور الحالية غير صحيحة',
+  'client_not_active': 'هذا الحساب غير مفعّل، تواصل مع الدعم',
+  'client_not_found': 'تعذّر العثور على الحساب',
+  'lookup_failed': 'تعذّر إتمام الطلب، حاول مرة أخرى',
+  'update_failed': 'تعذّر حفظ التغيير، حاول مرة أخرى',
+  'bcrypt_failed': 'تعذّر إتمام الطلب، حاول مرة أخرى',
   // input / flags
   'validation_failed': 'يرجى التحقّق من البيانات المُدخلة',
   'flag_disabled': 'هذه الخدمة غير متاحة حالياً',

@@ -21,6 +21,15 @@ void main() {
       const e = AppException('flag_disabled');
       expect(e.messageAr, errorMessageAr('flag_disabled'));
     });
+
+    test('maps current_password_invalid to its own message', () {
+      // Must be a distinct credential message, not the generic fallback.
+      expect(errorMessageAr('current_password_invalid'), contains('الحالية'));
+      expect(
+        errorMessageAr('current_password_invalid'),
+        isNot(errorMessageAr('__missing__')),
+      );
+    });
   });
 
   group('AppConfig', () {

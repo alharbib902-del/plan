@@ -6,3 +6,13 @@
 # build artifacts and node_modules.
 advisor-doc/node_modules/
 advisor-doc/package-lock.json
+
+# ── Local-only working artifacts (kept on disk, never committed) ──
+# Founder's planning/tracking docs, the demo collateral, and the local
+# migration-runner tool. Ignored so the working tree stays clean and a
+# stray `git add -A` can never sweep them into a commit.
+/FLUTTER-APP-PLAN.md
+/WORK-TRACKER.md
+/demo-*.html
+/demo-screenshots/
+/migration-runner/

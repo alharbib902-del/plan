@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../auth/auth_controller.dart';
-import '../core/app_exception.dart';
 import '../theme/aeris_theme.dart';
+import '../widgets/error_banner.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -33,7 +33,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _submitting = true;
       _errorAr = null;
     });
-    final status = await ref
+    final err = await ref
         .read(authControllerProvider.notifier)
         .login(
           email: _email.text.trim(),
@@ -41,17 +41,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           rememberMe: _rememberMe,
         );
     if (!mounted) return;
-    if (status == null) {
-      // login() returns null on failure; surface the typed error.
-      final err = ref.read(authControllerProvider).error;
-      setState(() {
-        _submitting = false;
-        _errorAr = err is AppException
-            ? err.messageAr
-            : errorMessageAr('unknown');
-      });
-    }
-    // On success the router redirects to /home automatically.
+    // On success the router redirects to /home (or /change-password); on
+    // failure show the typed error inline and re-enable the form.
+    setState(() {
+      _submitting = false;
+      _errorAr = err?.messageAr;
+    });
   }
 
   @override
@@ -89,7 +84,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: 32),
                     if (_errorAr != null) ...[
-                      _ErrorBanner(message: _errorAr!),
+                      ErrorBanner(message: _errorAr!),
                       const SizedBox(height: 16),
                     ],
                     TextFormField(
@@ -150,35 +145,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AerisColors.danger.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AerisColors.danger.withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline, color: AerisColors.danger, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(color: AerisColors.inkPrimary),
-            ),
-          ),
-        ],
       ),
     );
   }

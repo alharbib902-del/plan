@@ -1,8 +1,11 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../auth/auth_controller.dart';
 import 'app_exception.dart';
 import 'env.dart';
+import 'session_codes.dart';
 import 'token_store.dart';
 
 /// Thin Dio wrapper for the `/api/v1/mobile/*` contract.
@@ -12,10 +15,18 @@ import 'token_store.dart';
 ///     on requests flagged `auth: true`,
 ///   - normalise the `{ ok, error }` envelope + HTTP status into a
 ///     typed [AppException] (so the UI never parses raw responses),
-///   - map transport/timeout faults to `network_error`.
+///   - map transport/timeout faults to `network_error`,
+///   - on a *session-invalidating* code (see [invalidatesSession]) from
+///     any non-silent authed request, fire [onSessionInvalid] so the
+///     app drops the token + returns to /login — the global, app-wide
+///     "401 by error code, not status" guard.
 class ApiClient {
-  ApiClient({required String baseUrl, required TokenStore tokenStore})
-    : _tokenStore = tokenStore,
+  ApiClient({
+    required String baseUrl,
+    required TokenStore tokenStore,
+    this.onSessionInvalid,
+    @visibleForTesting HttpClientAdapter? adapter,
+  })  : _tokenStore = tokenStore,
       _dio = Dio(
         BaseOptions(
           baseUrl: baseUrl,
@@ -26,6 +37,9 @@ class ApiClient {
           headers: const {'content-type': 'application/json'},
         ),
       ) {
+    // Tests inject a stub transport to drive canned {ok,error}+status
+    // responses through the real envelope/session-guard logic.
+    if (adapter != null) _dio.httpClientAdapter = adapter;
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -44,25 +58,45 @@ class ApiClient {
   final Dio _dio;
   final TokenStore _tokenStore;
 
-  Future<Map<String, dynamic>> getJson(String path, {bool auth = true}) {
-    return _send(() => _dio.get<dynamic>(path, options: _opts(auth)));
+  /// Invoked when a non-silent authed request reports a
+  /// session-invalidating code. Wired to drop the token + flip auth
+  /// state to unauthenticated.
+  final void Function()? onSessionInvalid;
+
+  /// [silent] = true for the explicit session-lifecycle call
+  /// (`/me/session`): the caller ([AuthController]) handles its own
+  /// session errors there, so the global [onSessionInvalid] hook is
+  /// suppressed (it would otherwise reentrantly mutate auth state
+  /// during launch/login).
+  Future<Map<String, dynamic>> getJson(
+    String path, {
+    bool auth = true,
+    bool silent = false,
+  }) {
+    return _send(
+      () => _dio.get<dynamic>(path, options: _opts(auth)),
+      notify: auth && !silent,
+    );
   }
 
   Future<Map<String, dynamic>> postJson(
     String path,
     Map<String, dynamic> body, {
     bool auth = true,
+    bool silent = false,
   }) {
     return _send(
       () => _dio.post<dynamic>(path, data: body, options: _opts(auth)),
+      notify: auth && !silent,
     );
   }
 
   Options _opts(bool auth) => Options(extra: {'auth': auth});
 
   Future<Map<String, dynamic>> _send(
-    Future<Response<dynamic>> Function() run,
-  ) async {
+    Future<Response<dynamic>> Function() run, {
+    required bool notify,
+  }) async {
     final Response<dynamic> res;
     try {
       res = await run();
@@ -81,6 +115,12 @@ class ApiClient {
     }
 
     final code = map['error'] is String ? map['error'] as String : 'unknown';
+    // App-wide session guard: a dead-session code on a normal authed
+    // request drops the token + bounces to /login. By construction this
+    // never fires for current_password_invalid / flag_disabled / etc.
+    if (notify && invalidatesSession(code)) {
+      onSessionInvalid?.call();
+    }
     final retry = map['retry_after'];
     final fieldErrors = map['field_errors'];
     throw AppException(
@@ -97,5 +137,9 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(
     baseUrl: ApiEnv.baseUrl,
     tokenStore: ref.read(tokenStoreProvider),
+    // Lazy callback: read at request time (auth is already built by
+    // then), so wiring it here creates no provider-construction cycle.
+    onSessionInvalid: () =>
+        ref.read(authControllerProvider.notifier).invalidate(),
   );
 });
