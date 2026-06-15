@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:aeris_mobile/src/auth/auth_controller.dart';
 import 'package:aeris_mobile/src/auth/session.dart';
@@ -107,5 +108,73 @@ void main() {
     await tester.pump(); // one frame — do NOT settle (future never completes)
 
     expect(find.textContaining('وضع محدود'), findsNothing);
+  });
+
+  testWidgets('tapping the "حجوزاتي" card navigates to /bookings',
+      (tester) async {
+    // Minimal router: home at '/', a sentinel at '/bookings' so we assert
+    // the navigation happened without standing up the real bookings stack.
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+        GoRoute(
+          path: '/bookings',
+          builder: (_, _) => const Directionality(
+            textDirection: TextDirection.rtl,
+            child: Text('BOOKINGS_SENTINEL'),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          appConfigProvider.overrideWith((ref) => AppConfig.failClosed()),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('حجوزاتي'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('BOOKINGS_SENTINEL'), findsOneWidget);
+  });
+
+  testWidgets('tapping the "رحلة خاصة" card navigates to /requests',
+      (tester) async {
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+        GoRoute(
+          path: '/requests',
+          builder: (_, _) => const Directionality(
+            textDirection: TextDirection.rtl,
+            child: Text('REQUESTS_SENTINEL'),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          appConfigProvider.overrideWith((ref) => AppConfig.failClosed()),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('رحلة خاصة'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('REQUESTS_SENTINEL'), findsOneWidget);
   });
 }
