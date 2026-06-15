@@ -57,14 +57,14 @@ class AppConfig {
   }
 }
 
-/// Loads /config once on launch; fail-closed on any error.
+/// Loads /config once on launch. Surfaces a fetch failure as AsyncError
+/// (rather than swallowing it) so the UI can distinguish "still loading"
+/// from "resolved-but-failed" and show the limited-mode banner (S9). The
+/// fail-closed default lives at the call site: a null/error value is read
+/// as `AppConfig.failClosed()`, so flag-gated surfaces stay OFF on failure.
 final appConfigProvider = FutureProvider<AppConfig>((ref) async {
-  try {
-    final res = await ref
-        .read(apiClientProvider)
-        .getJson('${ApiEnv.apiPrefix}/config', auth: false);
-    return AppConfig.fromJson(res);
-  } catch (_) {
-    return AppConfig.failClosed();
-  }
+  final res = await ref
+      .read(apiClientProvider)
+      .getJson('${ApiEnv.apiPrefix}/config', auth: false);
+  return AppConfig.fromJson(res);
 });

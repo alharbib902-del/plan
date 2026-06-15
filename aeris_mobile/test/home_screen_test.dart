@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -59,5 +61,51 @@ void main() {
         reason: 'RenderFlex overflow at ${width}px',
       );
     }
+  });
+
+  testWidgets('shows the limited-mode banner when /config fails (S9)',
+      (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          // /config resolved-but-FAILED → AsyncError → fail-closed + banner.
+          appConfigProvider.overrideWith(
+            (ref) => Future<AppConfig>.error(Exception('config down')),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: HomeScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('وضع محدود'), findsOneWidget);
+  });
+
+  testWidgets('NO limited-mode banner while /config is still loading (S9)',
+      (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          // Never completes → perpetual AsyncLoading (hasError == false).
+          appConfigProvider.overrideWith((ref) => Completer<AppConfig>().future),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: HomeScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(); // one frame — do NOT settle (future never completes)
+
+    expect(find.textContaining('وضع محدود'), findsNothing);
   });
 }

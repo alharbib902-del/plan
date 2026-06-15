@@ -38,6 +38,8 @@ const Map<String, String> _ar = {
   'lookup_failed': 'تعذّر إتمام الطلب، حاول مرة أخرى',
   'update_failed': 'تعذّر حفظ التغيير، حاول مرة أخرى',
   'bcrypt_failed': 'تعذّر إتمام الطلب، حاول مرة أخرى',
+  // owned-resource lookups
+  'booking_not_found': 'هذا الحجز غير موجود أو لا يخصّ حسابك',
   // input / flags
   'validation_failed': 'يرجى التحقّق من البيانات المُدخلة',
   'flag_disabled': 'هذه الخدمة غير متاحة حالياً',

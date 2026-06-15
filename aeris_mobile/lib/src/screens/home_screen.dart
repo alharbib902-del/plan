@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../auth/auth_controller.dart';
 import '../config/app_config.dart';
@@ -17,8 +18,14 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final status = ref.watch(authControllerProvider).valueOrNull;
     final name = status is Authenticated ? status.session.fullName : '';
-    // Fail-closed: while /config is loading or on error, gated cards hide.
-    final config = ref.watch(appConfigProvider).valueOrNull ?? AppConfig.failClosed();
+    final configAsync = ref.watch(appConfigProvider);
+    // Fail-closed: a null (loading) OR errored config reads as
+    // everything-off, so flag-gated cards hide on load AND on failure.
+    final config = configAsync.valueOrNull ?? AppConfig.failClosed();
+    // S9: /config genuinely failed (resolved-but-errored, not still
+    // loading) → surface a limited-mode banner so the user understands
+    // why some sections are missing.
+    final limited = configAsync.hasError;
     final sections = visibleSections(config);
 
     return Scaffold(
@@ -38,6 +45,10 @@ class HomeScreen extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (limited) ...[
+                const _LimitedModeBanner(),
+                const SizedBox(height: 16),
+              ],
               Text(
                 name.isEmpty ? 'مرحباً بك' : 'مرحباً، $name',
                 style: const TextStyle(
@@ -76,6 +87,36 @@ class HomeScreen extends ConsumerWidget {
   }
 }
 
+/// S9 limited-mode notice: shown when `/config` failed to load, so the
+/// app is fail-closed and some flag-gated sections are hidden.
+class _LimitedModeBanner extends StatelessWidget {
+  const _LimitedModeBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AerisColors.gold.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AerisColors.gold.withValues(alpha: 0.4)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, color: AerisColors.gold, size: 20),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'وضع محدود — تعذّر تحميل بعض الميزات، حاول لاحقاً',
+              style: TextStyle(color: AerisColors.inkPrimary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   const _SectionCard({required this.section});
 
@@ -89,13 +130,7 @@ class _SectionCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        // Destinations land in the following slices; for now a card
-        // acknowledges the tap without navigating to a non-existent route.
-        onTap: () => ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            const SnackBar(content: Text('هذه الشاشة قيد الإنشاء')),
-          ),
+        onTap: () => _open(context),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -122,6 +157,27 @@ class _SectionCard extends StatelessWidget {
       ),
     );
   }
+
+  void _open(BuildContext context) {
+    final route = _routeFor(section);
+    if (route != null) {
+      context.push(route);
+      return;
+    }
+    // Destination lands in a later slice.
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        const SnackBar(content: Text('هذه الشاشة قيد الإنشاء')),
+      );
+  }
+
+  // Sections whose screen exists today route; the rest show "coming soon"
+  // until their slice lands.
+  String? _routeFor(DashboardSection s) => switch (s) {
+        DashboardSection.bookings => '/bookings',
+        _ => null,
+      };
 
   (IconData, String) _present(DashboardSection s) => switch (s) {
         DashboardSection.bookings => (Icons.confirmation_number_outlined, 'حجوزاتي'),
