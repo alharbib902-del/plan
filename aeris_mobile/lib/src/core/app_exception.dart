@@ -41,6 +41,7 @@ const Map<String, String> _ar = {
   // owned-resource lookups
   'booking_not_found': 'هذا الحجز غير موجود أو لا يخصّ حسابك',
   'request_not_found': 'هذا الطلب غير موجود أو لا يخصّ حسابك',
+  'leg_not_found': 'هذه الرحلة الفارغة غير موجودة أو لم تعد متاحة',
   // 409 — charter action conflicts (accept / decline offer, cancel request)
   'cancel_not_allowed':
       'لا يمكن إلغاء هذا الطلب الآن (قد يكون محجوزاً أو لم يعد متاحاً).',

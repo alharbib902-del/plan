@@ -7,6 +7,8 @@ import '../screens/booking_detail_screen.dart';
 import '../screens/bookings_list_screen.dart';
 import '../screens/change_password_screen.dart';
 import '../screens/create_request_screen.dart';
+import '../screens/empty_leg_detail_screen.dart';
+import '../screens/empty_legs_screen.dart';
 import '../screens/error_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/login_screen.dart';
@@ -23,6 +25,7 @@ class Routes {
   static const home = '/home';
   static const bookings = '/bookings';
   static const requests = '/requests';
+  static const emptyLegs = '/empty-legs';
 }
 
 /// Central redirect-guard (mirrors the web `requireClientSession`
@@ -121,6 +124,18 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: ':id',
             builder: (_, state) =>
                 RequestDetailScreen(id: state.pathParameters['id']!),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: Routes.emptyLegs,
+        builder: (_, _) => const EmptyLegsScreen(),
+        routes: [
+          GoRoute(
+            path: ':legNumber',
+            builder: (_, state) => EmptyLegDetailScreen(
+              legNumber: state.pathParameters['legNumber']!,
+            ),
           ),
         ],
       ),
