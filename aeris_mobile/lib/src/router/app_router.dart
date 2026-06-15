@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../auth/auth_controller.dart';
+import '../screens/booking_detail_screen.dart';
+import '../screens/bookings_list_screen.dart';
 import '../screens/change_password_screen.dart';
 import '../screens/error_screen.dart';
 import '../screens/home_screen.dart';
@@ -16,6 +18,7 @@ class Routes {
   static const changePassword = '/change-password';
   static const error = '/error';
   static const home = '/home';
+  static const bookings = '/bookings';
 }
 
 /// Central redirect-guard (mirrors the web `requireClientSession`
@@ -88,6 +91,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Routes.home,
         builder: (_, _) => const HomeScreen(),
+      ),
+      GoRoute(
+        path: Routes.bookings,
+        builder: (_, _) => const BookingsListScreen(),
+        routes: [
+          GoRoute(
+            path: ':id',
+            builder: (_, state) =>
+                BookingDetailScreen(id: state.pathParameters['id']!),
+          ),
+        ],
       ),
     ],
   );
