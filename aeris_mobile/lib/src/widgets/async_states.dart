@@ -51,6 +51,32 @@ class ErrorState extends StatelessWidget {
   }
 }
 
+/// A small generic status pill (label + tint). Callers map a status code to
+/// the Arabic label + a colour.
+class StatusPill extends StatelessWidget {
+  const StatusPill({required this.label, required this.color, super.key});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        label,
+        style:
+            TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
 /// Empty-list placeholder.
 class EmptyState extends StatelessWidget {
   const EmptyState({required this.icon, required this.message, super.key});

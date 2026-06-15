@@ -176,6 +176,7 @@ class _SectionCard extends StatelessWidget {
   // until their slice lands.
   String? _routeFor(DashboardSection s) => switch (s) {
         DashboardSection.bookings => '/bookings',
+        DashboardSection.charter => '/requests',
         _ => null,
       };
 

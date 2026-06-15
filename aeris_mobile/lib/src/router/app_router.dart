@@ -6,9 +6,12 @@ import '../auth/auth_controller.dart';
 import '../screens/booking_detail_screen.dart';
 import '../screens/bookings_list_screen.dart';
 import '../screens/change_password_screen.dart';
+import '../screens/create_request_screen.dart';
 import '../screens/error_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/login_screen.dart';
+import '../screens/request_detail_screen.dart';
+import '../screens/requests_list_screen.dart';
 import '../screens/splash_screen.dart';
 
 class Routes {
@@ -19,6 +22,7 @@ class Routes {
   static const error = '/error';
   static const home = '/home';
   static const bookings = '/bookings';
+  static const requests = '/requests';
 }
 
 /// Central redirect-guard (mirrors the web `requireClientSession`
@@ -100,6 +104,23 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: ':id',
             builder: (_, state) =>
                 BookingDetailScreen(id: state.pathParameters['id']!),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: Routes.requests,
+        builder: (_, _) => const RequestsListScreen(),
+        routes: [
+          // Literal 'new' MUST precede ':id' so /requests/new is the create
+          // form, not a detail with id == 'new'.
+          GoRoute(
+            path: 'new',
+            builder: (_, _) => const CreateRequestScreen(),
+          ),
+          GoRoute(
+            path: ':id',
+            builder: (_, state) =>
+                RequestDetailScreen(id: state.pathParameters['id']!),
           ),
         ],
       ),
