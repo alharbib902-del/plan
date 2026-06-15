@@ -49,7 +49,7 @@ void main() {
   ApiClient make(
     int status,
     Map<String, dynamic> body,
-    void Function() onInvalid,
+    Future<void> Function() onInvalid,
   ) {
     return ApiClient(
       baseUrl: 'http://test.local',
@@ -67,7 +67,9 @@ void main() {
         'session_expired',
       ]) {
         var fired = false;
-        final api = make(401, {'ok': false, 'error': code}, () => fired = true);
+        final api = make(401, {'ok': false, 'error': code}, () async {
+          fired = true;
+        });
         await expectLater(
           api.getJson('/me/bookings'),
           throwsA(isA<AppException>()),
@@ -82,7 +84,9 @@ void main() {
       final api = make(
         401,
         {'ok': false, 'error': 'current_password_invalid'},
-        () => fired = true,
+        () async {
+          fired = true;
+        },
       );
       await expectLater(
         api.postJson('/auth/change-password', const {}),
@@ -102,7 +106,9 @@ void main() {
       final api = make(
         401,
         {'ok': false, 'error': 'session_expired'},
-        () => fired = true,
+        () async {
+          fired = true;
+        },
       );
       await expectLater(
         api.getJson('/me/session', silent: true),
@@ -116,7 +122,9 @@ void main() {
       final api = make(
         401,
         {'ok': false, 'error': 'session_expired'},
-        () => fired = true,
+        () async {
+          fired = true;
+        },
       );
       await expectLater(
         api.getJson('/config', auth: false),
@@ -126,7 +134,7 @@ void main() {
     });
 
     test('returns the parsed body on success', () async {
-      final api = make(200, {'ok': true, 'value': 7}, () {});
+      final api = make(200, {'ok': true, 'value': 7}, () async {});
       final res = await api.getJson('/me/session', silent: true);
       expect(res['ok'], isTrue);
       expect(res['value'], 7);

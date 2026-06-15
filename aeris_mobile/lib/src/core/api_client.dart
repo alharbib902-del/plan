@@ -60,8 +60,11 @@ class ApiClient {
 
   /// Invoked when a non-silent authed request reports a
   /// session-invalidating code. Wired to drop the token + flip auth
-  /// state to unauthenticated.
-  final void Function()? onSessionInvalid;
+  /// state to unauthenticated. Returns a Future and is AWAITED before
+  /// the request's exception surfaces, so the token is guaranteed
+  /// cleared (and auth state flipped) by the time the caller handles
+  /// the error — no fire-and-forget race.
+  final Future<void> Function()? onSessionInvalid;
 
   /// [silent] = true for the explicit session-lifecycle call
   /// (`/me/session`): the caller ([AuthController]) handles its own
@@ -116,10 +119,18 @@ class ApiClient {
 
     final code = map['error'] is String ? map['error'] as String : 'unknown';
     // App-wide session guard: a dead-session code on a normal authed
-    // request drops the token + bounces to /login. By construction this
-    // never fires for current_password_invalid / flag_disabled / etc.
+    // request drops the token + bounces to /login. Awaited so the clear
+    // completes before the exception surfaces. By construction this never
+    // fires for current_password_invalid / flag_disabled / etc.
+    // Best-effort (like logout()'s local clear): a storage/platform fault
+    // in the clear must NOT replace the canonical session error below —
+    // the caller always receives the typed AppException(code).
     if (notify && invalidatesSession(code)) {
-      onSessionInvalid?.call();
+      try {
+        await onSessionInvalid?.call();
+      } catch (_) {
+        // swallow — AppException(code) is the source of truth
+      }
     }
     final retry = map['retry_after'];
     final fieldErrors = map['field_errors'];
