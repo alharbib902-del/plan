@@ -90,6 +90,40 @@ class CharterRepository {
     );
     return '${res['trip_request_id'] ?? ''}';
   }
+
+  // ── Actions (slice 4b) — all rate-limited server-side. On a conflict the
+  //    typed AppException (offer_not_pending / decline_not_allowed /
+  //    cancel_not_allowed / …) or rate_limited (+retryAfterSeconds) surfaces.
+
+  /// Accept an offer. `source` comes from the offer (phase4/phase5/…).
+  Future<void> acceptOffer({
+    required String offerId,
+    required String source,
+  }) async {
+    await _api.postJson(
+      '${ApiEnv.apiPrefix}/offers/$offerId/accept',
+      {'source': source},
+    );
+  }
+
+  /// Decline an offer.
+  Future<void> declineOffer({
+    required String offerId,
+    required String source,
+  }) async {
+    await _api.postJson(
+      '${ApiEnv.apiPrefix}/offers/$offerId/decline',
+      {'source': source},
+    );
+  }
+
+  /// Cancel a trip request (no body — id is in the path).
+  Future<void> cancelRequest(String requestId) async {
+    await _api.postJson(
+      '${ApiEnv.apiPrefix}/requests/$requestId/cancel',
+      const {},
+    );
+  }
 }
 
 final charterRepositoryProvider = Provider<CharterRepository>(

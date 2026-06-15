@@ -41,6 +41,18 @@ const Map<String, String> _ar = {
   // owned-resource lookups
   'booking_not_found': 'هذا الحجز غير موجود أو لا يخصّ حسابك',
   'request_not_found': 'هذا الطلب غير موجود أو لا يخصّ حسابك',
+  // 409 — charter action conflicts (accept / decline offer, cancel request)
+  'cancel_not_allowed':
+      'لا يمكن إلغاء هذا الطلب الآن (قد يكون محجوزاً أو لم يعد متاحاً).',
+  'accept_failed': 'تعذّر قبول العرض الآن. حاول لاحقاً.',
+  'decline_not_allowed':
+      'لا يمكن رفض هذا العرض الآن (قد يكون مقبولاً أو منتهي الصلاحية).',
+  'offer_not_pending': 'هذا العرض لم يعد قيد المراجعة.',
+  'offer_expired': 'انتهت صلاحية هذا العرض.',
+  'trip_not_open': 'هذا الطلب لم يعد مفتوحاً للعروض (قد يكون محجوزاً أو ملغياً).',
+  'unknown_source': 'مصدر العرض غير معروف.',
+  'booking_has_active_payment': 'لا يمكن تنفيذ الإجراء (يوجد دفع جارٍ).',
+  'auction_window_closed': 'انتهت نافذة المزايدة.',
   // input / flags
   'validation_failed': 'يرجى التحقّق من البيانات المُدخلة',
   'flag_disabled': 'هذه الخدمة غير متاحة حالياً',
