@@ -147,4 +147,50 @@ void main() {
       );
     });
   });
+
+  group('actions (4b)', () {
+    test('acceptOffer / declineOffer / cancelRequest succeed on ok:true',
+        () async {
+      await repoWith(200, {'ok': true})
+          .acceptOffer(offerId: 'o1', source: 'phase4');
+      await repoWith(200, {'ok': true})
+          .declineOffer(offerId: 'o1', source: 'phase4');
+      await repoWith(200, {'ok': true}).cancelRequest('r1');
+      // no throw == success
+    });
+
+    test('acceptOffer propagates a 409 conflict code', () async {
+      await expectLater(
+        repoWith(409, {'ok': false, 'error': 'offer_not_pending'})
+            .acceptOffer(offerId: 'o1', source: 'phase4'),
+        throwsA(
+          isA<AppException>().having((e) => e.code, 'code', 'offer_not_pending'),
+        ),
+      );
+    });
+
+    test('cancelRequest propagates cancel_not_allowed', () async {
+      await expectLater(
+        repoWith(409, {'ok': false, 'error': 'cancel_not_allowed'})
+            .cancelRequest('r1'),
+        throwsA(
+          isA<AppException>().having((e) => e.code, 'code', 'cancel_not_allowed'),
+        ),
+      );
+    });
+
+    test('an action surfaces rate_limited WITH retry_after seconds', () async {
+      try {
+        await repoWith(429, {
+          'ok': false,
+          'error': 'rate_limited',
+          'retry_after': 30,
+        }).acceptOffer(offerId: 'o1', source: 'phase4');
+        fail('expected an AppException');
+      } on AppException catch (e) {
+        expect(e.code, 'rate_limited');
+        expect(e.retryAfterSeconds, 30);
+      }
+    });
+  });
 }
