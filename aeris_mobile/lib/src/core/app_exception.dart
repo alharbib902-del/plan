@@ -42,6 +42,19 @@ const Map<String, String> _ar = {
   'booking_not_found': 'هذا الحجز غير موجود أو لا يخصّ حسابك',
   'request_not_found': 'هذا الطلب غير موجود أو لا يخصّ حسابك',
   'leg_not_found': 'هذه الرحلة الفارغة غير موجودة أو لم تعد متاحة',
+  // empty-legs reserve/release conflicts
+  'leg_already_reserved': 'هذه الرحلة محجوزة حالياً، حاول لاحقاً',
+  // emitted by the authenticated reserve RPC when the leg is no longer
+  // 'available' (sold / expired / cancelled) — see migration 20260516000029.
+  'leg_not_reservable': 'هذه الرحلة لم تعد متاحة للحجز',
+  'leg_not_available': 'هذه الرحلة لم تعد متاحة للحجز',
+  'leg_window_closed': 'انتهت نافذة حجز هذه الرحلة',
+  'leg_not_reserved': 'لا يوجد حجز لإلغائه على هذه الرحلة',
+  'leg_route_origin_missing': 'بيانات مسار الرحلة ناقصة',
+  'leg_route_destination_missing': 'بيانات مسار الرحلة ناقصة',
+  // empty-legs price alerts
+  'alert_invalid': 'تعذّر إنشاء التنبيه، تحقّق من البيانات',
+  'ip_required': 'تعذّر تحديد طلبك، حاول مجدداً',
   // 409 — charter action conflicts (accept / decline offer, cancel request)
   'cancel_not_allowed':
       'لا يمكن إلغاء هذا الطلب الآن (قد يكون محجوزاً أو لم يعد متاحاً).',
@@ -56,12 +69,14 @@ const Map<String, String> _ar = {
   'auction_window_closed': 'انتهت نافذة المزايدة.',
   // input / flags
   'validation_failed': 'يرجى التحقّق من البيانات المُدخلة',
+  'invalid_input': 'يرجى التحقّق من البيانات المُدخلة',
   'flag_disabled': 'هذه الخدمة غير متاحة حالياً',
   'body_too_large': 'حجم الطلب كبير جداً',
   'malformed_body': 'طلب غير صالح',
   // throttle
   'rate_limited': 'محاولات كثيرة، يرجى المحاولة بعد قليل',
   // dependency / network
+  'server_error': 'تعذّر إتمام الطلب، حاول مرة أخرى',
   'rpc_failed': 'تعذّر إتمام الطلب، حاول مرة أخرى',
   'rpc_error': 'تعذّر إتمام الطلب، حاول مرة أخرى',
   'storage_error': 'الخدمة مشغولة مؤقتاً، حاول لاحقاً',

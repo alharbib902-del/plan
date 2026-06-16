@@ -94,6 +94,29 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> patchJson(
+    String path,
+    Map<String, dynamic> body, {
+    bool auth = true,
+    bool silent = false,
+  }) {
+    return _send(
+      () => _dio.patch<dynamic>(path, data: body, options: _opts(auth)),
+      notify: auth && !silent,
+    );
+  }
+
+  Future<Map<String, dynamic>> deleteJson(
+    String path, {
+    bool auth = true,
+    bool silent = false,
+  }) {
+    return _send(
+      () => _dio.delete<dynamic>(path, options: _opts(auth)),
+      notify: auth && !silent,
+    );
+  }
+
   Options _opts(bool auth) => Options(extra: {'auth': auth});
 
   Future<Map<String, dynamic>> _send(

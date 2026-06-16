@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aeris_mobile/src/core/api_client.dart';
 import 'package:aeris_mobile/src/core/app_exception.dart';
 import 'package:aeris_mobile/src/core/token_store.dart';
+import 'package:aeris_mobile/src/empty_legs/alert.dart';
 import 'package:aeris_mobile/src/empty_legs/empty_legs_repository.dart';
 
 class _StubAdapter implements HttpClientAdapter {
@@ -115,6 +116,81 @@ void main() {
         repoWith(404, {'ok': false, 'error': 'leg_not_found'}).legDetail('EL-X'),
         throwsA(isA<AppException>().having((e) => e.code, 'code', 'leg_not_found')),
       );
+    });
+  });
+
+  group('actions (5b)', () {
+    test('reserve/release/createAlert/toggle/delete succeed on ok', () async {
+      await repoWith(200, {'ok': true}).reserveLeg('leg-1');
+      await repoWith(200, {'ok': true}).releaseLeg('leg-1');
+      await repoWith(201, {'ok': true}).createAlert(
+        const CreateAlertInput(originIata: 'RUH', destinationIata: 'JED'),
+      );
+      await repoWith(200, {'ok': true}).toggleAlert('a1', false);
+      await repoWith(200, {'ok': true}).deleteAlert('a1');
+      // no throw == success
+    });
+
+    test('reserve propagates a 409 conflict (leg_already_reserved)', () async {
+      await expectLater(
+        repoWith(409, {'ok': false, 'error': 'leg_already_reserved'})
+            .reserveLeg('l'),
+        throwsA(isA<AppException>()
+            .having((e) => e.code, 'code', 'leg_already_reserved')),
+      );
+    });
+
+    test('release propagates cancel_not_allowed', () async {
+      await expectLater(
+        repoWith(409, {'ok': false, 'error': 'cancel_not_allowed'})
+            .releaseLeg('l'),
+        throwsA(isA<AppException>()
+            .having((e) => e.code, 'code', 'cancel_not_allowed')),
+      );
+    });
+
+    test('createAlert propagates validation_failed', () async {
+      await expectLater(
+        repoWith(400, {'ok': false, 'error': 'validation_failed'}).createAlert(
+          const CreateAlertInput(originIata: 'RUH', destinationIata: 'JED'),
+        ),
+        throwsA(isA<AppException>()
+            .having((e) => e.code, 'code', 'validation_failed')),
+      );
+    });
+
+    test('an action surfaces rate_limited WITH retry_after', () async {
+      try {
+        await repoWith(429, {
+          'ok': false,
+          'error': 'rate_limited',
+          'retry_after': 45,
+        }).reserveLeg('l');
+        fail('expected an AppException');
+      } on AppException catch (e) {
+        expect(e.code, 'rate_limited');
+        expect(e.retryAfterSeconds, 45);
+      }
+    });
+
+    test('listAlerts parses the alerts array', () async {
+      final alerts = await repoWith(200, {
+        'ok': true,
+        'alerts': [
+          {
+            'id': 'a1',
+            'origin_iata': 'RUH',
+            'destination_iata': 'JED',
+            'max_price_sar': 50000,
+            'is_active': true,
+            'channels': ['whatsapp'],
+          },
+        ],
+      }).listAlerts();
+      expect(alerts.length, 1);
+      expect(alerts.first.originIata, 'RUH');
+      expect(alerts.first.maxPriceSar, 50000);
+      expect(alerts.first.isActive, isTrue);
     });
   });
 }
