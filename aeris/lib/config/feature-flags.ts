@@ -28,6 +28,8 @@ export interface MobileCapabilityFlags {
   payments: boolean;
   client_empty_legs_portal: boolean;
   empty_legs_client_pricing: boolean;
+  /** Guest (no-token) empty-legs browsing before sign-up. */
+  public_marketplace: boolean;
 }
 
 export interface MobileConfig {
@@ -45,6 +47,7 @@ export function mobileCapabilityFlags(): MobileCapabilityFlags {
     payments: flagOn('ENABLE_PAYMENTS'),
     client_empty_legs_portal: flagOn('ENABLE_CLIENT_EMPTY_LEGS_PORTAL'),
     empty_legs_client_pricing: flagOn('ENABLE_EMPTY_LEGS_CLIENT_PRICING'),
+    public_marketplace: flagOn('ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE'),
   };
 }
 

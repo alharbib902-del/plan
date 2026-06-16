@@ -7,11 +7,18 @@ import '../widgets/async_states.dart';
 import 'empty_leg.dart';
 import 'empty_leg_status.dart';
 
-/// A tappable empty-leg summary card. Tapping opens the detail by leg_number.
+/// A tappable empty-leg summary card. Tapping opens the detail by leg_number
+/// under [detailBasePath] — the authed `/empty-legs` surface by default, or
+/// `/guest/empty-legs` for the pre-login guest browse.
 class LegCard extends StatelessWidget {
-  const LegCard({required this.leg, super.key});
+  const LegCard({
+    required this.leg,
+    this.detailBasePath = '/empty-legs',
+    super.key,
+  });
 
   final EmptyLeg leg;
+  final String detailBasePath;
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +29,7 @@ class LegCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () => context.push('/empty-legs/${leg.legNumber}'),
+        onTap: () => context.push('$detailBasePath/${leg.legNumber}'),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(

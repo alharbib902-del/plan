@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../auth/auth_controller.dart';
+import '../config/app_config.dart';
 import '../theme/aeris_theme.dart';
 import '../widgets/error_banner.dart';
 
@@ -51,6 +53,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Show the guest-browse entry only when the public marketplace is on
+    // (fail-closed: null/loading/errored config → hidden).
+    final showGuest =
+        ref.watch(appConfigProvider).valueOrNull?.publicMarketplace ?? false;
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -139,6 +145,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             )
                           : const Text('دخول'),
                     ),
+                    if (showGuest) ...[
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _submitting
+                            ? null
+                            : () => context.push('/guest/empty-legs'),
+                        child: const Text('تصفّح الرحلات الفارغة كضيف'),
+                      ),
+                    ],
                   ],
                 ),
               ),
