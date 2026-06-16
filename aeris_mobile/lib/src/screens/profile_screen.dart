@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../core/app_exception.dart';
 import '../profile/profile.dart';
@@ -213,6 +214,18 @@ class _ProfileFormState extends ConsumerState<_ProfileForm> {
                   ),
                 )
               : const Text('حفظ'),
+        ),
+        const SizedBox(height: 8),
+        const Divider(color: AerisColors.border),
+        // Settings hub: notification preferences live on their own screen.
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.notifications_outlined,
+              color: AerisColors.gold),
+          title: const Text('تفضيلات الإشعارات',
+              style: TextStyle(color: AerisColors.inkPrimary)),
+          trailing: const Icon(Icons.chevron_left, color: AerisColors.inkMuted),
+          onTap: () => context.push('/notifications'),
         ),
       ],
     );
