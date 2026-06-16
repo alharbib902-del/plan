@@ -12,6 +12,7 @@ import '../screens/empty_legs_screen.dart';
 import '../screens/error_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/login_screen.dart';
+import '../screens/notifications_screen.dart';
 import '../screens/privilege_history_screen.dart';
 import '../screens/privilege_screen.dart';
 import '../screens/profile_screen.dart';
@@ -33,6 +34,7 @@ class Routes {
   static const privilege = '/privilege';
   static const referrals = '/referrals';
   static const profile = '/profile';
+  static const notifications = '/notifications';
 }
 
 /// Central redirect-guard (mirrors the web `requireClientSession`
@@ -163,6 +165,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Routes.profile,
         builder: (_, _) => const ProfileScreen(),
+      ),
+      GoRoute(
+        path: Routes.notifications,
+        builder: (_, _) => const NotificationsScreen(),
       ),
     ],
   );
