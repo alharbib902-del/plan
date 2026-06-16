@@ -215,4 +215,110 @@ void main() {
 
     expect(find.text('EMPTY_LEGS_SENTINEL'), findsOneWidget);
   });
+
+  testWidgets('tapping the "الامتياز" card navigates to /privilege',
+      (tester) async {
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+        GoRoute(
+          path: '/privilege',
+          builder: (_, _) => const Directionality(
+            textDirection: TextDirection.rtl,
+            child: Text('PRIVILEGE_SENTINEL'),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          // Flag ON so the (gated) privilege card is visible.
+          appConfigProvider.overrideWith(
+            (ref) => AppConfig.fromJson({
+              'flags': {'privilege': true},
+            }),
+          ),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('الامتياز'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PRIVILEGE_SENTINEL'), findsOneWidget);
+  });
+
+  testWidgets('tapping the "الإحالات" card navigates to /referrals',
+      (tester) async {
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+        GoRoute(
+          path: '/referrals',
+          builder: (_, _) => const Directionality(
+            textDirection: TextDirection.rtl,
+            child: Text('REFERRALS_SENTINEL'),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          // Referrals is not flag-gated → visible even fail-closed.
+          appConfigProvider.overrideWith((ref) => AppConfig.failClosed()),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('الإحالات'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('REFERRALS_SENTINEL'), findsOneWidget);
+  });
+
+  testWidgets('tapping the "الملف الشخصي" card navigates to /profile',
+      (tester) async {
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+        GoRoute(
+          path: '/profile',
+          builder: (_, _) => const Directionality(
+            textDirection: TextDirection.rtl,
+            child: Text('PROFILE_SENTINEL'),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          // Profile is not flag-gated → visible even fail-closed.
+          appConfigProvider.overrideWith((ref) => AppConfig.failClosed()),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('الملف الشخصي'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PROFILE_SENTINEL'), findsOneWidget);
+  });
 }

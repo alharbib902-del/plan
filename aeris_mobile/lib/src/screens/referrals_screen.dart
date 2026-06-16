@@ -40,9 +40,14 @@ class _Body extends StatelessWidget {
 
   final ReferralsSummary summary;
 
-  void _copy(BuildContext context, String value, String done) {
-    Clipboard.setData(ClipboardData(text: value));
-    ScaffoldMessenger.of(context)
+  // Await the clipboard write before confirming, so the snackbar can't claim
+  // success on a failed copy. The messenger is captured BEFORE the await, so
+  // no BuildContext is used across the async gap (this is a StatelessWidget,
+  // there is no `mounted` to check).
+  Future<void> _copy(BuildContext context, String value, String done) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await Clipboard.setData(ClipboardData(text: value));
+    messenger
       ..clearSnackBars()
       ..showSnackBar(SnackBar(content: Text(done)));
   }
