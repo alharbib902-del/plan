@@ -10,6 +10,8 @@ import '../screens/create_request_screen.dart';
 import '../screens/empty_leg_detail_screen.dart';
 import '../screens/empty_legs_screen.dart';
 import '../screens/error_screen.dart';
+import '../screens/guest_empty_leg_detail_screen.dart';
+import '../screens/guest_empty_legs_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/notifications_screen.dart';
@@ -35,6 +37,58 @@ class Routes {
   static const referrals = '/referrals';
   static const profile = '/profile';
   static const notifications = '/notifications';
+  // Pre-login guest browse (no token). The ONLY routes an unauthenticated
+  // user may reach besides /login.
+  static const guestEmptyLegs = '/guest/empty-legs';
+}
+
+/// The narrow guest allowlist: EXACTLY the public empty-legs list and a single
+/// `:legNumber` detail beneath it — never a general `/guest/*`, never a deeper
+/// path (`/guest/empty-legs/EL-9/foo`) or an empty tail (`/guest/empty-legs/`).
+bool isGuestLocation(String loc) {
+  if (loc == Routes.guestEmptyLegs) return true;
+  final prefix = '${Routes.guestEmptyLegs}/';
+  if (!loc.startsWith(prefix)) return false;
+  final tail = loc.substring(prefix.length);
+  return tail.isNotEmpty && !tail.contains('/');
+}
+
+/// Pure redirect decision (extracted so it can be unit-tested without
+/// pumping the full widget tree). Mirrors the web `requireClientSession`
+/// redirect behaviour, plus the pre-login guest allowlist:
+///   - resolving (no value yet)      → /splash
+///   - resolved error (token intact) → /error (retry — NOT a logout)
+///   - unauthenticated               → ONLY /login or a guest route; else /login
+///   - password_must_change          → /change-password (locked, even off guest)
+///   - authenticated                 → kept off pre-auth screens AND the guest
+///                                     surface (signed-in users use the authed
+///                                     /empty-legs; never mix states)
+String? redirectForAuth(AsyncValue<AuthStatus> auth, String loc) {
+  final guest = isGuestLocation(loc);
+
+  if (auth.isLoading && !auth.hasValue) {
+    return loc == Routes.splash ? null : Routes.splash;
+  }
+  if (auth.hasError) {
+    return loc == Routes.error ? null : Routes.error;
+  }
+
+  final status = auth.valueOrNull;
+  if (status is Unauthenticated || status == null) {
+    return (loc == Routes.login || guest) ? null : Routes.login;
+  }
+  if (status is MustChangePassword) {
+    return loc == Routes.changePassword ? null : Routes.changePassword;
+  }
+  // Authenticated.
+  if (loc == Routes.login ||
+      loc == Routes.splash ||
+      loc == Routes.changePassword ||
+      loc == Routes.error ||
+      guest) {
+    return Routes.home;
+  }
+  return null;
 }
 
 /// Central redirect-guard (mirrors the web `requireClientSession`
@@ -53,40 +107,8 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: Routes.splash,
     refreshListenable: refresh,
-    redirect: (context, state) {
-      final auth = ref.read(authControllerProvider);
-      final loc = state.matchedLocation;
-
-      // Still resolving the stored token → hold on the splash.
-      if (auth.isLoading && !auth.hasValue) {
-        return loc == Routes.splash ? null : Routes.splash;
-      }
-
-      // A RESOLVED error means the controller hit a non-session-death
-      // fault (network / flag_disabled / account_not_active) and
-      // deliberately kept the token (see session_codes.dart). Show a
-      // retry screen — NEVER a silent /login bounce that masquerades as
-      // a logout for a still-valid session.
-      if (auth.hasError) {
-        return loc == Routes.error ? null : Routes.error;
-      }
-
-      final status = auth.valueOrNull;
-      if (status is Unauthenticated || status == null) {
-        return loc == Routes.login ? null : Routes.login;
-      }
-      if (status is MustChangePassword) {
-        return loc == Routes.changePassword ? null : Routes.changePassword;
-      }
-      // Authenticated — keep away from the pre-auth / error screens.
-      if (loc == Routes.login ||
-          loc == Routes.splash ||
-          loc == Routes.changePassword ||
-          loc == Routes.error) {
-        return Routes.home;
-      }
-      return null;
-    },
+    redirect: (context, state) =>
+        redirectForAuth(ref.read(authControllerProvider), state.matchedLocation),
     routes: [
       GoRoute(
         path: Routes.splash,
@@ -169,6 +191,20 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Routes.notifications,
         builder: (_, _) => const NotificationsScreen(),
+      ),
+      // Pre-login guest browse (the redirect-guard allows these two paths for
+      // an unauthenticated user; an authenticated user is bounced to /home).
+      GoRoute(
+        path: Routes.guestEmptyLegs,
+        builder: (_, _) => const GuestEmptyLegsScreen(),
+        routes: [
+          GoRoute(
+            path: ':legNumber',
+            builder: (_, state) => GuestEmptyLegDetailScreen(
+              legNumber: state.pathParameters['legNumber']!,
+            ),
+          ),
+        ],
       ),
     ],
   );

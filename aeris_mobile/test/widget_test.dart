@@ -38,6 +38,7 @@ void main() {
       expect(c.clientPortal, isFalse);
       expect(c.privilege, isFalse);
       expect(c.payments, isFalse);
+      expect(c.publicMarketplace, isFalse);
       expect(c.pricingVisible, isFalse);
       expect(c.minSupportedVersion, '1.0.0');
     });
@@ -50,6 +51,7 @@ void main() {
           'payments': false,
           'client_empty_legs_portal': true,
           'empty_legs_client_pricing': false,
+          'public_marketplace': true,
         },
         'pricing_visible': false,
         'min_supported_version': '1.2.0',
@@ -58,6 +60,7 @@ void main() {
       expect(c.privilege, isTrue);
       expect(c.payments, isFalse);
       expect(c.clientEmptyLegsPortal, isTrue);
+      expect(c.publicMarketplace, isTrue);
       expect(c.pricingVisible, isFalse);
       expect(c.minSupportedVersion, '1.2.0');
     });
@@ -65,6 +68,7 @@ void main() {
     test('fromJson is fail-closed on missing flags', () {
       final c = AppConfig.fromJson(const {});
       expect(c.clientPortal, isFalse);
+      expect(c.publicMarketplace, isFalse);
       expect(c.minSupportedVersion, '1.0.0');
     });
   });

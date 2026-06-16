@@ -40,6 +40,7 @@ const FLAG_VARS = [
   'ENABLE_PAYMENTS',
   'ENABLE_CLIENT_EMPTY_LEGS_PORTAL',
   'ENABLE_EMPTY_LEGS_CLIENT_PRICING',
+  'ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE',
   'MOBILE_MIN_SUPPORTED_VERSION',
 ];
 
@@ -83,6 +84,7 @@ test('mobileCapabilityFlags reflects each flag independently', () => {
       ENABLE_PAYMENTS: undefined,
       ENABLE_CLIENT_EMPTY_LEGS_PORTAL: 'false',
       ENABLE_EMPTY_LEGS_CLIENT_PRICING: 'true',
+      ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE: 'true',
     },
     () => {
       const f = mobileCapabilityFlags();
@@ -91,7 +93,12 @@ test('mobileCapabilityFlags reflects each flag independently', () => {
       assert.equal(f.payments, false);
       assert.equal(f.client_empty_legs_portal, false);
       assert.equal(f.empty_legs_client_pricing, true);
+      assert.equal(f.public_marketplace, true);
     }
+  );
+  // public_marketplace is independent + fail-closed when unset.
+  withEnv({ ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE: undefined }, () =>
+    assert.equal(mobileCapabilityFlags().public_marketplace, false)
   );
 });
 
