@@ -26,6 +26,14 @@ void main() {
       expect(isGuestLocation('/home'), isFalse);
       expect(isGuestLocation('/empty-legs'), isFalse);
     });
+
+    test('rejects an EMPTY tail and any DEEPER path under the prefix', () {
+      expect(isGuestLocation('/guest/empty-legs/'), isFalse); // empty tail
+      expect(isGuestLocation('/guest/empty-legs/EL-9/foo'), isFalse); // deeper
+      expect(isGuestLocation('/guest/empty-legs//EL-9'), isFalse); // double slash
+      // sanity: exactly one segment is still accepted
+      expect(isGuestLocation('/guest/empty-legs/EL-9'), isTrue);
+    });
   });
 
   group('redirectForAuth — UNAUTHENTICATED', () {

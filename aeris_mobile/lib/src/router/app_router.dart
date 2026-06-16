@@ -43,10 +43,15 @@ class Routes {
 }
 
 /// The narrow guest allowlist: EXACTLY the public empty-legs list and a single
-/// `:legNumber` detail beneath it — never a general `/guest/*`.
-bool isGuestLocation(String loc) =>
-    loc == Routes.guestEmptyLegs ||
-    loc.startsWith('${Routes.guestEmptyLegs}/');
+/// `:legNumber` detail beneath it — never a general `/guest/*`, never a deeper
+/// path (`/guest/empty-legs/EL-9/foo`) or an empty tail (`/guest/empty-legs/`).
+bool isGuestLocation(String loc) {
+  if (loc == Routes.guestEmptyLegs) return true;
+  final prefix = '${Routes.guestEmptyLegs}/';
+  if (!loc.startsWith(prefix)) return false;
+  final tail = loc.substring(prefix.length);
+  return tail.isNotEmpty && !tail.contains('/');
+}
 
 /// Pure redirect decision (extracted so it can be unit-tested without
 /// pumping the full widget tree). Mirrors the web `requireClientSession`
