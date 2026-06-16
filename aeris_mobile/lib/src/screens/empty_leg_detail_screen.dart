@@ -9,9 +9,11 @@ import '../theme/aeris_theme.dart';
 import '../utils/format.dart';
 import '../widgets/async_states.dart';
 
-/// Empty-leg detail by leg_number (EL-XXXX). Read-only in slice 5a; the
-/// reserve action lands in 5b. 404 (leg_not_found) + other faults render an
-/// inline error; a dead session is handled app-wide.
+/// Empty-leg detail by leg_number (EL-XXXX) + reserve/release (slice 5b).
+/// Reserve when the leg is available; release the caller's own hold. Each
+/// action confirms, runs rate-limited, disables the button while in flight
+/// (no double-submit), then refreshes. 404/other faults render an inline
+/// error; a dead session is handled app-wide.
 class EmptyLegDetailScreen extends ConsumerWidget {
   const EmptyLegDetailScreen({required this.legNumber, super.key});
 
@@ -28,24 +30,118 @@ class EmptyLegDetailScreen extends ConsumerWidget {
           message: e is AppException ? e.messageAr : errorMessageAr('unknown'),
           onRetry: () => ref.invalidate(emptyLegDetailProvider(legNumber)),
         ),
-        data: (leg) => _Detail(leg: leg),
+        data: (leg) => _DetailBody(legNumber: legNumber, leg: leg),
       ),
     );
   }
 }
 
-class _Detail extends StatelessWidget {
-  const _Detail({required this.leg});
+class _DetailBody extends ConsumerStatefulWidget {
+  const _DetailBody({required this.legNumber, required this.leg});
 
+  final String legNumber;
   final EmptyLeg leg;
 
   @override
+  ConsumerState<_DetailBody> createState() => _DetailBodyState();
+}
+
+class _DetailBodyState extends ConsumerState<_DetailBody> {
+  bool _busy = false;
+
+  EmptyLeg get _leg => widget.leg;
+  bool get _canReserve => _leg.status == 'available' && !_leg.isReserved;
+  bool get _canRelease => _leg.isReservedByMe;
+
+  Future<bool> _confirm(String title, String body, String confirmLabel) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('تراجع'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  String _actionError(AppException e) {
+    if (e.code == 'rate_limited') {
+      final s = e.retryAfterSeconds;
+      return s != null ? 'محاولات كثيرة، حاول بعد $s ثانية' : e.messageAr;
+    }
+    return e.messageAr;
+  }
+
+  Future<void> _run({
+    required String title,
+    required String body,
+    required String confirmLabel,
+    required Future<void> Function(EmptyLegsRepository repo) action,
+    required String successMsg,
+  }) async {
+    if (_busy) return;
+    if (!await _confirm(title, body, confirmLabel)) return;
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _busy = true);
+    try {
+      await action(ref.read(emptyLegsRepositoryProvider));
+      if (!mounted) return;
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(successMsg)));
+      // Refresh detail + the browse lists (reservation state changed).
+      ref.invalidate(emptyLegDetailProvider(widget.legNumber));
+      ref.invalidate(emptyLegsListProvider);
+      ref.invalidate(emptyLegMatchesProvider);
+    } on AppException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(_actionError(e))));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(errorMessageAr('unknown'))));
+    }
+  }
+
+  void _reserve() => _run(
+        title: 'تأكيد الحجز؟',
+        body: 'سيتم حجز هذه الرحلة الفارغة باسمك (بانتظار تأكيد الإدارة).',
+        confirmLabel: 'احجز',
+        action: (repo) => repo.reserveLeg(_leg.id),
+        successMsg: 'تم الحجز — بانتظار تأكيد الإدارة',
+      );
+
+  void _release() => _run(
+        title: 'إلغاء الحجز؟',
+        body: 'سيتم إلغاء حجزك لهذه الرحلة.',
+        confirmLabel: 'إلغاء الحجز',
+        action: (repo) => repo.releaseLeg(_leg.id),
+        successMsg: 'تم إلغاء الحجز',
+      );
+
+  @override
   Widget build(BuildContext context) {
+    final leg = _leg;
     final start = formatDateTime(leg.departureWindowStart);
     final end = formatDateTime(leg.departureWindowEnd);
-    final window = (start != null && end != null)
-        ? '$start — $end'
-        : (start ?? '—');
+    final window =
+        (start != null && end != null) ? '$start — $end' : (start ?? '—');
     final discount = leg.currentDiscountPct;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -89,6 +185,26 @@ class _Detail extends StatelessWidget {
             _row('ينتهي حجزك', formatDateTime(leg.reservationExpiresAt) ?? '—'),
           const Divider(height: 32, color: AerisColors.border),
           _PriceBlock(leg: leg),
+          if (_canReserve) ...[
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _busy ? null : _reserve,
+                child: const Text('احجز الآن'),
+              ),
+            ),
+          ] else if (_canRelease) ...[
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _busy ? null : _release,
+                child: const Text('إلغاء الحجز',
+                    style: TextStyle(color: AerisColors.danger)),
+              ),
+            ),
+          ],
         ],
       ),
     );

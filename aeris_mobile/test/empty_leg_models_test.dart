@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aeris_mobile/src/empty_legs/alert.dart';
 import 'package:aeris_mobile/src/empty_legs/empty_leg.dart';
 
 void main() {
@@ -76,6 +77,60 @@ void main() {
       expect(m.leg.legNumber, 'EL-9');
       expect(m.notificationEventType, 'price_drop');
       expect(m.notificationSentAt, '2026-07-20T10:00:00Z');
+    });
+  });
+
+  group('Alert', () {
+    test('fromJson parses channels + price + active', () {
+      final a = Alert.fromJson({
+        'id': 'a1',
+        'origin_iata': 'RUH',
+        'destination_iata': 'JED',
+        'max_price_sar': 50000,
+        'date_from': '2026-08-01',
+        'date_to': '2026-08-31',
+        'channels': ['whatsapp', 'email'],
+        'is_active': true,
+      });
+      expect(a.id, 'a1');
+      expect(a.maxPriceSar, 50000);
+      expect(a.channels, ['whatsapp', 'email']);
+      expect(a.isActive, isTrue);
+      expect(a.routeLabel, 'RUH إلى JED');
+    });
+
+    test('defaults: empty channels, inactive when flag absent', () {
+      final a = Alert.fromJson({'id': 'a2'});
+      expect(a.channels, isEmpty);
+      expect(a.isActive, isFalse);
+      expect(a.maxPriceSar, isNull);
+    });
+  });
+
+  group('CreateAlertInput.toJson', () {
+    test('required iatas; omits null optionals', () {
+      final json = const CreateAlertInput(
+        originIata: 'RUH',
+        destinationIata: 'JED',
+      ).toJson();
+      expect(json['origin_iata'], 'RUH');
+      expect(json['destination_iata'], 'JED');
+      expect(json.containsKey('max_price_sar'), isFalse);
+      expect(json.containsKey('date_from'), isFalse);
+      expect(json.containsKey('date_to'), isFalse);
+    });
+
+    test('includes optionals when present', () {
+      final json = const CreateAlertInput(
+        originIata: 'RUH',
+        destinationIata: 'JED',
+        maxPriceSar: 40000,
+        dateFrom: '2026-08-01',
+        dateTo: '2026-08-31',
+      ).toJson();
+      expect(json['max_price_sar'], 40000);
+      expect(json['date_from'], '2026-08-01');
+      expect(json['date_to'], '2026-08-31');
     });
   });
 }
