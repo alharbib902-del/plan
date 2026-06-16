@@ -12,6 +12,9 @@ import '../screens/empty_legs_screen.dart';
 import '../screens/error_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/login_screen.dart';
+import '../screens/privilege_history_screen.dart';
+import '../screens/privilege_screen.dart';
+import '../screens/referrals_screen.dart';
 import '../screens/request_detail_screen.dart';
 import '../screens/requests_list_screen.dart';
 import '../screens/splash_screen.dart';
@@ -26,6 +29,8 @@ class Routes {
   static const bookings = '/bookings';
   static const requests = '/requests';
   static const emptyLegs = '/empty-legs';
+  static const privilege = '/privilege';
+  static const referrals = '/referrals';
 }
 
 /// Central redirect-guard (mirrors the web `requireClientSession`
@@ -138,6 +143,20 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
         ],
+      ),
+      GoRoute(
+        path: Routes.privilege,
+        builder: (_, _) => const PrivilegeScreen(),
+        routes: [
+          GoRoute(
+            path: 'history',
+            builder: (_, _) => const PrivilegeHistoryScreen(),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: Routes.referrals,
+        builder: (_, _) => const ReferralsScreen(),
       ),
     ],
   );

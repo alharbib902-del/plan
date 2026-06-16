@@ -178,6 +178,8 @@ class _SectionCard extends StatelessWidget {
         DashboardSection.bookings => '/bookings',
         DashboardSection.charter => '/requests',
         DashboardSection.emptyLegs => '/empty-legs',
+        DashboardSection.privilege => '/privilege',
+        DashboardSection.referrals => '/referrals',
         _ => null,
       };
 
