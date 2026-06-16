@@ -9,8 +9,8 @@ import 'dashboard_sections.dart';
 
 /// Authed home dashboard: a welcome header + navigation cards to the
 /// client sections. Cards are gated by the deployed feature flags
-/// (`appConfigProvider`, fail-closed). Section screens land in the
-/// following slices; until then a card surfaces a "coming soon" notice.
+/// (`appConfigProvider`, fail-closed); each visible section routes to its
+/// screen.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -158,29 +158,17 @@ class _SectionCard extends StatelessWidget {
     );
   }
 
-  void _open(BuildContext context) {
-    final route = _routeFor(section);
-    if (route != null) {
-      context.push(route);
-      return;
-    }
-    // Destination lands in a later slice.
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        const SnackBar(content: Text('هذه الشاشة قيد الإنشاء')),
-      );
-  }
+  void _open(BuildContext context) => context.push(_routeFor(section));
 
-  // Sections whose screen exists today route; the rest show "coming soon"
-  // until their slice lands.
-  String? _routeFor(DashboardSection s) => switch (s) {
+  // Every section has a screen. The switch is exhaustive over the enum, so a
+  // future section won't compile until its route is added here.
+  String _routeFor(DashboardSection s) => switch (s) {
         DashboardSection.bookings => '/bookings',
         DashboardSection.charter => '/requests',
         DashboardSection.emptyLegs => '/empty-legs',
         DashboardSection.privilege => '/privilege',
         DashboardSection.referrals => '/referrals',
-        _ => null,
+        DashboardSection.profile => '/profile',
       };
 
   (IconData, String) _present(DashboardSection s) => switch (s) {
