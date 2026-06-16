@@ -177,6 +177,7 @@ class _SectionCard extends StatelessWidget {
   String? _routeFor(DashboardSection s) => switch (s) {
         DashboardSection.bookings => '/bookings',
         DashboardSection.charter => '/requests',
+        DashboardSection.emptyLegs => '/empty-legs',
         _ => null,
       };
 

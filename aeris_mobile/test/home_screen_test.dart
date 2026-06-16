@@ -177,4 +177,42 @@ void main() {
 
     expect(find.text('REQUESTS_SENTINEL'), findsOneWidget);
   });
+
+  testWidgets('tapping the "رحلات فارغة" card navigates to /empty-legs',
+      (tester) async {
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+        GoRoute(
+          path: '/empty-legs',
+          builder: (_, _) => const Directionality(
+            textDirection: TextDirection.rtl,
+            child: Text('EMPTY_LEGS_SENTINEL'),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_StubAuthController.new),
+          // Flag ON so the (gated) empty-legs card is visible.
+          appConfigProvider.overrideWith(
+            (ref) => AppConfig.fromJson({
+              'flags': {'client_empty_legs_portal': true},
+            }),
+          ),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('رحلات فارغة'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('EMPTY_LEGS_SENTINEL'), findsOneWidget);
+  });
 }
