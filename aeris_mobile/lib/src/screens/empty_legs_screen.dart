@@ -11,9 +11,18 @@ import '../widgets/async_states.dart';
 import 'create_alert_screen.dart';
 
 /// Empty-legs for the signed-in client: browse-all, matches, and the client's
-/// price alerts (create/toggle/delete — slice 5b). The whole surface is gated
-/// server-side by ENABLE_CLIENT_EMPTY_LEGS_PORTAL; a `flag_disabled` shows a
-/// notice. Alerts mutations are rate-limited; actions disable while in flight.
+/// price alerts (create/toggle/delete — slice 5b).
+///
+/// Feature-flag boundary mirrors the backend contract (it is NOT one flag for
+/// the whole surface):
+/// - browse / matches / detail / reserve / release are gated by the empty-legs
+///   contract — ENABLE_CLIENT_EMPTY_LEGS_PORTAL (the route- and core-level
+///   guard); when off they return `flag_disabled`, shown as a notice.
+/// - alerts (list/create/toggle/delete) run for any authenticated client per
+///   the backend contract — the base client portal only (requireClientBearer),
+///   NOT the empty-legs flag, matching the web; their mutations are
+///   rate-limited (and every action disables while in flight).
+/// This screen adds no guest browsing and no pre-login route.
 class EmptyLegsScreen extends ConsumerWidget {
   const EmptyLegsScreen({super.key});
 
