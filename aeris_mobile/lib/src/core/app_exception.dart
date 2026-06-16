@@ -29,6 +29,11 @@ const Map<String, String> _ar = {
   'invalid_session': 'انتهت الجلسة، يرجى تسجيل الدخول من جديد',
   'session_expired': 'انتهت جلستك، يرجى تسجيل الدخول من جديد',
   'expired': 'انتهت جلستك، يرجى تسجيل الدخول من جديد',
+  // Latent reason in the validate-by-hash union; practically unreachable
+  // (we always send a valid 64-char hex digest). Like `expired`, it carries
+  // a session-death message WITHOUT being in the pinned token-clear set
+  // (session_codes.dart) — it surfaces, it does not silently log out.
+  'invalid_token_hash': 'انتهت الجلسة، يرجى تسجيل الدخول من جديد',
   'password_change_required': 'يجب تغيير كلمة المرور قبل المتابعة',
   // change-password (NOTE: current_password_invalid is a credential error,
   // NOT a session death — it must never clear the token; see session_codes.dart)
