@@ -798,6 +798,13 @@
       "consumed_at": "timestamp with time zone",
       "consumed_session_id": "uuid [FK->admin_user_sessions.id]"
     },
+    "client_push_alert_status": {
+      "id": "integer [PK]",
+      "status": "text",
+      "last_failure_at": "timestamp with time zone",
+      "last_failure_reason": "text",
+      "updated_at": "timestamp with time zone"
+    },
     "operator_empty_leg_sessions": {
       "id": "uuid [PK]",
       "operator_stub_id": "uuid [FK->phase7_operator_stubs.id]",
@@ -970,6 +977,20 @@
       "signature_verified": "boolean",
       "processed_at": "timestamp with time zone",
       "created_at": "timestamp with time zone"
+    },
+    "client_push_deliveries": {
+      "id": "uuid [PK]",
+      "client_id": "uuid [FK->clients.id]",
+      "leg_id": "uuid [FK->empty_legs.id]",
+      "event_type": "text",
+      "status": "text",
+      "attempt_count": "integer",
+      "last_error": "text",
+      "claimed_at": "timestamp with time zone",
+      "next_retry_at": "timestamp with time zone",
+      "sent_at": "timestamp with time zone",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone"
     },
     "cargo_dispatch_events_outbox": {
       "id": "uuid [PK]",
@@ -1464,6 +1485,13 @@
     "st_geomfromgml": [
       ":text"
     ],
+    "claim_client_push_delivery": [
+      "p_client_id:uuid",
+      "p_event_type:text",
+      "p_leg_id:uuid",
+      "p_max_attempts:integer",
+      "p_stale_after:interval"
+    ],
     "_st_longestline": [
       "geom1:public.geometry",
       "geom2:public.geometry"
@@ -1702,6 +1730,12 @@
     "st_minimumboundingradius": [
       ":public.geometry"
     ],
+    "mark_client_push_delivery": [
+      "p_delivery_id:uuid",
+      "p_last_error:text",
+      "p_next_retry_at:timestamp with time zone",
+      "p_status:text"
+    ],
     "st_geomfromwkb": [
       ":bytea"
     ],
@@ -1722,6 +1756,10 @@
     ],
     "st_linestringfromwkb": [
       ":bytea"
+    ],
+    "list_retryable_push_deliveries": [
+      "p_limit:integer",
+      "p_max_attempts:integer"
     ],
     "confirm_empty_leg_reservation": [
       "p_leg_id:uuid",
