@@ -54,8 +54,9 @@ export function OperatorResetPasswordForm({ rawToken }: { rawToken: string }) {
         <OperatorBanner kind="error">{operatorErrorMessage(errorCode)}</OperatorBanner>
       ) : null}
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.new_password}</label>
+        <label htmlFor="new_password" className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.new_password}</label>
         <PasswordInput
+          id="new_password"
           name="new_password"
           dir="ltr"
           required
@@ -68,8 +69,9 @@ export function OperatorResetPasswordForm({ rawToken }: { rawToken: string }) {
         ) : null}
       </div>
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.confirm_password}</label>
+        <label htmlFor="confirm_password" className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.confirm_password}</label>
         <PasswordInput
+          id="confirm_password"
           name="confirm_password"
           dir="ltr"
           required

@@ -120,9 +120,10 @@ function Field({
   }`;
   return (
     <div>
-      <label className="font-ar mb-1 block text-xs text-ink-muted">{label}</label>
+      <label htmlFor={name} className="font-ar mb-1 block text-xs text-ink-muted">{label}</label>
       {isPassword ? (
         <PasswordInput
+          id={name}
           name={name}
           dir={dir}
           required={required}
@@ -130,6 +131,7 @@ function Field({
         />
       ) : (
         <input
+          id={name}
           name={name}
           type={type}
           dir={dir}
