@@ -91,6 +91,12 @@ const FEATURE_REQUIRED: ReadonlyArray<{
     flag: 'ENABLE_MEDEVAC',
     vars: ['ADMIN_AUDIT_FINGERPRINT_SECRET'],
   },
+  {
+    // Push notifications (PR3b) — FCM HTTP v1 service-account creds, read +
+    // fail-closed at the sender only when push is enabled.
+    flag: 'ENABLE_PUSH_NOTIFICATIONS',
+    vars: ['FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY'],
+  },
 ];
 
 /**
