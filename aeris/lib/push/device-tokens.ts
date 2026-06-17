@@ -65,3 +65,41 @@ export async function unregisterDeviceToken(
   });
   return envelopeResult(data, error, 'unregister');
 }
+
+export interface ClientDeviceToken {
+  token: string;
+  platform: 'ios' | 'android';
+}
+
+/** PR3b — a client's registered device tokens, for the push fan-out. Reads via
+ *  the service-role admin client directly (RLS deny-all is bypassed by
+ *  service_role); returns [] on any fault — the sender is fail-soft. */
+export async function listClientDeviceTokens(
+  clientId: string
+): Promise<ClientDeviceToken[]> {
+  const admin = createAdminClient() as unknown as SupabaseClient;
+  const { data, error } = await admin
+    .from('device_tokens')
+    .select('token, platform')
+    .eq('client_id', clientId);
+  if (error) {
+    console.error('[push.listTokens] read failed', error);
+    return [];
+  }
+  return Array.isArray(data) ? (data as ClientDeviceToken[]) : [];
+}
+
+/** PR3b — delete a single token after FCM reports it unregistered/invalid
+ *  (cleanup). Keyed by the hash (the unique key). Best-effort; never throws. */
+export async function deleteDeviceTokenByPlaintext(token: string): Promise<void> {
+  try {
+    const admin = createAdminClient() as unknown as SupabaseClient;
+    const { error } = await admin
+      .from('device_tokens')
+      .delete()
+      .eq('token_sha256', sha256Hex(token));
+    if (error) console.error('[push.cleanupToken] delete failed', error);
+  } catch (err) {
+    console.error('[push.cleanupToken] threw', err);
+  }
+}

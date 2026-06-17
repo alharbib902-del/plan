@@ -11,6 +11,12 @@ import { clientPricingVisible } from './pricing-visibility';
 import { sendFounderBatchAlert } from './founder-batch-email';
 import { isClientOptedIn } from '@/lib/clients/notification-preferences';
 import { sendClientEmptyLegMatchEmail } from '@/lib/notifications/client-empty-leg-email';
+import { flagOn } from '@/lib/config/feature-flags';
+// NOTE: the FCM sender ('server-only' + google-auth) is imported DYNAMICALLY
+// inside the push block below — a top-level import would pull 'server-only'
+// into this module, which the tsx Layer-1 matcher tests (which import this
+// file) can't resolve. Lazy import also keeps google-auth out of the bundle
+// until push actually fires.
 
 /**
  * Phase 7 PR 2e — wa.me URL emitter + outreach-queue
@@ -299,12 +305,55 @@ export async function enqueueClientLegNotifications({
       'empty_legs',
       'wa_link'
     );
+    // Push (PR3b) — default opt-OUT (per-channel default). Computed BEFORE the
+    // skip so a push-only client (email/wa off, push on) is NOT skipped.
+    const wantsPush = isClientOptedIn(
+      cand.notification_preferences,
+      'empty_legs',
+      'push'
+    );
 
-    // 2. Channel selection per round 4 P1 #1 rules
-    if (!wantsEmail && !wantsWa) {
+    // 2. Skip only when opted out of EVERY channel (incl. push).
+    if (!wantsEmail && !wantsWa && !wantsPush) {
       skippedPreferencesCount++;
       continue;
     }
+
+    // 2b. Push is an INDEPENDENT channel — no empty_leg_notifications row for
+    //     push-only. Behind the flag. The dispatcher is internally fail-soft;
+    //     the local try/catch is belt-and-suspenders so the email/wa matcher
+    //     can NEVER be broken by a push fault (a throw would otherwise fail the
+    //     outbox drain + re-storm the whole client loop).
+    //     Throughput note: this awaits a claim + sequential per-token FCM POSTs
+    //     per candidate; a large push-eligible pool should later move to a
+    //     dedicated push-drain queue rather than the synchronous match loop.
+    if (wantsPush && flagOn('ENABLE_PUSH_NOTIFICATIONS')) {
+      try {
+        const { dispatchClientEmptyLegPush } = await import(
+          '@/lib/push/fcm-sender'
+        );
+        await dispatchClientEmptyLegPush({
+          clientId: cand.client_id,
+          legId: leg.id,
+          legNumber: leg.leg_number,
+          eventType,
+          routeFrom,
+          routeTo,
+          currentPrice: leg.current_price,
+        });
+      } catch (err) {
+        console.error('[notifications] push dispatch failed (non-fatal)', {
+          client: cand.client_id,
+          leg: leg.id,
+          err,
+        });
+      }
+    }
+
+    // 2c. The empty_leg_notifications row + email/wa dispatch below run ONLY
+    //     when one of those two channels is on; a push-only client gets no row
+    //     (the admin outreach queue stays clean).
+    if (!wantsEmail && !wantsWa) continue;
 
     // 3. Build body (same WhatsApp body templates as the lead
     //    path; the email body is built inside sendClientEmptyLegMatchEmail).
