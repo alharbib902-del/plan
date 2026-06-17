@@ -65,9 +65,13 @@ test('401 / 403 → config (never delete on a creds error)', () => {
   assert.equal(classifyFcmResult(401, null), 'config');
   assert.equal(classifyFcmResult(403, null), 'config');
 });
-test('404 → delete', () => assert.equal(classifyFcmResult(404, null), 'delete'));
-test('UNREGISTERED detail → delete', () =>
-  assert.equal(classifyFcmResult(404, unregistered), 'delete'));
+test('bare 404 (no UNREGISTERED detail) → transient (NEVER delete)', () =>
+  assert.equal(classifyFcmResult(404, null), 'transient'));
+test('UNREGISTERED detail → delete (regardless of status)', () => {
+  assert.equal(classifyFcmResult(404, unregistered), 'delete');
+  // even a 200-ish wrapper can't happen, but a 400 with UNREGISTERED → delete
+  assert.equal(classifyFcmResult(400, unregistered), 'delete');
+});
 test('INVALID_ARGUMENT w/ TOKEN field-violation → delete', () =>
   assert.equal(classifyFcmResult(400, tokenViolation), 'delete'));
 test('INVALID_ARGUMENT w/ PAYLOAD field-violation → transient (no delete)', () =>

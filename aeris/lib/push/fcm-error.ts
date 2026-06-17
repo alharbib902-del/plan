@@ -3,11 +3,11 @@
  * aggregation (NO 'server-only', tsx-testable).
  *
  * Token-deletion is DELIBERATELY conservative (founder P1): delete a device
- * token ONLY when FCM says the registration is gone — UNREGISTERED (or a 404),
- * or an INVALID_ARGUMENT whose field-violation explicitly targets the token
- * field. A generic/payload INVALID_ARGUMENT (a bad message/data) is NEVER a
- * token-delete — it's transient — so a template/payload bug can't mass-delete
- * healthy tokens.
+ * token ONLY when FCM explicitly says the registration is gone — an
+ * UNREGISTERED detail, or an INVALID_ARGUMENT whose field-violation targets the
+ * token field. A bare HTTP 404 (wrong project/endpoint/partial response), a
+ * generic/payload INVALID_ARGUMENT, or a creds error is NEVER a token-delete —
+ * so a misconfig or template bug can't mass-delete healthy tokens.
  */
 
 export type FcmTokenOutcome = 'success' | 'delete' | 'transient' | 'config';
@@ -43,13 +43,11 @@ function pointsAtToken(body: unknown): boolean {
 
 /**
  * Classify one FCM v1 per-token send result.
- *   200            → success
- *   401 / 403      → config (bad/missing creds — NEVER delete a token)
- *   404            → delete (registration gone)
- *   UNREGISTERED   → delete (any status)
- *   400 INVALID_ARGUMENT with a token-field violation → delete
- *   400 INVALID_ARGUMENT otherwise (payload) → transient (NO delete)
- *   429 / 5xx / other → transient
+ *   200                                                → success
+ *   401 / 403                                          → config (creds — NEVER delete)
+ *   UNREGISTERED detail (any status)                   → delete
+ *   400 INVALID_ARGUMENT with a token-field violation  → delete
+ *   bare 404 / payload INVALID_ARGUMENT / 429 / 5xx    → transient (NO delete)
  */
 export function classifyFcmResult(
   httpStatus: number,
@@ -58,11 +56,12 @@ export function classifyFcmResult(
   if (httpStatus >= 200 && httpStatus < 300) return 'success';
   if (httpStatus === 401 || httpStatus === 403) return 'config';
 
-  // Token explicitly gone, regardless of the numeric status.
+  // Delete ONLY when FCM's details explicitly blame the registration token
+  // (UNREGISTERED, or a token-field violation). A bare 404 (wrong
+  // project/endpoint/partial response) is NOT a token signal → transient.
   if (pointsAtToken(body)) return 'delete';
-  if (httpStatus === 404) return 'delete';
 
-  // Everything else (incl. a payload INVALID_ARGUMENT, 429, 5xx, timeouts
+  // Everything else (bare 404, payload INVALID_ARGUMENT, 429, 5xx, timeouts
   // surfaced as a non-2xx) is retryable without touching the token.
   return 'transient';
 }
