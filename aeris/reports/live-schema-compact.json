@@ -807,6 +807,16 @@
       "revoked_at": "timestamp with time zone",
       "created_at": "timestamp with time zone"
     },
+    "device_tokens": {
+      "id": "uuid [PK]",
+      "client_id": "uuid [FK->clients.id]",
+      "token": "text",
+      "token_sha256": "text",
+      "platform": "text",
+      "created_at": "timestamp with time zone",
+      "updated_at": "timestamp with time zone",
+      "last_seen_at": "timestamp with time zone"
+    },
     "addon_catalog": {
       "subtype": "character varying [PK]",
       "addon_type": "public.addon_type enum(ground_transfer|crew|catering|special)",
@@ -1434,6 +1444,10 @@
       "flags:integer",
       "geom:public.geometry"
     ],
+    "unregister_client_device_token": [
+      "p_client_id:uuid",
+      "p_token_sha256:text"
+    ],
     "expire_old_loyalty_credits": [
       "args:?"
     ],
@@ -1693,6 +1707,12 @@
     ],
     "postgis_full_version": [
       "args:?"
+    ],
+    "register_client_device_token": [
+      "p_client_id:uuid",
+      "p_platform:text",
+      "p_token:text",
+      "p_token_sha256:text"
     ],
     "safe_parse_date": [
       "p_text:text"
