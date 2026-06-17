@@ -148,6 +148,30 @@ test('prefs: wrong type (string instead of boolean) → fails', () => {
   assert.equal(result.success, false);
 });
 
+test('prefs: PR2 backward-compat — old payload WITHOUT push is valid', () => {
+  const result = notificationPreferencesSchema.safeParse({
+    empty_legs: { email: true, wa_link: true },
+    marketing: false,
+  });
+  assert.equal(result.success, true);
+});
+
+test('prefs: new payload WITH push (boolean) is valid', () => {
+  const result = notificationPreferencesSchema.safeParse({
+    empty_legs: { email: true, wa_link: true, push: true },
+    marketing: false,
+  });
+  assert.equal(result.success, true);
+});
+
+test('prefs: push wrong type (string) → fails', () => {
+  const result = notificationPreferencesSchema.safeParse({
+    empty_legs: { email: true, wa_link: true, push: 'true' },
+    marketing: false,
+  });
+  assert.equal(result.success, false);
+});
+
 // eslint-disable-next-line no-console
 console.log(
   `\n[clients-empty-legs-validators] ${passed} passed, ${failed} failed\n`

@@ -16,6 +16,7 @@ class AppConfig {
     required this.clientEmptyLegsPortal,
     required this.emptyLegsClientPricing,
     required this.publicMarketplace,
+    required this.pushNotifications,
     required this.pricingVisible,
     required this.minSupportedVersion,
   });
@@ -26,6 +27,7 @@ class AppConfig {
   final bool clientEmptyLegsPortal;
   final bool emptyLegsClientPricing;
   final bool publicMarketplace;
+  final bool pushNotifications;
   final bool pricingVisible;
   final String minSupportedVersion;
 
@@ -37,6 +39,7 @@ class AppConfig {
     clientEmptyLegsPortal: false,
     emptyLegsClientPricing: false,
     publicMarketplace: false,
+    pushNotifications: false,
     pricingVisible: false,
     minSupportedVersion: '1.0.0',
   );
@@ -53,6 +56,7 @@ class AppConfig {
       clientEmptyLegsPortal: flag('client_empty_legs_portal'),
       emptyLegsClientPricing: flag('empty_legs_client_pricing'),
       publicMarketplace: flag('public_marketplace'),
+      pushNotifications: flag('push_notifications'),
       pricingVisible: json['pricing_visible'] == true,
       minSupportedVersion: json['min_supported_version'] is String
           ? json['min_supported_version'] as String

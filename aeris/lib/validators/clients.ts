@@ -370,6 +370,11 @@ export const notificationPreferencesSchema = z
       .object({
         email: z.boolean(),
         wa_link: z.boolean(),
+        // PR2 backward-compat: `push` is OPTIONAL so the production app (which
+        // PATCHes {email, wa_link} only) stays valid, AND the new app may send
+        // it. `.strict()` still rejects any other key. Tighten to required
+        // later, after raising the min supported version.
+        push: z.boolean().optional(),
       })
       .strict(),
     marketing: z.boolean(),

@@ -133,7 +133,10 @@ export type UpdateNotifPrefsResult = { ok: true } | ProfileCoreFailure;
 
 export async function runUpdateNotificationPreferences(
   clientId: string,
-  input: { empty_legs: { email: boolean; wa_link: boolean }; marketing: boolean }
+  input: {
+    empty_legs: { email: boolean; wa_link: boolean; push?: boolean };
+    marketing: boolean;
+  }
 ): Promise<UpdateNotifPrefsResult> {
   // Returns the web action's EXISTING wire codes (invalid_input /
   // server_error) so the web updateMyNotificationPreferences can

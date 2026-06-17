@@ -17,19 +17,46 @@ function test(name: string, fn: () => void): void {
   }
 }
 
-test('null prefs → everything opt-in (Decision #4 default)', () => {
+test('null prefs → email/wa+marketing opt-in, push opt-OUT (per-channel default)', () => {
   const out = mapNotificationPreferences(null);
   assert.deepEqual(out, {
-    empty_legs: { email: true, wa_link: true },
+    empty_legs: { email: true, wa_link: true, push: false },
     marketing: true,
   });
 });
 
-test('empty object → opt-in', () => {
+test('empty object → email/wa opt-in, push opt-out', () => {
   const out = mapNotificationPreferences({});
   assert.equal(out.empty_legs.email, true);
   assert.equal(out.empty_legs.wa_link, true);
+  assert.equal(out.empty_legs.push, false);
   assert.equal(out.marketing, true);
+});
+
+test('push: default opt-OUT; only explicit true opts in', () => {
+  // absent → false
+  assert.equal(
+    mapNotificationPreferences({ empty_legs: { email: true, wa_link: true } })
+      .empty_legs.push,
+    false
+  );
+  // explicit true → true
+  assert.equal(
+    mapNotificationPreferences({ empty_legs: { push: true } }).empty_legs.push,
+    true
+  );
+  // explicit false → false
+  assert.equal(
+    mapNotificationPreferences({ empty_legs: { push: false } }).empty_legs.push,
+    false
+  );
+  // polluted non-boolean → false (defensive)
+  assert.equal(
+    mapNotificationPreferences({
+      empty_legs: { push: 'yes' },
+    } as Parameters<typeof mapNotificationPreferences>[0]).empty_legs.push,
+    false
+  );
 });
 
 test('explicit false is respected per channel + marketing', () => {
@@ -68,7 +95,7 @@ test('non-boolean marketing value → opt-out (defensive, symmetric with channel
   assert.equal(mapNotificationPreferences({}).marketing, true);
 });
 
-test('output shape is exactly {empty_legs:{email,wa_link}, marketing}', () => {
+test('output shape is exactly {empty_legs:{email,wa_link,push}, marketing}', () => {
   const out = mapNotificationPreferences({
     empty_legs: { email: true, wa_link: false },
     marketing: true,
@@ -77,7 +104,7 @@ test('output shape is exactly {empty_legs:{email,wa_link}, marketing}', () => {
   assert.deepEqual(new Set(Object.keys(out)), new Set(['empty_legs', 'marketing']));
   assert.deepEqual(
     new Set(Object.keys(out.empty_legs)),
-    new Set(['email', 'wa_link'])
+    new Set(['email', 'wa_link', 'push'])
   );
 });
 
