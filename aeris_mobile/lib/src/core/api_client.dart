@@ -106,13 +106,19 @@ class ApiClient {
     );
   }
 
+  /// DELETE with an OPTIONAL JSON [body]. Some contracts carry a sensitive
+  /// identifier that must NOT land in the URL/query (e.g. the device-token
+  /// unregister sends `{token}` in the body so the long-lived token never
+  /// leaks into logs/proxies). Omitting [body] sends no request body
+  /// (back-compatible with the existing body-less callers).
   Future<Map<String, dynamic>> deleteJson(
     String path, {
+    Map<String, dynamic>? body,
     bool auth = true,
     bool silent = false,
   }) {
     return _send(
-      () => _dio.delete<dynamic>(path, options: _opts(auth)),
+      () => _dio.delete<dynamic>(path, data: body, options: _opts(auth)),
       notify: auth && !silent,
     );
   }

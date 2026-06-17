@@ -45,6 +45,39 @@ class _FakeTokenStore implements TokenStore {
   Future<void> clear() async => _t = null;
 }
 
+/// Records the outgoing method + request body so we can assert deleteJson
+/// actually puts the payload in the BODY (not the URL).
+class _CapturingAdapter implements HttpClientAdapter {
+  _CapturingAdapter(this.statusCode, this.body);
+  final int statusCode;
+  final Map<String, dynamic> body;
+  String? capturedMethod;
+  String? capturedBody;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    capturedMethod = options.method;
+    if (requestStream != null) {
+      final chunks = await requestStream.toList();
+      capturedBody = utf8.decode(chunks.expand((c) => c).toList());
+    }
+    return ResponseBody.fromString(
+      jsonEncode(body),
+      statusCode,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
 void main() {
   ApiClient make(
     int status,
@@ -138,6 +171,37 @@ void main() {
       final res = await api.getJson('/me/session', silent: true);
       expect(res['ok'], isTrue);
       expect(res['value'], 7);
+    });
+  });
+
+  group('deleteJson body (device-token unregister contract)', () {
+    test('sends the JSON body when provided — payload in body, not URL',
+        () async {
+      final adapter = _CapturingAdapter(200, {'ok': true});
+      final api = ApiClient(
+        baseUrl: 'http://test.local',
+        tokenStore: _FakeTokenStore(),
+        adapter: adapter,
+      );
+      await api.deleteJson('/me/device-tokens', body: {'token': 'abc'});
+      expect(adapter.capturedMethod, 'DELETE');
+      expect(adapter.capturedBody, isNotNull);
+      expect(jsonDecode(adapter.capturedBody!), {'token': 'abc'});
+    });
+
+    test('omitting body sends no request body (back-compatible)', () async {
+      final adapter = _CapturingAdapter(200, {'ok': true});
+      final api = ApiClient(
+        baseUrl: 'http://test.local',
+        tokenStore: _FakeTokenStore(),
+        adapter: adapter,
+      );
+      await api.deleteJson('/empty-legs/alerts/42');
+      expect(adapter.capturedMethod, 'DELETE');
+      expect(
+        adapter.capturedBody == null || adapter.capturedBody!.isEmpty,
+        isTrue,
+      );
     });
   });
 }
