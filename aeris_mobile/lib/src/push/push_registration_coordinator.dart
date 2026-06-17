@@ -49,7 +49,6 @@ class PushRegistrationCoordinator {
 
   Future<void> _enable() async {
     _enabled = true;
-    _subscribeRefresh();
     // Idempotent on the REGISTERED token (not on attempts): a re-sync while
     // already registered must not re-prompt/re-register (login → /config
     // resolving can fire sync twice). A prior failed attempt leaves
@@ -57,6 +56,11 @@ class PushRegistrationCoordinator {
     if (_registeredToken != null) return;
     final granted = await _source.requestPermission();
     if (!granted) return;
+    // Subscribe to refreshes ONLY after permission is granted: a denied (or
+    // throwing) requestPermission must leave NO live listener, otherwise a
+    // later token refresh would register the device despite the user never
+    // granting permission.
+    _subscribeRefresh();
     final token = await _source.getToken();
     if (token == null || token.isEmpty) return;
     await _repository.register(token: token, platform: _source.platform);

@@ -156,6 +156,33 @@ void main() {
     });
   });
 
+  group('permission denial gates the refresh subscription (P1)', () {
+    test('denied → no live listener; later refresh does NOT register',
+        () async {
+      when(() => source.requestPermission()).thenAnswer((_) async => false);
+      final c = build();
+      await c.sync(enabled: true);
+      expect(refresh.hasListener, isFalse);
+      refresh.add('tok-x');
+      await pumpEventQueue();
+      verifyNever(() => repo.register(
+          token: any(named: 'token'), platform: any(named: 'platform')));
+    });
+
+    test('throws → no live listener; later refresh does NOT register',
+        () async {
+      when(() => source.requestPermission())
+          .thenThrow(const AppException('unknown'));
+      final c = build();
+      await c.sync(enabled: true);
+      expect(refresh.hasListener, isFalse);
+      refresh.add('tok-x');
+      await pumpEventQueue();
+      verifyNever(() => repo.register(
+          token: any(named: 'token'), platform: any(named: 'platform')));
+    });
+  });
+
   group('dispose', () {
     test('cancels the subscription', () async {
       final c = build();
