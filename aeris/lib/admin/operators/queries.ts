@@ -86,39 +86,36 @@ export async function listOperators(
 // ============================================================
 // countOperatorsByStatus
 //
-// One round-trip; counts are aggregated in-memory. The list
-// page renders 5 filter chips (all + 4 statuses) so we compute
-// all 4 counts at once.
+// Count-only head queries (one per chip, run in parallel) — the
+// DB returns counts instead of shipping every row to tally in JS.
+// The list page renders 5 filter chips (all + 4 statuses).
 // ============================================================
 
 export async function countOperatorsByStatus(): Promise<OperatorStatusCounts> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from(TABLE)
-    .select('signup_status', { count: 'exact', head: false });
-
-  if (error) {
-    console.error('[operators] countOperatorsByStatus failed', error);
-    throw new Error(`countOperatorsByStatus failed: ${error.message}`);
-  }
-
-  const counts: OperatorStatusCounts = {
-    total: data?.length ?? 0,
-    pending: 0,
-    approved: 0,
-    suspended: 0,
-    rejected: 0,
+  const countFor = async (
+    status: OperatorSignupStatus | null
+  ): Promise<number> => {
+    let query = client.from(TABLE).select('*', { count: 'exact', head: true });
+    if (status) query = query.eq('signup_status', status);
+    const { count, error } = await query;
+    if (error) {
+      console.error('[operators] countOperatorsByStatus failed', error);
+      throw new Error(`countOperatorsByStatus failed: ${error.message}`);
+    }
+    return count ?? 0;
   };
 
-  for (const row of data ?? []) {
-    const status = row.signup_status as OperatorSignupStatus;
-    if (status in counts) {
-      counts[status as keyof Omit<OperatorStatusCounts, 'total'>] += 1;
-    }
-  }
+  const [total, pending, approved, suspended, rejected] = await Promise.all([
+    countFor(null),
+    countFor('pending'),
+    countFor('approved'),
+    countFor('suspended'),
+    countFor('rejected'),
+  ]);
 
-  return counts;
+  return { total, pending, approved, suspended, rejected };
 }
 
 // ============================================================
