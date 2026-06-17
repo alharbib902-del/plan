@@ -12,6 +12,7 @@ advisor-doc/package-lock.json
 # migration-runner tool. Ignored so the working tree stays clean and a
 # stray `git add -A` can never sweep them into a commit.
 /FLUTTER-APP-PLAN.md
+/PUSH-PLAN.md
 /WORK-TRACKER.md
 /demo-*.html
 /demo-screenshots/

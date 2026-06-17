@@ -30,6 +30,8 @@ export interface MobileCapabilityFlags {
   empty_legs_client_pricing: boolean;
   /** Guest (no-token) empty-legs browsing before sign-up. */
   public_marketplace: boolean;
+  /** Client push notifications (device registration + delivery). */
+  push_notifications: boolean;
 }
 
 export interface MobileConfig {
@@ -48,6 +50,7 @@ export function mobileCapabilityFlags(): MobileCapabilityFlags {
     client_empty_legs_portal: flagOn('ENABLE_CLIENT_EMPTY_LEGS_PORTAL'),
     empty_legs_client_pricing: flagOn('ENABLE_EMPTY_LEGS_CLIENT_PRICING'),
     public_marketplace: flagOn('ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE'),
+    push_notifications: flagOn('ENABLE_PUSH_NOTIFICATIONS'),
   };
 }
 

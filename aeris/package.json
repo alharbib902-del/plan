@@ -22,6 +22,7 @@
     "test:empty-legs-matching": "tsx lib/empty-legs/__tests__/matching.test.ts",
     "test:empty-legs-frequency-cap": "tsx lib/empty-legs/__tests__/frequency-cap.test.ts",
     "test:empty-legs-cron-auth": "tsx app/api/empty-legs/__tests__/cron-auth.test.ts",
+    "test:push-device-tokens": "tsx lib/push/__tests__/device-tokens.test.ts",
     "test:notifications-whatsapp-provider": "tsx lib/notifications/__tests__/whatsapp-provider.test.ts",
     "test:notifications-whatsapp-templates": "tsx lib/notifications/__tests__/whatsapp-templates.test.ts",
     "test:operators-canary-stale": "tsx lib/admin/operators/__tests__/canary-stale.test.ts",

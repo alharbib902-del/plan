@@ -41,6 +41,7 @@ const FLAG_VARS = [
   'ENABLE_CLIENT_EMPTY_LEGS_PORTAL',
   'ENABLE_EMPTY_LEGS_CLIENT_PRICING',
   'ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE',
+  'ENABLE_PUSH_NOTIFICATIONS',
   'MOBILE_MIN_SUPPORTED_VERSION',
 ];
 
@@ -85,6 +86,7 @@ test('mobileCapabilityFlags reflects each flag independently', () => {
       ENABLE_CLIENT_EMPTY_LEGS_PORTAL: 'false',
       ENABLE_EMPTY_LEGS_CLIENT_PRICING: 'true',
       ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE: 'true',
+      ENABLE_PUSH_NOTIFICATIONS: 'true',
     },
     () => {
       const f = mobileCapabilityFlags();
@@ -94,11 +96,15 @@ test('mobileCapabilityFlags reflects each flag independently', () => {
       assert.equal(f.client_empty_legs_portal, false);
       assert.equal(f.empty_legs_client_pricing, true);
       assert.equal(f.public_marketplace, true);
+      assert.equal(f.push_notifications, true);
     }
   );
-  // public_marketplace is independent + fail-closed when unset.
+  // public_marketplace + push_notifications are independent + fail-closed.
   withEnv({ ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE: undefined }, () =>
     assert.equal(mobileCapabilityFlags().public_marketplace, false)
+  );
+  withEnv({ ENABLE_PUSH_NOTIFICATIONS: undefined }, () =>
+    assert.equal(mobileCapabilityFlags().push_notifications, false)
   );
 });
 

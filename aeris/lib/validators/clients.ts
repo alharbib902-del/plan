@@ -379,3 +379,39 @@ export const notificationPreferencesSchema = z
 export type NotificationPreferencesInput = z.infer<
   typeof notificationPreferencesSchema
 >;
+
+// ============================================================
+// Push PR1 — device-token registration (POST /me/device-tokens)
+// ============================================================
+//
+// A FCM/APNs registration token + its platform. `.strict()` rejects unknown
+// keys; the token is capped to keep the body bounded (FCM tokens are ~150–350
+// chars, APNs ~64 hex — 4096 is a generous, abuse-resistant ceiling).
+
+const deviceTokenField = z
+  .string()
+  .trim()
+  .min(1, { message: 'رمز الجهاز مطلوب' })
+  .max(4096, { message: 'رمز الجهاز طويل جداً' });
+
+export const deviceTokenRegisterSchema = z
+  .object({
+    token: deviceTokenField,
+    platform: z.enum(['ios', 'android']),
+  })
+  .strict();
+
+export type DeviceTokenRegisterInput = z.infer<
+  typeof deviceTokenRegisterSchema
+>;
+
+// unregister sends the token in the JSON body (NOT a query string — a device
+// token is a long-lived sensitive identifier that must not leak into
+// URLs/logs/proxies). The server hashes it to find + delete the caller's row.
+export const deviceTokenUnregisterSchema = z
+  .object({ token: deviceTokenField })
+  .strict();
+
+export type DeviceTokenUnregisterInput = z.infer<
+  typeof deviceTokenUnregisterSchema
+>;
