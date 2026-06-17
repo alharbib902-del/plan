@@ -12,7 +12,11 @@ import { sendFounderBatchAlert } from './founder-batch-email';
 import { isClientOptedIn } from '@/lib/clients/notification-preferences';
 import { sendClientEmptyLegMatchEmail } from '@/lib/notifications/client-empty-leg-email';
 import { flagOn } from '@/lib/config/feature-flags';
-import { dispatchClientEmptyLegPush } from '@/lib/push/fcm-sender';
+// NOTE: the FCM sender ('server-only' + google-auth) is imported DYNAMICALLY
+// inside the push block below — a top-level import would pull 'server-only'
+// into this module, which the tsx Layer-1 matcher tests (which import this
+// file) can't resolve. Lazy import also keeps google-auth out of the bundle
+// until push actually fires.
 
 /**
  * Phase 7 PR 2e — wa.me URL emitter + outreach-queue
@@ -325,6 +329,9 @@ export async function enqueueClientLegNotifications({
     //     dedicated push-drain queue rather than the synchronous match loop.
     if (wantsPush && flagOn('ENABLE_PUSH_NOTIFICATIONS')) {
       try {
+        const { dispatchClientEmptyLegPush } = await import(
+          '@/lib/push/fcm-sender'
+        );
         await dispatchClientEmptyLegPush({
           clientId: cand.client_id,
           legId: leg.id,
