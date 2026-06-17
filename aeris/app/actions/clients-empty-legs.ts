@@ -128,7 +128,7 @@ export type UpdateMyNotificationPreferencesResult =
   | ClientEmptyLegsActionFailure;
 
 export async function updateMyNotificationPreferences(input: {
-  empty_legs: { email: boolean; wa_link: boolean };
+  empty_legs: { email: boolean; wa_link: boolean; push?: boolean };
   marketing: boolean;
 }): Promise<UpdateMyNotificationPreferencesResult> {
   // Codex round 1 PR #63 P2 #2 fix — do NOT gate behind

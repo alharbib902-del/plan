@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../config/app_config.dart';
 import '../core/app_exception.dart';
 import '../notifications/notification_prefs.dart';
 import '../notifications/notifications_repository.dart';
@@ -29,7 +30,8 @@ class NotificationsScreen extends ConsumerWidget {
           onRetry: () => ref.invalidate(notificationPrefsProvider),
         ),
         data: (p) => _PrefsForm(
-          key: ValueKey('${p.emptyLegsEmail}|${p.emptyLegsWaLink}|${p.marketing}'),
+          key: ValueKey('${p.emptyLegsEmail}|${p.emptyLegsWaLink}|'
+              '${p.emptyLegsPush}|${p.marketing}'),
           initial: p,
         ),
       ),
@@ -98,6 +100,11 @@ class _PrefsFormState extends ConsumerState<_PrefsForm> {
 
   @override
   Widget build(BuildContext context) {
+    // The push toggle appears only when the feature is deployed (fail-closed).
+    // PR2: the toggle is wired into the saved payload, but NO push is sent yet
+    // (the sender lands in PR3).
+    final showPush =
+        ref.watch(appConfigProvider).valueOrNull?.pushNotifications ?? false;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -126,6 +133,13 @@ class _PrefsFormState extends ConsumerState<_PrefsForm> {
           onChanged: (v) =>
               setState(() => _current = _current.copyWith(emptyLegsWaLink: v)),
         ),
+        if (showPush)
+          _switch(
+            title: 'إشعارات الجهاز (Push)',
+            value: _current.emptyLegsPush,
+            onChanged: (v) =>
+                setState(() => _current = _current.copyWith(emptyLegsPush: v)),
+          ),
         const Divider(height: 28, color: AerisColors.border),
         _switch(
           title: 'العروض التسويقية',
