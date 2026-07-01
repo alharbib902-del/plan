@@ -48,6 +48,11 @@ export const runtime = 'nodejs';
 
 const SWEEP_BATCH_LIMIT = 100;
 
+// Stale-claim window — MUST stay ≥ the claim RPC's p_stale_after default
+// (10 minutes): the sweep only proposes; the atomic re-claim inside the
+// dispatcher is what actually decides a claim is stale.
+const STALE_CLAIM_WINDOW_MS = 10 * 60 * 1000;
+
 type LooseDbClient = {
   from: (table: string) => {
     select: (cols: string) => {
@@ -55,9 +60,52 @@ type LooseDbClient = {
         col: string,
         values: string[]
       ) => Promise<{ data: unknown; error: { message?: string } | null }>;
+      eq: (
+        col: string,
+        value: string
+      ) => {
+        lt: (
+          col: string,
+          value: string
+        ) => {
+          limit: (n: number) => Promise<{
+            data: unknown;
+            error: { message?: string } | null;
+          }>;
+        };
+      };
     };
   };
 };
+
+/** Rows a dead worker left in 'claimed' (crashed mid-send). They never
+ *  reach `failed_transient`, so list_retryable_push_deliveries can't see
+ *  them — only a fresh claim attempt can (the RPC re-claims a STALE
+ *  'claimed' row atomically). The sweep surfaces them; the dispatcher's
+ *  claim decides. Fail-soft: [] on any fault. */
+async function listStaleClaimedDeliveries(
+  db: LooseDbClient
+): Promise<unknown[]> {
+  try {
+    const staleBefore = new Date(
+      Date.now() - STALE_CLAIM_WINDOW_MS
+    ).toISOString();
+    const { data, error } = await db
+      .from('client_push_deliveries')
+      .select('id, client_id, leg_id, event_type')
+      .eq('status', 'claimed')
+      .lt('claimed_at', staleBefore)
+      .limit(SWEEP_BATCH_LIMIT);
+    if (error) {
+      console.error('[cron.push-retry-sweep] stale-claim read failed', error);
+      return [];
+    }
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.error('[cron.push-retry-sweep] stale-claim read threw', err);
+    return [];
+  }
+}
 
 export async function GET(req: NextRequest): Promise<Response> {
   const auth = verifyCronAuth(req.headers);
@@ -72,9 +120,19 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  const deliveries = parseRetryableDeliveries(
-    await listRetryablePushDeliveries(SWEEP_BATCH_LIMIT)
-  );
+  const db = createAdminClient() as unknown as LooseDbClient;
+
+  const [retryableRows, staleClaimedRows] = await Promise.all([
+    listRetryablePushDeliveries(SWEEP_BATCH_LIMIT),
+    listStaleClaimedDeliveries(db),
+  ]);
+  // failed_transient and stale-'claimed' are disjoint statuses; the id
+  // dedup is purely defensive.
+  const seen = new Set<string>();
+  const deliveries = parseRetryableDeliveries([
+    ...retryableRows,
+    ...staleClaimedRows,
+  ]).filter((d) => !seen.has(d.id) && Boolean(seen.add(d.id)));
   if (deliveries.length === 0) {
     return NextResponse.json(
       { ok: true, due: 0, redispatched: 0, expired: 0 },
@@ -84,7 +142,6 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   const legIds = [...new Set(deliveries.map((d) => d.leg_id))];
   const clientIds = [...new Set(deliveries.map((d) => d.client_id))];
-  const db = createAdminClient() as unknown as LooseDbClient;
 
   let legRows: unknown;
   let clientRows: unknown;
