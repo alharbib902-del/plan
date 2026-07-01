@@ -76,6 +76,7 @@
     "test:monitoring-operational": "tsx lib/monitoring/__tests__/operational.test.ts",
     "test:cron-get-contract": "tsx app/api/cron/__tests__/cron-get-contract.test.ts",
     "test:payments-core": "tsx lib/payments/__tests__/payment-core.test.ts",
+    "test:payments-offline-settlement": "tsx lib/payments/__tests__/offline-settlement.test.ts",
     "test:mobile-http": "tsx lib/mobile/__tests__/http.test.ts",
     "test:mobile-bearer": "tsx lib/mobile/__tests__/bearer.test.ts",
     "test:mobile-bearer-gate": "tsx lib/mobile/__tests__/bearer-gate.test.ts",

@@ -18,7 +18,12 @@ import { AddonsSuggestionBanner } from '@/components/admin/addons-suggestion-ban
 import { AttachedAddonsTable } from '@/components/admin/attached-addons-table';
 import { LegacyBookingBackfillButton } from '@/components/admin/legacy-booking-backfill-button';
 import { IssueCheckoutLinkButton } from '@/components/admin/issue-checkout-link-button';
-import type { BookingAddonRow } from '@/types/database';
+import { MarkPaidButton } from '@/components/admin/mark-paid-button';
+import {
+  offlineNetAmount,
+  resolveMarkPaidGate,
+} from '@/lib/payments/offline-settlement';
+import type { BookingAddonRow, BookingRow } from '@/types/database';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -98,7 +103,7 @@ async function CaseRouter({
 }: {
   gate: AddonsGateCase;
   tripId: string;
-  booking: { id: string; passengers_count_snapshot: number | null } | null;
+  booking: BookingRow | null;
   preferences: TripPreferences | null;
 }) {
   if (gate === 'pre_accept') {
@@ -147,7 +152,7 @@ async function CaseRouter({
   return (
     <CaseBView
       tripId={tripId}
-      bookingId={booking.id}
+      booking={booking}
       passengersCount={booking.passengers_count_snapshot ?? 1}
       preferences={preferences}
       addons={addons}
@@ -161,17 +166,18 @@ async function CaseRouter({
 
 function CaseBView({
   tripId,
-  bookingId,
+  booking,
   passengersCount,
   preferences,
   addons,
 }: {
   tripId: string;
-  bookingId: string;
+  booking: BookingRow;
   passengersCount: number;
   preferences: TripPreferences | null;
   addons: BookingAddonRow[];
 }) {
+  const bookingId = booking.id;
   return (
     <div className="space-y-8">
       {/* Suggestion banner — preferences-driven highlights */}
@@ -219,10 +225,83 @@ function CaseBView({
         <IssueCheckoutLinkButton bookingId={bookingId} />
       </div>
 
+      {/* Offline settlement — status badge + "confirm payment received".
+          Money is collected offline today; this is where the founder
+          records it (migration 20260702000001). */}
+      <PaymentSection tripId={tripId} booking={booking} />
+
       {/* Catalog count footer for the parity test's smoke ref */}
       <p className="font-ar text-xs text-ink-muted/60">
         كتالوج الخدمات يحوي {ADDONS_CATALOG.length} خدمة (Phase 6.2).
       </p>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────
+// Payment section — offline settlement (Case B)
+// ────────────────────────────────────────────────────────────
+
+const PAYMENT_STATUS_KEYS = {
+  pending: 'admin_payment_status_pending',
+  pending_offline: 'admin_payment_status_pending_offline',
+  paid: 'admin_payment_status_paid',
+  refunded: 'admin_payment_status_refunded',
+} as const;
+
+function PaymentSection({
+  tripId,
+  booking,
+}: {
+  tripId: string;
+  booking: BookingRow;
+}) {
+  // paid_at / cashback_redemption_sar are live columns that the
+  // hand-maintained BookingRow doesn't carry yet (loose-client pattern);
+  // getBookingByTripId selects '*' so they're present at runtime.
+  const pay = booking as unknown as {
+    paid_at?: string | null;
+    cashback_redemption_sar?: number | null;
+  };
+  const gate = resolveMarkPaidGate({
+    payment_status: booking.payment_status,
+    paid_at: pay.paid_at ?? null,
+  });
+  const statusKey =
+    PAYMENT_STATUS_KEYS[booking.payment_status] ??
+    'admin_payment_status_pending';
+  const badgeTone =
+    gate === 'already_paid'
+      ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+      : gate === 'refunded'
+        ? 'border-red-400/40 bg-red-500/10 text-red-200'
+        : 'border-amber-400/40 bg-amber-500/10 text-amber-200';
+
+  return (
+    <div className="rounded-xl border border-border bg-navy-card/30 p-6">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-ar text-base font-medium text-ink">
+          {t('admin_payment_section_heading', 'ar')}
+        </h3>
+        <span
+          className={`font-ar rounded-full border px-3 py-1 text-xs ${badgeTone}`}
+        >
+          {t(statusKey, 'ar')}
+        </span>
+      </div>
+
+      {gate === 'payable' && (
+        <div className="mt-4">
+          <MarkPaidButton
+            bookingId={booking.id}
+            tripId={tripId}
+            netAmount={offlineNetAmount({
+              total_amount: booking.total_amount,
+              cashback_redemption_sar: pay.cashback_redemption_sar ?? null,
+            })}
+          />
+        </div>
+      )}
     </div>
   );
 }
