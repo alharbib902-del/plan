@@ -27,6 +27,7 @@
     "test:push-alert-status": "tsx lib/push/__tests__/push-alert-status.test.ts",
     "test:push-fcm-error": "tsx lib/push/__tests__/fcm-error.test.ts",
     "test:push-templates": "tsx lib/push/__tests__/push-templates.test.ts",
+    "test:push-retry-sweep": "tsx lib/push/__tests__/retry-sweep.test.ts",
     "test:notifications-whatsapp-provider": "tsx lib/notifications/__tests__/whatsapp-provider.test.ts",
     "test:notifications-whatsapp-templates": "tsx lib/notifications/__tests__/whatsapp-templates.test.ts",
     "test:operators-canary-stale": "tsx lib/admin/operators/__tests__/canary-stale.test.ts",
