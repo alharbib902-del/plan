@@ -53,6 +53,19 @@ const SWEEP_BATCH_LIMIT = 100;
 // dispatcher is what actually decides a claim is stale.
 const STALE_CLAIM_WINDOW_MS = 10 * 60 * 1000;
 
+// Mirrors claim_client_push_delivery's p_max_attempts default. A stale
+// 'claimed' row AT the cap is unrescuable (the RPC refuses the re-claim),
+// so selecting it would just re-propose a permanent no-op every sweep.
+const MAX_PUSH_ATTEMPTS = 5;
+
+type StaleClaimChain = {
+  lt: (col: string, value: string | number) => StaleClaimChain;
+  limit: (n: number) => Promise<{
+    data: unknown;
+    error: { message?: string } | null;
+  }>;
+};
+
 type LooseDbClient = {
   from: (table: string) => {
     select: (cols: string) => {
@@ -60,20 +73,7 @@ type LooseDbClient = {
         col: string,
         values: string[]
       ) => Promise<{ data: unknown; error: { message?: string } | null }>;
-      eq: (
-        col: string,
-        value: string
-      ) => {
-        lt: (
-          col: string,
-          value: string
-        ) => {
-          limit: (n: number) => Promise<{
-            data: unknown;
-            error: { message?: string } | null;
-          }>;
-        };
-      };
+      eq: (col: string, value: string) => StaleClaimChain;
     };
   };
 };
@@ -95,6 +95,7 @@ async function listStaleClaimedDeliveries(
       .select('id, client_id, leg_id, event_type')
       .eq('status', 'claimed')
       .lt('claimed_at', staleBefore)
+      .lt('attempt_count', MAX_PUSH_ATTEMPTS)
       .limit(SWEEP_BATCH_LIMIT);
     if (error) {
       console.error('[cron.push-retry-sweep] stale-claim read failed', error);
