@@ -29,6 +29,7 @@
     "test:push-templates": "tsx lib/push/__tests__/push-templates.test.ts",
     "test:notifications-whatsapp-provider": "tsx lib/notifications/__tests__/whatsapp-provider.test.ts",
     "test:notifications-whatsapp-templates": "tsx lib/notifications/__tests__/whatsapp-templates.test.ts",
+    "test:operators-accept-offer-operator-link": "tsx lib/operators/__tests__/accept-offer-operator-link.test.ts",
     "test:operators-canary-stale": "tsx lib/admin/operators/__tests__/canary-stale.test.ts",
     "test:clients-password-reset-token": "tsx lib/clients/__tests__/password-reset-token.test.ts",
     "test:clients-auth-session": "tsx lib/clients/__tests__/auth-session.test.ts",
