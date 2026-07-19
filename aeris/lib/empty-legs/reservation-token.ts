@@ -21,7 +21,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
  * Payload (v=1):
  *   { v: 1, leg_id, issued_at, expires_at, nonce }
  *
- * 10-minute TTL. Bound to one leg row. The DB-side counterpart
+ * 60-minute TTL. Bound to one leg row. The DB-side counterpart
  * is `empty_legs.reservation_token_hash` — set by
  * `reserve_empty_leg` to `sha256(rawToken)`. The customer's
  * "cancel my reservation" Server Action SHA256-hashes the
@@ -39,7 +39,10 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
  */
 
 const TOKEN_VERSION = 1;
-const DEFAULT_TTL_SECONDS = 10 * 60; // 10 minutes
+const DEFAULT_TTL_SECONDS = 60 * 60; // 60 minutes — matches the
+// DB-side `reserve_empty_leg` hold ceiling
+// (LEAST(now() + interval '60 minutes', departure_window_start))
+// so the HMAC token and the DB hold expire in lockstep.
 const NONCE_BYTES = 16;
 
 export class ReservationTokenEnvError extends Error {

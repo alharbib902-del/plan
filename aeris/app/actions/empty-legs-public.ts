@@ -9,6 +9,8 @@ import {
   mintReservationToken,
 } from '@/lib/empty-legs/reservation-token';
 import { verifyOptOutToken } from '@/lib/empty-legs/opt-out-token';
+import { notifyAdminOfEmptyLegReservation } from '@/lib/notifications/empty-leg-reservation-email';
+import { sendEmptyLegReservationWhatsApp } from '@/lib/notifications/empty-leg-reservation-whatsapp';
 import {
   publicCancelMyReservationSchema,
   publicConfirmOptOutSchema,
@@ -29,7 +31,7 @@ import type {
  *
  * Three actions:
  *   1. reserveEmptyLeg(leg_number, name, phone, opt_in)
- *      - Mints a 10-minute reservation token, hashes it,
+ *      - Mints a 60-minute reservation token, hashes it,
  *        calls `reserve_empty_leg` RPC, persists a
  *        `lead_inquiries` row + sets `empty_legs_opt_in =
  *        TRUE` only when `opt_in === true`.
@@ -68,6 +70,10 @@ export type PublicActionFailure = {
 
 function isPublicFlagDisabled(): boolean {
   return process.env.ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE !== 'true';
+}
+
+function siteUrl(): string {
+  return process.env.NEXT_PUBLIC_SITE_URL || 'https://aeris.sa';
 }
 
 function fieldErrorsFromZod(
@@ -148,7 +154,7 @@ export async function reserveEmptyLeg(input: {
     return { ok: false, error: 'leg_not_found' };
   }
 
-  // Mint a 10-minute reservation token. The DB stores only
+  // Mint a 60-minute reservation token. The DB stores only
   // the SHA256 hash; the raw token is returned to the
   // customer once and never persisted server-side beyond
   // this response.
@@ -241,6 +247,55 @@ export async function reserveEmptyLeg(input: {
     console.error(
       '[empty-legs.reserveEmptyLeg] lead_inquiries insert failed',
       leadErr
+    );
+  }
+
+  // P0 (2026-07): instant founder email + guest WhatsApp
+  // confirmation. Both are best-effort and INLINE (the
+  // outbox/match-drain cadence of 30 min is too slow for a
+  // 60-minute hold) — a notification failure must NEVER fail
+  // the reservation; the customer already holds the tokenized
+  // manage URL from this response.
+  const manageUrl = `${siteUrl()}/empty-legs/${v.leg_number}/reserved?token=${encodeURIComponent(minted.token)}`;
+  try {
+    await notifyAdminOfEmptyLegReservation({
+      leg_id: leg.id,
+      leg_number: leg.leg_number,
+      route_from: originLabel,
+      route_to: destinationLabel,
+      departure_window_start: leg.departure_window_start,
+      departure_window_end: leg.departure_window_end,
+      reserver_name: v.customer_name,
+      reserver_phone: v.customer_phone,
+      reserver_kind: 'guest',
+      reservation_expires_at: result.reservation_expires_at,
+    });
+  } catch (err) {
+    console.error(
+      '[empty-legs.reserveEmptyLeg] founder alert failed (non-fatal)',
+      err
+    );
+  }
+  try {
+    const wa = await sendEmptyLegReservationWhatsApp({
+      to_phone: v.customer_phone,
+      customer_name: v.customer_name,
+      leg_number: leg.leg_number,
+      route_from: originLabel,
+      route_to: destinationLabel,
+      manage_url: manageUrl,
+    });
+    if (!wa.ok) {
+      console.warn(
+        '[empty-legs.reserveEmptyLeg] guest WhatsApp skipped/failed (non-fatal)',
+        wa.reason,
+        wa.detail
+      );
+    }
+  } catch (err) {
+    console.error(
+      '[empty-legs.reserveEmptyLeg] guest WhatsApp threw (non-fatal)',
+      err
     );
   }
 
