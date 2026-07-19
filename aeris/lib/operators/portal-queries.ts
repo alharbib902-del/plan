@@ -75,13 +75,15 @@ export async function listOperatorBookings(
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) {
-      // Schema-drift fallback: log + return empty.
-      console.warn('[operators.portal-queries] listOperatorBookings (operator_id filter not available)', error.message);
+      // Degraded fallback: stay fail-safe (empty list) but make
+      // the failure observable — same console.error convention
+      // as listOperatorLegs above.
+      console.error('[operators.portal-queries] listOperatorBookings', error);
       return [];
     }
     return ((data ?? []) as unknown) as OperatorBookingPreview[];
   } catch (err) {
-    console.warn('[operators.portal-queries] listOperatorBookings caught', err);
+    console.error('[operators.portal-queries] listOperatorBookings caught', err);
     return [];
   }
 }
