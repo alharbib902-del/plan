@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendClientEmptyLegReservationConfirmationEmail } from '@/lib/notifications/client-empty-leg-email';
+import { notifyAdminOfEmptyLegReservation } from '@/lib/notifications/empty-leg-reservation-email';
 import {
   reserveEmptyLegSchema,
   cancelMyEmptyLegReservationSchema,
@@ -130,22 +131,26 @@ export async function runReserveEmptyLeg(
     | { ok: false; error: string };
   if (!result.ok) return { ok: false, error: result.error };
 
-  // Best-effort: confirmation email + capture leg_number for the
-  // caller's revalidate. The email template self-censors the
-  // price when ENABLE_EMPTY_LEGS_CLIENT_PRICING is off.
+  // Best-effort: confirmation email + instant founder alert +
+  // capture leg_number for the caller's revalidate. The email
+  // template self-censors the price when
+  // ENABLE_EMPTY_LEGS_CLIENT_PRICING is off. The founder alert
+  // (P0 2026-07) fires on this authenticated path too — the
+  // core is shared between the web Server Action and the
+  // mobile API — and carries no price.
   let legNumber: string | null = null;
   try {
     const admin = createAdminClient();
     const { data: legData } = await admin
       .from('empty_legs')
       .select(
-        'leg_number, departure_airport, arrival_airport, departure_airport_freeform_snapshot, arrival_airport_freeform_snapshot'
+        'leg_number, departure_airport, arrival_airport, departure_airport_freeform_snapshot, arrival_airport_freeform_snapshot, departure_window_start, departure_window_end'
       )
       .eq('id', parsed.data.leg_id)
       .maybeSingle();
     const { data: clientData } = await admin
       .from('clients')
-      .select('full_name, auth_email')
+      .select('full_name, auth_email, contact_phone')
       .eq('id', clientId)
       .maybeSingle();
 
@@ -155,30 +160,50 @@ export async function runReserveEmptyLeg(
       arrival_airport?: string | null;
       departure_airport_freeform_snapshot?: string | null;
       arrival_airport_freeform_snapshot?: string | null;
+      departure_window_start?: string | null;
+      departure_window_end?: string | null;
     } | null;
-    const cli = clientData as { full_name?: string; auth_email?: string } | null;
+    const cli = clientData as {
+      full_name?: string;
+      auth_email?: string;
+      contact_phone?: string;
+    } | null;
 
     if (leg?.leg_number) legNumber = leg.leg_number;
 
-    if (leg && cli && cli.auth_email) {
+    if (leg && cli) {
       const routeFrom =
         leg.departure_airport || leg.departure_airport_freeform_snapshot || '—';
       const routeTo =
         leg.arrival_airport || leg.arrival_airport_freeform_snapshot || '—';
-      await sendClientEmptyLegReservationConfirmationEmail({
-        to: cli.auth_email,
-        full_name: cli.full_name ?? '',
+      if (cli.auth_email) {
+        await sendClientEmptyLegReservationConfirmationEmail({
+          to: cli.auth_email,
+          full_name: cli.full_name ?? '',
+          leg_number: leg.leg_number ?? '',
+          route_from: routeFrom,
+          route_to: routeTo,
+          price_at_reservation: result.price_at_reservation,
+          expires_at: result.expires_at,
+          leg_url: `${siteUrl()}/me/empty-legs/${leg.leg_number}`,
+        });
+      }
+      await notifyAdminOfEmptyLegReservation({
+        leg_id: parsed.data.leg_id,
         leg_number: leg.leg_number ?? '',
         route_from: routeFrom,
         route_to: routeTo,
-        price_at_reservation: result.price_at_reservation,
-        expires_at: result.expires_at,
-        leg_url: `${siteUrl()}/me/empty-legs/${leg.leg_number}`,
+        departure_window_start: leg.departure_window_start ?? '',
+        departure_window_end: leg.departure_window_end ?? '',
+        reserver_name: cli.full_name ?? '',
+        reserver_phone: cli.contact_phone ?? '',
+        reserver_kind: 'client',
+        reservation_expires_at: result.expires_at,
       });
     }
   } catch (err) {
     console.error(
-      '[empty-legs-core.reserve] confirmation email/leg_number lookup failed (non-fatal)',
+      '[empty-legs-core.reserve] confirmation email/founder alert/leg_number lookup failed (non-fatal)',
       err
     );
   }

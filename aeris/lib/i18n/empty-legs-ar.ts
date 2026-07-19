@@ -311,7 +311,7 @@ export const emptyLegsAr = {
 
   publicReserveTitle: 'حجز الرحلة',
   publicReserveHint:
-    'الحجز صالح لمدة 10 دقائق. سنتواصل معك عبر واتساب لتأكيد الدفع.',
+    'الحجز صالح لمدة 60 دقيقة. سنتواصل معك عبر واتساب لتأكيد الدفع.',
   publicReserveFieldName: 'الاسم الكامل',
   publicReserveFieldPhone: 'رقم الواتساب',
   publicReserveOptInLabel:
@@ -328,7 +328,7 @@ export const emptyLegsAr = {
     'ستحجز بحسابك — وسيظهر الحجز في «حجوزاتي»:',
   publicReservedTitle: 'تم تثبيت الحجز',
   publicReservedHint:
-    'يجب التواصل معنا خلال 10 دقائق لتأكيد الدفع، وإلا سيُلغى الحجز تلقائياً.',
+    'يجب التواصل معنا خلال 60 دقيقة لتأكيد الدفع، وإلا سيُلغى الحجز تلقائياً.',
   publicReservedExpiresAt: 'ينتهي التحفّظ في',
   publicReservedCallUs: 'تواصل معنا عبر واتساب',
   publicReservedCancelButton: 'إلغاء حجزي',
@@ -360,10 +360,10 @@ export const emptyLegsAr = {
   pricingHiddenSubmit: 'أرسل طلب الحجز',
   pricingHiddenDetailNote: 'يُرسل لك السعر بعد تأكيد طلب الحجز.',
   pricingHiddenReserveHint:
-    'طلبك يحفظ المقعد مؤقتاً لمدة 10 دقائق — تواصل معنا عبر واتساب وسنرسل لك السعر وتفاصيل الدفع بعد تأكيد طلبك.',
+    'طلبك يحفظ المقعد مؤقتاً لمدة 60 دقيقة — تواصل معنا عبر واتساب وسنرسل لك السعر وتفاصيل الدفع بعد تأكيد طلبك.',
   pricingHiddenReservedTitle: 'تم استلام طلبك',
   pricingHiddenReservedHint:
-    'تواصل معنا عبر واتساب خلال 10 دقائق لتأكيد طلبك — بعد التأكيد نرسل لك السعر وتفاصيل الدفع، وإلا يُلغى الطلب تلقائياً.',
+    'تواصل معنا عبر واتساب خلال 60 دقيقة لتأكيد طلبك — بعد التأكيد نرسل لك السعر وتفاصيل الدفع، وإلا يُلغى الطلب تلقائياً.',
   pricingHiddenListSubtitle:
     'رحلات عودة بخصومات حصرية. أرسل طلب الحجز وسيؤكد لك فريق Aeris السعر والتفاصيل مباشرة.',
   pricingHiddenHomeSubtitle:

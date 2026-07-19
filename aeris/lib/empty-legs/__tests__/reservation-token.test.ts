@@ -82,7 +82,7 @@ test('reservation: mint+verify roundtrip', () => {
   assert.ok(minted.payload.expires_at > minted.payload.issued_at);
   assert.equal(
     minted.payload.expires_at - minted.payload.issued_at,
-    600 // 10 minutes
+    3600 // 60 minutes
   );
   const verified = verifyReservationToken(minted.token);
   assert.equal(verified.valid, true);
