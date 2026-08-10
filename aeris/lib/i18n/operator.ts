@@ -573,6 +573,66 @@ const dictionary = {
     en: 'Secret not configured — review the Vercel environment variables and retry.',
   },
 
+  // Offline settlement (admin "mark booking paid") — migration
+  // 20260702000001. Sits with the checkout-link strings because both live
+  // on the admin trip add-ons surface.
+  admin_payment_section_heading: {
+    ar: 'حالة السداد',
+    en: 'Payment status',
+  },
+  admin_payment_status_pending_offline: {
+    ar: 'بانتظار السداد (تسوية يدوية)',
+    en: 'Awaiting payment (offline settlement)',
+  },
+  admin_payment_status_pending: {
+    ar: 'بانتظار السداد',
+    en: 'Awaiting payment',
+  },
+  admin_payment_status_paid: {
+    ar: 'مدفوع',
+    en: 'Paid',
+  },
+  admin_payment_status_refunded: {
+    ar: 'مسترد',
+    en: 'Refunded',
+  },
+  admin_payment_net_amount_label: {
+    ar: 'المبلغ المستحق (بعد خصم الكاش باك)',
+    en: 'Net payable (after cashback redemption)',
+  },
+  admin_mark_paid_reference_label: {
+    ar: 'مرجع التحويل البنكي (اختياري)',
+    en: 'Bank-transfer reference (optional)',
+  },
+  admin_mark_paid_button: {
+    ar: 'تأكيد استلام المبلغ',
+    en: 'Confirm payment received',
+  },
+  admin_mark_paid_confirm_button: {
+    ar: 'اضغط مرة أخرى للتأكيد النهائي',
+    en: 'Click again to finalize',
+  },
+  admin_mark_paid_hint: {
+    ar: 'يسجّل تسوية يدوية في سجل المدفوعات ويحوّل الحجز إلى «مدفوع» — يفعّل الكاش باك وتقييم فئة Privilege ومكافآت الإحالة. لا يمكن التراجع.',
+    en: 'Records an offline settlement in the payments ledger and flips the booking to paid — cashback, Privilege tier evaluation, and referral rewards follow. Irreversible.',
+  },
+  admin_mark_paid_success: {
+    ar: 'تم تأكيد السداد — الحجز الآن «مدفوع».',
+    en: 'Payment confirmed — the booking is now paid.',
+  },
+  admin_mark_paid_already: {
+    ar: 'الحجز مدفوع مسبقاً — لا حاجة لأي إجراء.',
+    en: 'Booking already paid — nothing to do.',
+  },
+  err_already_paid: {
+    ar: 'الحجز مدفوع مسبقاً.',
+    en: 'Booking already paid.',
+  },
+  err_booking_refunded: {
+    ar: 'لا يمكن تأكيد السداد لحجز مسترد.',
+    en: 'A refunded booking cannot be marked paid.',
+  },
+
   // ──────────────────────────────────────────────────────────────────────
   // Phase 6.2 PR 2b — additional UI strings (admin + customer + operator)
   // ──────────────────────────────────────────────────────────────────────
