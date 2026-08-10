@@ -91,6 +91,12 @@ export function ReservationActions({
   }
 
   function handleRelease() {
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(emptyLegsAr.reservedReleaseConfirm)
+    ) {
+      return;
+    }
     setError(null);
     startTransition(async () => {
       const result = await adminReleaseReservation({ leg_id: legId });

@@ -35,8 +35,9 @@ export function OperatorForgotPasswordForm() {
         <OperatorBanner kind="error">{operatorErrorMessage(errorCode)}</OperatorBanner>
       ) : null}
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.label}</label>
+        <label htmlFor="email" className="font-ar mb-1 block text-xs text-ink-muted">{ar.label}</label>
         <input
+          id="email"
           name="email"
           type="email"
           dir="ltr"

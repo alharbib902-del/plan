@@ -44,8 +44,9 @@ export function OperatorOtpForm() {
       ) : null}
       <p className="font-ar text-sm text-ink-muted">{ar.subtitle}</p>
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.email}</label>
+        <label htmlFor="email" className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.email}</label>
         <input
+          id="email"
           name="email"
           type="email"
           dir="ltr"
@@ -54,8 +55,9 @@ export function OperatorOtpForm() {
         />
       </div>
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.code}</label>
+        <label htmlFor="code" className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.code}</label>
         <input
+          id="code"
           name="code"
           type="text"
           inputMode="numeric"

@@ -41,8 +41,9 @@ export function OperatorLoginForm() {
       ) : null}
 
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.email}</label>
+        <label htmlFor="email" className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.email}</label>
         <input
+          id="email"
           name="email"
           type="email"
           dir="ltr"
@@ -51,8 +52,9 @@ export function OperatorLoginForm() {
         />
       </div>
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.password}</label>
+        <label htmlFor="password" className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.password}</label>
         <PasswordInput
+          id="password"
           name="password"
           dir="ltr"
           required

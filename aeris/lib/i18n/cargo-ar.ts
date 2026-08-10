@@ -220,6 +220,7 @@ export const cargoAr = {
   meDetailOfferStatus: 'الحالة',
   meDetailOfferNotes: 'ملاحظات المشغّل',
   meDetailOfferAcceptCta: 'قبول العرض',
+  meDetailOfferAccepting: 'جارٍ القبول…',
   meDetailOfferDeclineCta: 'رفض',
   meDetailRequestCancelCta: 'إلغاء الطلب',
   meDetailReasonLabel: 'سبب (اختياري)',

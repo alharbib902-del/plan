@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Menu, X } from 'lucide-react';
 
 interface NavLink {
@@ -19,6 +19,7 @@ interface NavLink {
  */
 export function OperatorMobileNav({ links }: { links: NavLink[] }) {
   const [open, setOpen] = useState(false);
+  const panelId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -26,7 +27,12 @@ export function OperatorMobileNav({ links }: { links: NavLink[] }) {
       if (e.key === 'Escape') setOpen(false);
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    // Lock background scroll while the overlay panel is open.
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = '';
+    };
   }, [open]);
 
   return (
@@ -35,6 +41,7 @@ export function OperatorMobileNav({ links }: { links: NavLink[] }) {
         type="button"
         aria-label={open ? 'إغلاق القائمة' : 'فتح القائمة'}
         aria-expanded={open}
+        aria-controls={panelId}
         onClick={() => setOpen((v) => !v)}
         className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-border text-gold-light"
       >
@@ -42,7 +49,7 @@ export function OperatorMobileNav({ links }: { links: NavLink[] }) {
       </button>
 
       {open && (
-        <div className="absolute inset-x-0 top-full border-t border-border bg-navy-secondary/95 backdrop-blur-luxury">
+        <div id={panelId} className="absolute inset-x-0 top-full border-t border-border bg-navy-secondary/95 backdrop-blur-luxury">
           <nav className="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-4 sm:px-6 lg:px-8">
             {links.map((item) => (
               <Link
