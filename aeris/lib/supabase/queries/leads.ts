@@ -7,7 +7,6 @@ import type {
   LeadInquiryRow,
   LeadStatus,
 } from '@/types/database';
-import { LEAD_STATUSES } from '@/lib/validators/admin';
 
 const TABLE = 'lead_inquiries';
 
@@ -54,29 +53,37 @@ export async function listLeads(
 export async function countLeadsByStatus(): Promise<LeadStatusCounts> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from(TABLE)
-    .select('status', { count: 'exact', head: false });
-
-  if (error) {
-    console.error('[leads] countLeadsByStatus failed', error);
-    throw new Error(`countLeadsByStatus failed: ${error.message}`);
-  }
-
-  const counts: LeadStatusCounts = {
-    total: 0,
-    new: 0,
-    contacted: 0,
-    quoted: 0,
-    converted: 0,
-    closed: 0,
+  // Count-only head queries (one per chip, in parallel) — the DB
+  // returns counts instead of shipping every row to tally in JS.
+  const countFor = async (status: LeadStatus | null): Promise<number> => {
+    let query = client.from(TABLE).select('*', { count: 'exact', head: true });
+    if (status) query = query.eq('status', status);
+    const { count, error } = await query;
+    if (error) {
+      console.error('[leads] countLeadsByStatus failed', error);
+      throw new Error(`countLeadsByStatus failed: ${error.message}`);
+    }
+    return count ?? 0;
   };
-  for (const row of data ?? []) {
-    counts.total += 1;
-    const s = (row as { status: LeadStatus }).status;
-    if (LEAD_STATUSES.includes(s)) counts[s] += 1;
-  }
-  return counts;
+
+  const [total, newCount, contacted, quoted, converted, closed] =
+    await Promise.all([
+      countFor(null),
+      countFor('new'),
+      countFor('contacted'),
+      countFor('quoted'),
+      countFor('converted'),
+      countFor('closed'),
+    ]);
+
+  return {
+    total,
+    new: newCount,
+    contacted,
+    quoted,
+    converted,
+    closed,
+  };
 }
 
 export async function getLeadById(id: string): Promise<LeadInquiryRow | null> {

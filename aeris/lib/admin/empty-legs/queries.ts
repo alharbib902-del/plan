@@ -69,31 +69,39 @@ export async function listEmptyLegs(
 export async function countEmptyLegsByStatus(): Promise<EmptyLegStatusCounts> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from(TABLE)
-    .select('status', { count: 'exact', head: false });
-
-  if (error) {
-    console.error('[empty-legs] countEmptyLegsByStatus failed', error);
-    throw new Error(`countEmptyLegsByStatus failed: ${error.message}`);
-  }
-
-  const counts: EmptyLegStatusCounts = {
-    total: 0,
-    available: 0,
-    reserved: 0,
-    sold: 0,
-    expired: 0,
-    cancelled: 0,
-    open: 0,
+  // Count-only head queries (one per chip, in parallel) — the DB
+  // returns counts instead of shipping every row to tally in JS.
+  // `open` is the derived available+reserved bucket (not a stored status).
+  const countFor = async (status: EmptyLegStatus | null): Promise<number> => {
+    let query = client.from(TABLE).select('*', { count: 'exact', head: true });
+    if (status) query = query.eq('status', status);
+    const { count, error } = await query;
+    if (error) {
+      console.error('[empty-legs] countEmptyLegsByStatus failed', error);
+      throw new Error(`countEmptyLegsByStatus failed: ${error.message}`);
+    }
+    return count ?? 0;
   };
-  for (const row of data ?? []) {
-    counts.total += 1;
-    const s = (row as { status: EmptyLegStatus }).status;
-    if ((EMPTY_LEG_STATUSES as readonly string[]).includes(s)) counts[s] += 1;
-    if (s === 'available' || s === 'reserved') counts.open += 1;
-  }
-  return counts;
+
+  const [total, available, reserved, sold, expired, cancelled] =
+    await Promise.all([
+      countFor(null),
+      countFor('available'),
+      countFor('reserved'),
+      countFor('sold'),
+      countFor('expired'),
+      countFor('cancelled'),
+    ]);
+
+  return {
+    total,
+    available,
+    reserved,
+    sold,
+    expired,
+    cancelled,
+    open: available + reserved,
+  };
 }
 
 export async function getEmptyLegById(

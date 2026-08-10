@@ -249,9 +249,11 @@ export function AirportCombobox({
           </div>
         )}
 
+        {/* Plain button menu, not an ARIA listbox: options are real
+            <button>s reachable by Tab; a listbox role without arrow-key +
+            aria-activedescendant support would mislead screen readers. */}
         {open && mode === 'iata' && (
           <div
-            role="listbox"
             className="absolute inset-x-0 top-full z-20 mt-1 max-h-80 overflow-hidden rounded-md border border-border bg-navy-card/95 shadow-luxury backdrop-blur"
           >
             <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
@@ -281,10 +283,11 @@ export function AirportCombobox({
                     {group.items.map((a) => {
                       const isSelected = a.iata_code === selectedIata;
                       return (
-                        <li key={a.iata_code} role="option" aria-selected={isSelected}>
+                        <li key={a.iata_code}>
                           <button
                             type="button"
                             onClick={() => onPickAirport(a)}
+                            aria-current={isSelected || undefined}
                             className={cn(
                               'font-ar flex w-full items-baseline justify-between gap-3 px-3 py-2 text-start text-sm text-ink transition-colors hover:bg-gold/10',
                               isSelected && 'bg-gold/10 text-gold-light'

@@ -64,29 +64,32 @@ export async function listTrips(
 export async function countTripsByStatus(): Promise<TripStatusCounts> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from(TABLE)
-    .select('status', { count: 'exact', head: false });
-
-  if (error) {
-    console.error('[trips] countTripsByStatus failed', error);
-    throw new Error(`countTripsByStatus failed: ${error.message}`);
-  }
-
-  const counts: TripStatusCounts = {
-    total: 0,
-    pending: 0,
-    distributed: 0,
-    offered: 0,
-    booked: 0,
-    cancelled: 0,
+  // Count-only head queries (one per chip, in parallel) — the DB
+  // returns counts instead of shipping every row to tally in JS.
+  const countFor = async (
+    status: TripRequestStatus | null
+  ): Promise<number> => {
+    let query = client.from(TABLE).select('*', { count: 'exact', head: true });
+    if (status) query = query.eq('status', status);
+    const { count, error } = await query;
+    if (error) {
+      console.error('[trips] countTripsByStatus failed', error);
+      throw new Error(`countTripsByStatus failed: ${error.message}`);
+    }
+    return count ?? 0;
   };
-  for (const row of data ?? []) {
-    counts.total += 1;
-    const s = (row as { status: TripRequestStatus }).status;
-    if ((TRIP_STATUSES as readonly string[]).includes(s)) counts[s] += 1;
-  }
-  return counts;
+
+  const [total, pending, distributed, offered, booked, cancelled] =
+    await Promise.all([
+      countFor(null),
+      countFor('pending'),
+      countFor('distributed'),
+      countFor('offered'),
+      countFor('booked'),
+      countFor('cancelled'),
+    ]);
+
+  return { total, pending, distributed, offered, booked, cancelled };
 }
 
 export async function getTripById(id: string): Promise<TripRequestRow | null> {

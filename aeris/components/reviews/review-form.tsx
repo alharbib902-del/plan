@@ -20,7 +20,7 @@ function StarPicker({
 }) {
   return (
     <div>
-      <span className="block text-sm font-medium text-navy">{label}</span>
+      <span className="block text-sm font-medium text-ink-primary">{label}</span>
       <input type="hidden" name={name} value={value || ''} />
       <div className="mt-1 flex flex-row-reverse justify-end gap-1">
         {[1, 2, 3, 4, 5].map((star) => (
@@ -33,7 +33,7 @@ function StarPicker({
             className={
               star <= value
                 ? 'text-2xl text-gold'
-                : 'text-2xl text-muted hover:text-gold-light'
+                : 'text-2xl text-ink-muted hover:text-gold-light'
             }
           >
             ★
@@ -68,11 +68,11 @@ export function ReviewForm({ bookingId, label }: { bookingId: string; label?: st
     <form action={formAction} className="space-y-4" dir="rtl">
       <input type="hidden" name="booking_id" value={bookingId} />
 
-      {label ? <p className="text-sm text-muted">{label}</p> : null}
+      {label ? <p className="text-sm text-ink-muted">{label}</p> : null}
 
       <StarPicker name="overall_rating" label={clientsAr.reviewFormOverall} value={overall} onChange={setOverall} />
       {state.errors?.overall_rating ? (
-        <p className="text-sm text-red-600">{state.errors.overall_rating[0]}</p>
+        <p className="text-sm text-rose-300">{state.errors.overall_rating[0]}</p>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -82,22 +82,22 @@ export function ReviewForm({ bookingId, label }: { bookingId: string; label?: st
       </div>
 
       <div>
-        <label htmlFor={`comment-${bookingId}`} className="block text-sm font-medium text-navy">
+        <label htmlFor={`comment-${bookingId}`} className="block text-sm font-medium text-ink-primary">
           {clientsAr.reviewFormCommentLabel}
         </label>
         <textarea
           id={`comment-${bookingId}`}
           name="comment"
           rows={3}
-          className="mt-1 w-full rounded-md border border-secondary px-3 py-2 text-navy"
+          className="mt-1 w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-ink-primary"
         />
         {state.errors?.comment ? (
-          <p className="mt-1 text-sm text-red-600">{state.errors.comment[0]}</p>
+          <p className="mt-1 text-sm text-rose-300">{state.errors.comment[0]}</p>
         ) : null}
       </div>
 
       {state.message ? (
-        <p className={state.ok ? 'text-sm text-green-600' : 'text-sm text-red-600'}>
+        <p className={state.ok ? 'text-sm text-emerald-300' : 'text-sm text-rose-300'}>
           {state.message}
         </p>
       ) : null}
