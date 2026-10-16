@@ -20,9 +20,9 @@ function SubmitButton() {
   );
 }
 
-const inputCls = 'mt-1 w-full rounded-md border border-secondary px-3 py-2 text-navy';
-const labelCls = 'block text-sm font-medium text-navy';
-const errCls = 'mt-1 text-sm text-red-600';
+const inputCls = 'mt-1 w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-ink placeholder:text-ink-muted focus:border-gold/50';
+const labelCls = 'block text-sm font-medium text-ink';
+const errCls = 'mt-1 text-sm text-rose-300';
 
 export function EmptyLegAlertForm() {
   const [state, formAction] = useActionState(createAlertAction, initialState);
@@ -60,7 +60,7 @@ export function EmptyLegAlertForm() {
       </div>
 
       {state.message ? (
-        <p className={state.ok ? 'text-sm text-green-600' : 'text-sm text-red-600'}>{state.message}</p>
+        <p className={state.ok ? 'text-sm text-emerald-300' : 'text-sm text-rose-300'}>{state.message}</p>
       ) : null}
 
       <SubmitButton />

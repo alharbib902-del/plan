@@ -14,7 +14,7 @@ function SubmitButton() {
     <button
       type="submit"
       disabled={pending}
-      className="rounded bg-navy px-3 py-1 text-sm text-white transition hover:bg-navy-tertiary disabled:opacity-50"
+      className="rounded border border-gold/40 bg-gold/15 px-3 py-1 text-sm text-gold-light transition hover:bg-gold/25 disabled:opacity-50"
     >
       {pending ? supportAr.updating : supportAr.submitUpdate}
     </button>
@@ -39,7 +39,7 @@ export function StatusForm({
         <select
           name="status"
           defaultValue={currentStatus}
-          className="rounded border border-secondary px-2 py-1 text-sm text-navy"
+          className="rounded border border-border bg-navy-secondary/60 px-2 py-1 text-sm text-ink placeholder:text-ink-muted focus:border-gold/50"
         >
           {SUPPORT_STATUSES.map((status) => (
             <option key={status} value={status}>
@@ -49,7 +49,7 @@ export function StatusForm({
         </select>
         <SubmitButton />
         {state.message ? (
-          <span className={state.ok ? 'text-sm text-green-600' : 'text-sm text-red-600'}>
+          <span className={state.ok ? 'text-sm text-emerald-300' : 'text-sm text-rose-300'}>
             {state.message}
           </span>
         ) : null}
@@ -59,7 +59,7 @@ export function StatusForm({
         rows={2}
         defaultValue={currentResolution ?? ''}
         placeholder={supportAr.resolutionPlaceholder}
-        className="w-full rounded border border-secondary px-2 py-1 text-sm text-navy"
+        className="w-full rounded border border-border bg-navy-secondary/60 px-2 py-1 text-sm text-ink placeholder:text-ink-muted focus:border-gold/50"
       />
     </form>
   );

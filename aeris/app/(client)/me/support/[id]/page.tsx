@@ -35,23 +35,23 @@ export default async function SupportTicketPage({
   return (
     <div dir="rtl" className="space-y-6">
       <div>
-        <Link href="/me/support" className="text-sm text-gold-dark hover:underline">
+        <Link href="/me/support" className="text-sm text-gold-light hover:underline">
           {supportAr.backToTickets}
         </Link>
       </div>
 
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-navy">{ticket.subject}</h1>
-        <span className="text-sm text-muted">{statusLabel(ticket.status)}</span>
+        <h1 className="text-2xl font-semibold text-ink">{ticket.subject}</h1>
+        <span className="text-sm text-ink-secondary">{statusLabel(ticket.status)}</span>
       </div>
 
       <TicketThread messages={messages} />
 
       {isClosed ? (
-        <p className="text-muted">{supportAr.ticketClosed}</p>
+        <p className="text-ink-secondary">{supportAr.ticketClosed}</p>
       ) : (
-        <div className="rounded-lg border border-secondary bg-white p-4">
-          <h2 className="mb-3 text-lg font-medium text-navy">{supportAr.addReplyTitle}</h2>
+        <div className="rounded-lg border border-border bg-navy-card/40 p-4">
+          <h2 className="mb-3 text-lg font-medium text-ink">{supportAr.addReplyTitle}</h2>
           <ReplyForm ticketId={ticket.id} action={replyToTicketAction} />
         </div>
       )}

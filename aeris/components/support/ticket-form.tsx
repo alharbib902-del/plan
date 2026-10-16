@@ -27,14 +27,14 @@ export function TicketForm() {
   return (
     <form action={formAction} className="space-y-4" dir="rtl">
       <div>
-        <label htmlFor="category" className="block text-sm font-medium text-navy">
+        <label htmlFor="category" className="block text-sm font-medium text-ink">
           {supportAr.fieldCategory}
         </label>
         <select
           id="category"
           name="category"
           defaultValue="other"
-          className="mt-1 w-full rounded-md border border-secondary px-3 py-2 text-navy"
+          className="mt-1 w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-ink placeholder:text-ink-muted focus:border-gold/50"
         >
           {SUPPORT_CATEGORIES.map((category) => (
             <option key={category} value={category}>
@@ -43,12 +43,12 @@ export function TicketForm() {
           ))}
         </select>
         {state.errors?.category ? (
-          <p className="mt-1 text-sm text-red-600">{state.errors.category[0]}</p>
+          <p className="mt-1 text-sm text-rose-300">{state.errors.category[0]}</p>
         ) : null}
       </div>
 
       <div>
-        <label htmlFor="subject" className="block text-sm font-medium text-navy">
+        <label htmlFor="subject" className="block text-sm font-medium text-ink">
           {supportAr.fieldSubject}
         </label>
         <input
@@ -56,15 +56,15 @@ export function TicketForm() {
           name="subject"
           type="text"
           required
-          className="mt-1 w-full rounded-md border border-secondary px-3 py-2 text-navy"
+          className="mt-1 w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-ink placeholder:text-ink-muted focus:border-gold/50"
         />
         {state.errors?.subject ? (
-          <p className="mt-1 text-sm text-red-600">{state.errors.subject[0]}</p>
+          <p className="mt-1 text-sm text-rose-300">{state.errors.subject[0]}</p>
         ) : null}
       </div>
 
       <div>
-        <label htmlFor="description" className="block text-sm font-medium text-navy">
+        <label htmlFor="description" className="block text-sm font-medium text-ink">
           {supportAr.fieldDescription}
         </label>
         <textarea
@@ -72,15 +72,15 @@ export function TicketForm() {
           name="description"
           rows={4}
           required
-          className="mt-1 w-full rounded-md border border-secondary px-3 py-2 text-navy"
+          className="mt-1 w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-ink placeholder:text-ink-muted focus:border-gold/50"
         />
         {state.errors?.description ? (
-          <p className="mt-1 text-sm text-red-600">{state.errors.description[0]}</p>
+          <p className="mt-1 text-sm text-rose-300">{state.errors.description[0]}</p>
         ) : null}
       </div>
 
       {state.message ? (
-        <p className={state.ok ? 'text-sm text-green-600' : 'text-sm text-red-600'}>
+        <p className={state.ok ? 'text-sm text-emerald-300' : 'text-sm text-rose-300'}>
           {state.message}
         </p>
       ) : null}

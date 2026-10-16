@@ -21,14 +21,37 @@
  *   6.  Empty string after trim still produces well-formed
  *       output (defence — caller should guard, but helper
  *       must not crash)
+ *   13-15. `datetimeLocalToRiyadhInstant` normalises to UTC
+ *       and returns null for unparseable / already-zoned input
+ *   16. Regression guard: the operator offer action converts
+ *       departure_eta via the Riyadh helper, never new Date()
  */
 
 import { strict as assert } from 'node:assert';
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
+  datetimeLocalToRiyadhInstant,
   datetimeLocalToRiyadhIso,
   riyadhIsoToDatetimeLocal,
 } from '../datetime-local';
+
+const here = dirname(fileURLToPath(import.meta.url));
+// here = aeris/lib/utils/__tests__
+const OFFER_ACTION = join(
+  here,
+  '..',
+  '..',
+  '..',
+  'app',
+  'operator',
+  'offer',
+  '[token]',
+  'actions.ts'
+);
 
 let passed = 0;
 let failed = 0;
@@ -146,6 +169,43 @@ test('12. invalid input returns empty string', () => {
   assert.equal(
     riyadhIsoToDatetimeLocal(undefined as unknown as string),
     ''
+  );
+});
+
+test('13. instant: Riyadh 14:00 → 11:00Z (independent of process TZ)', () => {
+  assert.equal(
+    datetimeLocalToRiyadhInstant('2026-08-15T14:00'),
+    '2026-08-15T11:00:00.000Z'
+  );
+});
+
+test('14. instant: Riyadh 01:30 crosses the day boundary backwards', () => {
+  assert.equal(
+    datetimeLocalToRiyadhInstant('2026-08-16T01:30'),
+    '2026-08-15T22:30:00.000Z'
+  );
+});
+
+test('15. instant: unparseable input returns null', () => {
+  assert.equal(datetimeLocalToRiyadhInstant(''), null);
+  assert.equal(datetimeLocalToRiyadhInstant('not-a-date'), null);
+  // A value that already carries a zone is not a datetime-local
+  // value; the helper must reject it rather than double-offset it.
+  assert.equal(datetimeLocalToRiyadhInstant('2026-08-15T11:00:00Z'), null);
+});
+
+test('16. regression: operator offer action pins departure_eta to Riyadh', () => {
+  // On Vercel the process zone is UTC, so `new Date(localValue)`
+  // stored an operator's 14:00 as 14:00Z (17:00 Riyadh).
+  const src = readFileSync(OFFER_ACTION, 'utf8');
+  assert.ok(
+    src.includes('datetimeLocalToRiyadhInstant(') &&
+      src.includes('parsed.data.departure_eta'),
+    'offer action must convert departure_eta via datetimeLocalToRiyadhInstant'
+  );
+  assert.ok(
+    !/new Date\(\s*parsed\.data\.departure_eta\s*\)/.test(src),
+    'offer action must not parse departure_eta with new Date()'
   );
 });
 

@@ -29,48 +29,48 @@ export default async function EmptyLegAlertsPage() {
   return (
     <div dir="rtl" className="space-y-8">
       <div>
-        <Link href="/me/empty-legs" className="text-sm text-gold-dark hover:underline">
+        <Link href="/me/empty-legs" className="text-sm text-gold-light hover:underline">
           {clientsAr.emptyLegsPortalTitle}
         </Link>
       </div>
 
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold text-navy">{emptyLegsAr.alertsTitle}</h1>
-        <p className="text-sm text-muted">{emptyLegsAr.alertsIntro}</p>
+        <h1 className="text-2xl font-semibold text-ink">{emptyLegsAr.alertsTitle}</h1>
+        <p className="text-sm text-ink-secondary">{emptyLegsAr.alertsIntro}</p>
       </header>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-medium text-navy">{emptyLegsAr.alertsNewTitle}</h2>
-        <div className="rounded-lg border border-secondary bg-white p-4">
+        <h2 className="text-lg font-medium text-ink">{emptyLegsAr.alertsNewTitle}</h2>
+        <div className="rounded-lg border border-border bg-navy-card/40 p-4">
           <EmptyLegAlertForm />
         </div>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-medium text-navy">{emptyLegsAr.alertsMyTitle}</h2>
+        <h2 className="text-lg font-medium text-ink">{emptyLegsAr.alertsMyTitle}</h2>
         {alerts.length === 0 ? (
-          <p className="text-muted">{emptyLegsAr.alertsEmpty}</p>
+          <p className="text-ink-secondary">{emptyLegsAr.alertsEmpty}</p>
         ) : (
           <ul className="space-y-3">
             {alerts.map((alert) => (
               <li
                 key={alert.id}
-                className="rounded-lg border border-secondary bg-white p-4"
+                className="rounded-lg border border-border bg-navy-card/40 p-4"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium text-navy">
+                  <span className="font-medium text-ink">
                     {alert.origin_iata} → {alert.destination_iata}
                   </span>
-                  <span className="text-sm text-muted">{priceLabel(alert.max_price_sar)}</span>
+                  <span className="text-sm text-ink-secondary">{priceLabel(alert.max_price_sar)}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-3 text-xs">
-                  <span className="text-muted">
+                  <span className="text-ink-secondary">
                     {alert.date_from || alert.date_to ? (
                       <span>
                         {alert.date_from ?? '…'} — {alert.date_to ?? '…'} ·{' '}
                       </span>
                     ) : null}
-                    <span className={alert.is_active ? 'text-green-600' : 'text-muted'}>
+                    <span className={alert.is_active ? 'text-emerald-300' : 'text-ink-secondary'}>
                       {alert.is_active ? emptyLegsAr.alertActiveLabel : emptyLegsAr.alertPausedLabel}
                     </span>
                   </span>
@@ -78,13 +78,13 @@ export default async function EmptyLegAlertsPage() {
                     <form action={toggleAlert}>
                       <input type="hidden" name="alert_id" value={alert.id} />
                       <input type="hidden" name="active" value={(!alert.is_active).toString()} />
-                      <button type="submit" className="text-gold-dark hover:underline">
+                      <button type="submit" className="text-gold-light hover:underline">
                         {alert.is_active ? emptyLegsAr.alertPause : emptyLegsAr.alertResume}
                       </button>
                     </form>
                     <form action={deleteAlert}>
                       <input type="hidden" name="alert_id" value={alert.id} />
-                      <button type="submit" className="text-red-600 hover:underline">
+                      <button type="submit" className="text-rose-300 hover:underline">
                         {emptyLegsAr.alertDelete}
                       </button>
                     </form>

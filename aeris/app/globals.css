@@ -6,6 +6,9 @@
 @tailwind utilities;
 
 :root {
+  /* The UI is dark-only: tells the browser to render native controls
+     (date/time pickers, <select> popups, scrollbars) dark as well. */
+  color-scheme: dark;
   --bg-primary: #0A1628;
   --bg-secondary: #050B14;
   --bg-tertiary: #0F1F35;

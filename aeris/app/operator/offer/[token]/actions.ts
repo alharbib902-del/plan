@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { verifyOperatorToken } from '@/lib/operator/token';
+import { datetimeLocalToRiyadhInstant } from '@/lib/utils/datetime-local';
 import { operatorOfferSchema } from '@/lib/validators/operator-offer';
 import { submitOperatorOfferRpc } from '@/lib/supabase/queries/phase4-offers';
 import { submitPhase5OperatorOfferRpc } from '@/lib/supabase/queries/phase5-offers';
@@ -99,11 +100,12 @@ export async function submitOperatorOffer(
   }
 
   // 3. Convert the local-time string from <input type="datetime-local">
-  //    to an ISO string. Same conversion path for both versions.
-  let departureEtaIso: string;
-  try {
-    departureEtaIso = new Date(parsed.data.departure_eta).toISOString();
-  } catch {
+  //    to an ISO instant pinned to Asia/Riyadh. Same conversion path
+  //    for both versions.
+  const departureEtaIso = datetimeLocalToRiyadhInstant(
+    parsed.data.departure_eta
+  );
+  if (departureEtaIso === null) {
     return { ok: false, error: 'invalid_input' };
   }
 

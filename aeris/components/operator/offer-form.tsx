@@ -9,6 +9,7 @@ import {
   type AircraftCategoryValue,
 } from '@/lib/validators/promote-lead';
 import { cn } from '@/lib/utils/cn';
+import { datetimeLocalToRiyadhInstant } from '@/lib/utils/datetime-local';
 import { AERIS_CONTACT } from '@/lib/config/contact';
 import {
   aircraftCategoryLabel,
@@ -384,8 +385,7 @@ function isAircraftCategory(value: FormDataEntryValue | null): value is Aircraft
 }
 
 function toIsoOrEmpty(localDateTime: string): string {
-  const d = new Date(localDateTime);
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  return datetimeLocalToRiyadhInstant(localDateTime) ?? '';
 }
 
 function SuccessPanel({

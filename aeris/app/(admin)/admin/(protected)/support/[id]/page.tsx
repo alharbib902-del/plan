@@ -38,19 +38,19 @@ export default async function AdminSupportTicketPage({
   return (
     <div dir="rtl" className="space-y-6">
       <div>
-        <Link href="/admin/support" className="text-sm text-gold-dark hover:underline">
+        <Link href="/admin/support" className="text-sm text-gold-light hover:underline">
           {supportAr.backToTickets}
         </Link>
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-navy">{ticket.subject}</h1>
-          <p className="mt-1 text-sm text-muted">
+          <h1 className="text-2xl font-semibold text-ink">{ticket.subject}</h1>
+          <p className="mt-1 text-sm text-ink-secondary">
             {ticket.ticket_number} · {categoryLabel(ticket.category)}
           </p>
         </div>
-        <div className="rounded-lg border border-secondary bg-white p-3">
+        <div className="rounded-lg border border-border bg-navy-card/40 p-3">
           <StatusForm
             ticketId={ticket.id}
             currentStatus={ticket.status}
@@ -61,8 +61,8 @@ export default async function AdminSupportTicketPage({
 
       <TicketThread messages={messages} />
 
-      <div className="rounded-lg border border-secondary bg-white p-4">
-        <h2 className="mb-3 text-lg font-medium text-navy">{supportAr.adminReplyTitle}</h2>
+      <div className="rounded-lg border border-border bg-navy-card/40 p-4">
+        <h2 className="mb-3 text-lg font-medium text-ink">{supportAr.adminReplyTitle}</h2>
         <ReplyForm ticketId={ticket.id} action={adminReplyToTicketAction} />
       </div>
     </div>

@@ -43,6 +43,10 @@ const config: Config = {
         },
         ink: {
           DEFAULT: '#FAFAFA',
+          // `text-ink-primary` is used across the portals; without this
+          // key Tailwind emitted no rule and the text inherited its
+          // parent's colour instead.
+          primary: '#FAFAFA',
           secondary: '#A8B2C1',
           muted: '#6B7A8F',
         },

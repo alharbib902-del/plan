@@ -43,14 +43,14 @@ export default async function AdminSupportPage() {
 
   return (
     <div dir="rtl" className="space-y-4">
-      <h1 className="text-2xl font-semibold text-navy">{supportAr.adminTicketsTitle}</h1>
+      <h1 className="text-2xl font-semibold text-ink">{supportAr.adminTicketsTitle}</h1>
       {tickets.length === 0 ? (
-        <p className="text-muted">{supportAr.noTicketsAdmin}</p>
+        <p className="text-ink-secondary">{supportAr.noTicketsAdmin}</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse bg-white text-sm">
+          <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b text-right text-muted">
+              <tr className="border-b border-border text-right text-ink-muted">
                 <th className="p-2">{supportAr.thNumber}</th>
                 <th className="p-2">{supportAr.thSubject}</th>
                 <th className="p-2">{supportAr.thCategory}</th>
@@ -61,16 +61,16 @@ export default async function AdminSupportPage() {
             </thead>
             <tbody>
               {tickets.map((ticket) => (
-                <tr key={ticket.id} className="border-b">
-                  <td className="p-2 text-navy">{ticket.ticket_number}</td>
-                  <td className="p-2 text-navy">{ticket.subject}</td>
-                  <td className="p-2 text-navy">{categoryLabel(ticket.category)}</td>
-                  <td className="p-2 text-navy">{statusLabel(ticket.status)}</td>
-                  <td className="p-2 text-muted">{formatDate(ticket.updated_at)}</td>
+                <tr key={ticket.id} className="border-b border-border">
+                  <td className="p-2 text-ink">{ticket.ticket_number}</td>
+                  <td className="p-2 text-ink">{ticket.subject}</td>
+                  <td className="p-2 text-ink">{categoryLabel(ticket.category)}</td>
+                  <td className="p-2 text-ink">{statusLabel(ticket.status)}</td>
+                  <td className="p-2 text-ink-secondary">{formatDate(ticket.updated_at)}</td>
                   <td className="p-2">
                     <Link
                       href={`/admin/support/${ticket.id}`}
-                      className="text-gold-dark hover:underline"
+                      className="text-gold-light hover:underline"
                     >
                       {supportAr.openAction}
                     </Link>

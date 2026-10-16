@@ -38,7 +38,7 @@ export function ReplyForm({
     <form action={formAction} className="space-y-3" dir="rtl">
       <input type="hidden" name="ticket_id" value={ticketId} />
       <div>
-        <label htmlFor={`body-${ticketId}`} className="block text-sm font-medium text-navy">
+        <label htmlFor={`body-${ticketId}`} className="block text-sm font-medium text-ink">
           {supportAr.fieldReply}
         </label>
         <textarea
@@ -46,15 +46,15 @@ export function ReplyForm({
           name="body"
           rows={3}
           required
-          className="mt-1 w-full rounded-md border border-secondary px-3 py-2 text-navy"
+          className="mt-1 w-full rounded-md border border-border bg-navy-secondary/60 px-3 py-2 text-ink placeholder:text-ink-muted focus:border-gold/50"
         />
         {state.errors?.body ? (
-          <p className="mt-1 text-sm text-red-600">{state.errors.body[0]}</p>
+          <p className="mt-1 text-sm text-rose-300">{state.errors.body[0]}</p>
         ) : null}
       </div>
 
       {state.message ? (
-        <p className={state.ok ? 'text-sm text-green-600' : 'text-sm text-red-600'}>
+        <p className={state.ok ? 'text-sm text-emerald-300' : 'text-sm text-rose-300'}>
           {state.message}
         </p>
       ) : null}

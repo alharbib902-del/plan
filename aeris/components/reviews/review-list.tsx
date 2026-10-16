@@ -21,7 +21,7 @@ function Stars({ rating }: { rating: number }) {
   return (
     <span aria-label={`${safe} ${clientsAr.reviewStarSuffix}`} className="text-gold">
       {'★'.repeat(safe)}
-      <span className="text-muted">{'★'.repeat(5 - safe)}</span>
+      <span className="text-ink-secondary">{'★'.repeat(5 - safe)}</span>
     </span>
   );
 }
@@ -34,31 +34,31 @@ export function ReviewList({
   emptyLabel?: string;
 }) {
   if (reviews.length === 0) {
-    return <p className="text-muted">{emptyLabel}</p>;
+    return <p className="text-ink-secondary">{emptyLabel}</p>;
   }
 
   return (
     <ul className="space-y-3" dir="rtl">
       {reviews.map((review) => (
-        <li key={review.id} className="rounded-lg border border-secondary bg-white p-4">
+        <li key={review.id} className="rounded-lg border border-border bg-navy-card/40 p-4">
           <div className="flex items-center justify-between">
             <Stars rating={review.overall_rating} />
-            <span className="text-sm text-muted">
+            <span className="text-sm text-ink-secondary">
               {review.bookings?.booking_number
                 ? `${clientsAr.meReviewsBookingPrefix} ${review.bookings.booking_number}`
                 : clientsAr.meReviewsBookingPrefix}
             </span>
           </div>
           {review.comment ? (
-            <p className="mt-2 text-sm text-navy">{review.comment}</p>
+            <p className="mt-2 text-sm text-ink">{review.comment}</p>
           ) : null}
           {review.response ? (
-            <div className="mt-3 rounded-md bg-secondary/20 p-3">
-              <p className="text-xs font-medium text-navy">{clientsAr.meReviewsOperatorResponse}</p>
-              <p className="mt-1 text-sm text-navy">{review.response}</p>
+            <div className="mt-3 rounded-md bg-navy-secondary/60 p-3">
+              <p className="text-xs font-medium text-ink">{clientsAr.meReviewsOperatorResponse}</p>
+              <p className="mt-1 text-sm text-ink">{review.response}</p>
             </div>
           ) : null}
-          <p className="mt-2 text-xs text-muted">{formatDate(review.created_at)}</p>
+          <p className="mt-2 text-xs text-ink-secondary">{formatDate(review.created_at)}</p>
         </li>
       ))}
     </ul>

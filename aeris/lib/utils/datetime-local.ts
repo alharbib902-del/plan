@@ -31,6 +31,21 @@ export function datetimeLocalToRiyadhIso(localValue: string): string {
 }
 
 /**
+ * Pins a datetime-local value to Asia/Riyadh and normalises it
+ * to a UTC ISO instant, or returns `null` when the result is not
+ * a valid date. Server code must not fall back to
+ * `new Date(localValue)`: on Vercel the process zone is UTC, so
+ * an operator's "14:00" would be stored as 14:00Z and render as
+ * 17:00 Riyadh everywhere downstream.
+ */
+export function datetimeLocalToRiyadhInstant(
+  localValue: string
+): string | null {
+  const d = new Date(datetimeLocalToRiyadhIso(localValue));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/**
  * Codex round 4 PR #76 P2 #1 fix — reverse helper that
  * formats a stored ISO instant as a naive
  * `YYYY-MM-DDTHH:mm` string IN ASIA/RIYADH wall clock for

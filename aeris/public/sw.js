@@ -9,14 +9,21 @@
 //     → cache-first.
 //   - HTML pages (everything else, except the bypass list)
 //     → network-first, fallback to cache, fallback to /offline.
-//   - Bypass list (/admin, /admin/*, /operator, /operator/*,
-//     /api, /api/*) → no SW intervention; the browser handles them.
+//   - Bypass list (/admin, /operator, /api, the signed-in client
+//     portal /me, and token-gated personal pages: /booking/<token>,
+//     /reset-password/<token>, /empty-legs/<leg>/reserved) → no SW
+//     intervention; the browser handles them. Personal pages must
+//     never land in Cache Storage: it ignores `no-store`, survives
+//     logout, and would replay one user's data to the next person
+//     on a shared device while offline.
 //
 // On every deploy that changes this file, bump CACHE_VERSION so the
 // activate handler can purge the previous cache and force fresh
 // fetches.
 
-const CACHE_VERSION = 'aeris-v1';
+// v2: purges v1 caches, which could hold /me pages (incl. MedEvac
+// patient details) from before /me joined the bypass list.
+const CACHE_VERSION = 'aeris-v2';
 
 // Precache list MUST include '/offline' so the offline fallback is
 // guaranteed-available the first time the user goes offline. We rely
@@ -28,17 +35,27 @@ const PRECACHE_URLS = ['/', '/offline'];
 
 // EXACT-PATH-AND-PREFIX exclusion: regex like /^\/admin\// would
 // match /admin/foo but miss /admin itself, /admin?x=1, and /admin#h.
-// We must exclude both the bare path AND its children so admin and
-// operator surfaces always hit the network.
+// We must exclude both the bare path AND its children so admin,
+// operator and signed-in client surfaces always hit the network.
+const BYPASS_PREFIXES = [
+  '/admin',
+  '/operator',
+  '/api',
+  '/me',
+  '/booking',
+  '/reset-password',
+];
+
 function shouldBypassCache(pathname) {
-  return (
-    pathname === '/admin' ||
-    pathname.startsWith('/admin/') ||
-    pathname === '/operator' ||
-    pathname.startsWith('/operator/') ||
-    pathname === '/api' ||
-    pathname.startsWith('/api/')
-  );
+  if (
+    BYPASS_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(prefix + '/')
+    )
+  ) {
+    return true;
+  }
+  // Guest empty-leg reservation status page (?token=…).
+  return /^\/empty-legs\/[^/]+\/reserved\/?$/.test(pathname);
 }
 
 function isStaticAsset(pathname) {

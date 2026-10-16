@@ -33,24 +33,24 @@ export default async function MyReviewsPage() {
 
   return (
     <div dir="rtl" className="space-y-8">
-      <h1 className="text-2xl font-semibold text-navy">{clientsAr.meReviewsTitle}</h1>
+      <h1 className="text-2xl font-semibold text-ink">{clientsAr.meReviewsTitle}</h1>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-medium text-navy">{clientsAr.meReviewsAwaitingTitle}</h2>
+        <h2 className="text-lg font-medium text-ink">{clientsAr.meReviewsAwaitingTitle}</h2>
         {reviewable.length === 0 ? (
-          <p className="text-muted">{clientsAr.meReviewsAwaitingEmpty}</p>
+          <p className="text-ink-secondary">{clientsAr.meReviewsAwaitingEmpty}</p>
         ) : (
           <ul className="space-y-4">
             {reviewable.map((booking) => (
               <li
                 key={booking.id}
-                className="rounded-lg border border-secondary bg-white p-4"
+                className="rounded-lg border border-border bg-navy-card/40 p-4"
               >
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="font-medium text-navy">
+                  <span className="font-medium text-ink">
                     {clientsAr.meReviewsBookingPrefix} {booking.booking_number}
                   </span>
-                  <span className="text-sm text-muted">
+                  <span className="text-sm text-ink-secondary">
                     {formatDate(booking.departure_scheduled)}
                   </span>
                 </div>
@@ -62,7 +62,7 @@ export default async function MyReviewsPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-medium text-navy">{clientsAr.meReviewsPastTitle}</h2>
+        <h2 className="text-lg font-medium text-ink">{clientsAr.meReviewsPastTitle}</h2>
         <ReviewList reviews={reviews} emptyLabel={clientsAr.meReviewsPastEmpty} />
       </section>
     </div>

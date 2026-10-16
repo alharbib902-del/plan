@@ -14,8 +14,7 @@ export const metadata: Metadata = {
 
 /**
  * Phase 9 PR 1 — `/me` landing page (extended in PR 2 with
- * a primary charter CTA). PR 3 will replace this with a
- * requests-list dashboard.
+ * a primary charter CTA).
  */
 export default async function ClientMeLandingPage() {
   return (

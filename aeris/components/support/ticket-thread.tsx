@@ -20,7 +20,7 @@ function formatDateTime(iso: string): string {
 
 export function TicketThread({ messages }: { messages: SupportTicketMessageRow[] }) {
   if (messages.length === 0) {
-    return <p className="text-muted">{supportAr.noMessages}</p>;
+    return <p className="text-ink-secondary">{supportAr.noMessages}</p>;
   }
 
   return (
@@ -32,17 +32,17 @@ export function TicketThread({ messages }: { messages: SupportTicketMessageRow[]
             key={message.id}
             className={
               isStaff
-                ? 'rounded-lg border border-gold/40 bg-gold-light/20 p-4'
-                : 'rounded-lg border border-secondary bg-white p-4'
+                ? 'rounded-lg border border-gold/40 bg-gold/10 p-4'
+                : 'rounded-lg border border-border bg-navy-card/40 p-4'
             }
           >
             <div className="mb-1 flex items-center justify-between">
-              <span className="text-sm font-medium text-navy">
+              <span className="text-sm font-medium text-ink">
                 {isStaff ? supportAr.staffName : supportAr.clientName}
               </span>
-              <span className="text-xs text-muted">{formatDateTime(message.created_at)}</span>
+              <span className="text-xs text-ink-secondary">{formatDateTime(message.created_at)}</span>
             </div>
-            <p className="whitespace-pre-wrap text-sm text-navy">{message.body}</p>
+            <p className="whitespace-pre-wrap text-sm text-ink">{message.body}</p>
           </li>
         );
       })}

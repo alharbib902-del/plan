@@ -91,6 +91,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
+  colorScheme: 'dark',
   // Phase 4.2: gold to match `manifest.theme_color`. This tints the
   // mobile browser address bar and the PWA install banner accent.
   themeColor: '#C9A961',
