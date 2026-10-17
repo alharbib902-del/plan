@@ -18,19 +18,13 @@ import type { ClientPrivilegeTier } from '@/lib/privilege/types';
  *   - privilege → varies per tier above
  */
 
+// The UI is dark-only (no `dark` class is ever set), so these are the
+// only styles. 300-shade text keeps each label ≥7.9:1 on its tinted fill.
 const TIER_STYLES: Record<ClientPrivilegeTier, string> = {
-  silver:
-    'bg-slate-500/10 text-slate-300 border-slate-500/30 ' +
-    'dark:bg-slate-500/15 dark:text-slate-300 dark:border-slate-500/40',
-  gold:
-    'bg-amber-500/10 text-amber-700 border-amber-500/30 ' +
-    'dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/40',
-  platinum:
-    'bg-cyan-500/10 text-cyan-700 border-cyan-500/30 ' +
-    'dark:bg-cyan-500/15 dark:text-cyan-300 dark:border-cyan-500/40',
-  diamond:
-    'bg-violet-500/10 text-violet-700 border-violet-500/30 ' +
-    'dark:bg-violet-500/15 dark:text-violet-300 dark:border-violet-500/40',
+  silver: 'bg-slate-500/15 text-slate-300 border-slate-500/40',
+  gold: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
+  platinum: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40',
+  diamond: 'bg-violet-500/15 text-violet-300 border-violet-500/40',
 };
 
 export function TierBadge({

@@ -5,7 +5,6 @@ const config: Config = {
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
   ],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -44,12 +43,45 @@ const config: Config = {
         ink: {
           DEFAULT: '#FAFAFA',
           secondary: '#A8B2C1',
-          muted: '#6B7A8F',
+          muted: '#79879B', // ≥4.5:1 (WCAG AA) on every navy surface; #6B7A8F fell to 3.8:1 on cards
         },
         border: {
           DEFAULT: 'rgba(201, 169, 97, 0.15)',
           strong: 'rgba(201, 169, 97, 0.35)',
         },
+        // Dark-theme status colours. Default-palette shades picked ad hoc
+        // (red-600, *-700) were tuned for light backgrounds and fall
+        // below 4.5:1 on navy (2.2–3.8:1). DEFAULT is the
+        // foreground (≥8:1 on every navy surface, and on its own `bg`);
+        // `bg`/`border` codify the existing banner recipe (500/10 fill,
+        // 400/40 outline).
+        success: {
+          DEFAULT: '#6EE7B7',
+          bg: 'rgba(16, 185, 129, 0.1)',
+          border: 'rgba(52, 211, 153, 0.4)',
+        },
+        danger: {
+          DEFAULT: '#FDA4AF',
+          bg: 'rgba(244, 63, 94, 0.1)',
+          border: 'rgba(251, 113, 133, 0.4)',
+        },
+        warning: {
+          DEFAULT: '#FCD34D',
+          bg: 'rgba(245, 158, 11, 0.1)',
+          border: 'rgba(251, 191, 36, 0.4)',
+        },
+        info: {
+          DEFAULT: '#7DD3FC',
+          bg: 'rgba(14, 165, 233, 0.1)',
+          border: 'rgba(56, 189, 248, 0.4)',
+        },
+      },
+      borderColor: {
+        // Form-control outline. The global `border` token (gold/15) is
+        // ~1.3:1 against a field, below the 3:1 WCAG 1.4.11 needs to
+        // identify an input; this solid muted gold is ≥3.2:1 against the
+        // field fill and every navy surface around it. Cards keep `border`.
+        field: '#806B37',
       },
       fontFamily: {
         // Self-hosted via next/font (app/layout.tsx); the CSS vars

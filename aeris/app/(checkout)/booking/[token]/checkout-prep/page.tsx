@@ -15,6 +15,7 @@ import { formatRouteEndpoint } from '@/lib/checkout/route-display';
 import { resolveSiteUrl } from '@/lib/checkout/site-url';
 import { buildWhatsappConfirmMessage } from '@/lib/checkout/whatsapp-message';
 import { formatRiyadhDateTime, t } from '@/lib/i18n/operator';
+import { formatSAR } from '@/lib/utils/format';
 import type { AirportRow, BookingAddonRow, BookingRow } from '@/types/database';
 import { CheckoutPrepClient } from '@/components/checkout/checkout-prep-client';
 
@@ -243,7 +244,7 @@ function CheckoutPrepView({
               {t('checkout_prep_subtotal_label', lang)}
             </dt>
             <dd className="text-ink">
-              {baseAmount.toLocaleString()} ريال
+              {formatSAR(baseAmount)}
             </dd>
           </div>
           <div className="flex items-center justify-between">
@@ -251,7 +252,7 @@ function CheckoutPrepView({
               {t('checkout_prep_addons_subtotal_label', lang)}
             </dt>
             <dd className="text-ink">
-              {addonsAmount.toLocaleString()} ريال
+              {formatSAR(addonsAmount)}
             </dd>
           </div>
           <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
@@ -259,7 +260,7 @@ function CheckoutPrepView({
               {t('checkout_prep_grand_total_label', lang)}
             </dt>
             <dd className="font-medium text-gold-light">
-              {totalAmount.toLocaleString()} ريال
+              {formatSAR(totalAmount)}
             </dd>
           </div>
         </dl>
@@ -337,7 +338,7 @@ function CheckoutPrepAddonRow({
           ×{addon.quantity}
         </div>
         <div className="font-ar shrink-0 text-sm text-ink">
-          {Number(addon.total_price).toLocaleString()} ريال
+          {formatSAR(Number(addon.total_price))}
         </div>
         <span className="font-ar shrink-0 rounded-full border border-border bg-navy-secondary/40 px-2 py-0.5 text-[10px] text-ink-muted">
           {t(

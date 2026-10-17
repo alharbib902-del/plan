@@ -37,6 +37,7 @@
     "test:clients-trip-request-validators": "tsx lib/clients/__tests__/trip-request-validators.test.ts",
     "test:clients-offer-action-validators": "tsx lib/clients/__tests__/offer-action-validators.test.ts",
     "test:utils-datetime-local": "tsx lib/utils/__tests__/datetime-local.test.ts",
+    "test:utils-format-riyadh": "tsx lib/utils/__tests__/format-riyadh.test.ts",
     "test:utils-uuid": "tsx lib/utils/__tests__/uuid.test.ts",
     "test:automation-trip-distribution-scoring": "tsx lib/automation/__tests__/trip-distribution-scoring.test.ts",
     "test:clients-empty-legs-validators": "tsx lib/clients/__tests__/empty-legs-validators.test.ts",

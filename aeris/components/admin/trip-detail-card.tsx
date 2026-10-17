@@ -1,6 +1,7 @@
 import { MessageCircle, Phone } from 'lucide-react';
 import type { TripRequestRow } from '@/types/database';
 import { formatPhone } from '@/lib/utils/format';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 import { AIRCRAFT_CATEGORY_LABEL_AR } from '@/lib/validators/promote-lead';
 import { TripStatusBadge } from './trip-status-badge';
 
@@ -11,31 +12,11 @@ const LEAD_TRIP_LABEL_AR: Record<string, string> = {
 };
 
 function formatDateAr(value: string | null): string {
-  if (!value) return '—';
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 function formatDateTimeAr(value: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {

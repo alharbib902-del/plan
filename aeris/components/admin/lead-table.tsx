@@ -3,6 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import type { LeadInquiryRow } from '@/types/database';
 import { LeadStatusBadge } from './lead-status-badge';
 import { formatPhone } from '@/lib/utils/format';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 import { buildLeadWhatsAppLink } from '@/lib/utils/whatsapp-admin';
 
 const TRIP_LABEL_AR: Record<LeadInquiryRow['trip_type'], string> = {
@@ -12,30 +13,11 @@ const TRIP_LABEL_AR: Record<LeadInquiryRow['trip_type'], string> = {
 };
 
 function formatDateAr(value: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function formatDateTimeAr(value: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'short',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 export function LeadTable({ leads }: { leads: LeadInquiryRow[] }) {

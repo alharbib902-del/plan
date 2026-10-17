@@ -9,6 +9,7 @@ import {
 } from '@/app/(admin)/admin/actions/booking-addons';
 import { ADDONS_BY_SUBTYPE } from '@/lib/addons/catalog';
 import { t } from '@/lib/i18n/operator';
+import { formatSAR } from '@/lib/utils/format';
 
 /**
  * Phase 6.2 PR 2b: read+mutate table of attached addons on
@@ -157,7 +158,7 @@ function AttachedAddonRow({
 
         {/* Total + status */}
         <div className="font-ar shrink-0 text-sm text-ink">
-          {Number(addon.total_price).toLocaleString()} ريال
+          {formatSAR(Number(addon.total_price))}
         </div>
         <span
           className={`font-ar shrink-0 rounded-full px-2 py-0.5 text-[10px] ${statusBadgeClass(

@@ -1,19 +1,15 @@
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import type { OperatorRow } from '@/types/database';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 /**

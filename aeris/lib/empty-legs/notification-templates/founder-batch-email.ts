@@ -11,6 +11,8 @@
  * Resend send + alert-status singleton update.
  */
 
+import { EMAIL_DARK_HEAD } from '@/lib/notifications/email-dark-head';
+
 export interface FounderBatchEmailInput {
   legId: string;
   legNumber: string;
@@ -41,10 +43,11 @@ export function buildFounderBatchEmailHtml(
 
   return `<!doctype html>
 <html lang="ar" dir="rtl">
-  <body style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#050B14;padding:24px 0">
+  ${EMAIL_DARK_HEAD}
+  <body bgcolor="#050B14" style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
+    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#050B14" style="background:#050B14;padding:24px 0">
       <tr><td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:28px">
+        <table width="600" cellpadding="0" cellspacing="0" bgcolor="#0A1628" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:28px">
           <tr><td>
             <div style="font-family:'Playfair Display',serif;letter-spacing:0.28em;color:#E8D4A8;font-size:22px">AERIS</div>
             <h1 style="margin:18px 0 6px;font-size:20px;color:#FAFAFA">مراسلات واتساب جاهزة</h1>

@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { Loader2, Send, Copy, Check } from 'lucide-react';
 import { dispatchTrip } from '@/app/(admin)/admin/actions/trips';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 interface DispatchFormProps {
   tripRequestId: string;
@@ -13,16 +14,7 @@ interface DispatchFormProps {
 }
 
 function formatDateTimeAr(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 export function DispatchForm({

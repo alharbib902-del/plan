@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 
 import { issueCheckoutLink } from '@/app/(admin)/admin/actions/checkout-token';
 import { t } from '@/lib/i18n/operator';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 /**
  * Phase 6.2 PR 2b: admin "Issue customer checkout link"
@@ -88,7 +89,7 @@ export function IssueCheckoutLinkButton({
           />
           <p className="font-ar mt-3 text-xs text-emerald-100/80">
             {t('admin_checkout_link_expires_at_label', 'ar')}:{' '}
-            {new Date(issued.expires_at).toLocaleString('ar-SA')}
+            {formatInRiyadh(issued.expires_at, { dateStyle: 'medium', timeStyle: 'short' })}
           </p>
         </div>
       )}

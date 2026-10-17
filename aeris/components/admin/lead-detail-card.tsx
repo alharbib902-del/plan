@@ -1,6 +1,7 @@
 import { MessageCircle, Phone } from 'lucide-react';
 import type { LeadInquiryRow } from '@/types/database';
 import { formatPhone } from '@/lib/utils/format';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 import { buildLeadWhatsAppLink } from '@/lib/utils/whatsapp-admin';
 
 const TRIP_LABEL_AR: Record<LeadInquiryRow['trip_type'], string> = {
@@ -10,30 +11,11 @@ const TRIP_LABEL_AR: Record<LeadInquiryRow['trip_type'], string> = {
 };
 
 function formatDateAr(value: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 function formatDateTimeAr(value: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {

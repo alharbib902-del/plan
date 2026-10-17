@@ -11,6 +11,8 @@
 import { Resend } from 'resend';
 
 import { formatPhone, normalizeWhatsAppPhone } from '@/lib/utils/format';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
+import { EMAIL_DARK_HEAD } from './email-dark-head';
 
 /**
  * P0 (2026-07) — instant founder alert when an empty-leg
@@ -72,27 +74,15 @@ function escapeHtml(input: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/**
- * Asia/Riyadh wall-clock label with Western digits (project
- * convention). Falls back to the raw ISO string when the
- * runtime ICU build lacks ar-SA so the email never breaks.
- */
 function formatRiyadhDateTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  try {
-    return new Intl.DateTimeFormat('ar-SA-u-nu-latn', {
-      timeZone: 'Asia/Riyadh',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).format(date);
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 export function buildEmptyLegReservationFounderEmail(
@@ -113,10 +103,11 @@ export function buildEmptyLegReservationFounderEmail(
 
   const html = `<!doctype html>
 <html lang="ar" dir="rtl">
-  <body style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#050B14;padding:24px 0">
+  ${EMAIL_DARK_HEAD}
+  <body bgcolor="#050B14" style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
+    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#050B14" style="background:#050B14;padding:24px 0">
       <tr><td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:28px">
+        <table width="600" cellpadding="0" cellspacing="0" bgcolor="#0A1628" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:28px">
           <tr><td>
             <div style="font-family:'Playfair Display',serif;letter-spacing:0.28em;color:#E8D4A8;font-size:22px">AERIS</div>
             <h1 style="margin:18px 0 6px;font-size:20px;color:#FAFAFA">حجز رحلة فارغة جديد</h1>

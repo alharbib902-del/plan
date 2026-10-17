@@ -3,33 +3,14 @@ import { ExternalLink } from 'lucide-react';
 import type { TripRequestRow } from '@/types/database';
 import { TripStatusBadge } from './trip-status-badge';
 import { formatPhone } from '@/lib/utils/format';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 function formatDateAr(value: string | null): string {
-  if (!value) return '—';
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function formatDateTimeAr(value: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'short',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function routeOf(trip: TripRequestRow): string {

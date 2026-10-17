@@ -6,6 +6,7 @@ import type { AddonCatalogEntry } from '@/lib/addons/catalog';
 import type { TripPreferences } from '@/lib/validators/trip-preferences';
 import { attachAddon } from '@/app/(admin)/admin/actions/booking-addons';
 import { t } from '@/lib/i18n/operator';
+import { formatSAR } from '@/lib/utils/format';
 
 /**
  * Phase 6.2 PR 2b: admin attach form per catalog entry.
@@ -140,8 +141,8 @@ export function AddonsAttachForm({
         ) : (
           <span>
             {entry.unit_price_min_sar === entry.unit_price_max_sar
-              ? `${entry.unit_price_sar.toLocaleString()} ريال`
-              : `من ${entry.unit_price_min_sar.toLocaleString()} إلى ${entry.unit_price_max_sar.toLocaleString()} ريال`}
+              ? formatSAR(entry.unit_price_sar)
+              : `من ${formatSAR(entry.unit_price_min_sar, { showSymbol: false })} إلى ${formatSAR(entry.unit_price_max_sar)}`}
             {entry.per_passenger && <span> / للراكب</span>}
           </span>
         )}
@@ -203,7 +204,7 @@ export function AddonsAttachForm({
 
       <div className="mt-3 flex items-center justify-between gap-3">
         <span className="font-ar text-xs text-ink-muted">
-          {t('admin_addons_total_label', 'ar')}: {expectedTotal.toLocaleString()} ريال
+          {t('admin_addons_total_label', 'ar')}: {formatSAR(expectedTotal)}
         </span>
         <button
           type="submit"

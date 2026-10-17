@@ -3,18 +3,10 @@ import { ChevronLeft } from 'lucide-react';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { OperatorStatusBadge } from './status-badge';
 import type { OperatorRow as OperatorRowType } from '@/types/database';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleDateString('ar-SA', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export function OperatorRow({ operator }: { operator: OperatorRowType }) {

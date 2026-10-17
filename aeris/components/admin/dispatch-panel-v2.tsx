@@ -14,6 +14,7 @@ import {
   dispatchTripV2,
   type DispatchTripV2DispatchEntry,
 } from '@/app/(admin)/admin/actions/trips';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 const MAX_PHONES = 8;
 const MIN_PHONES = 1;
@@ -329,16 +330,7 @@ function CopyRow({
 }
 
 function formatExpires(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'short',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function translateError(code: string): string {

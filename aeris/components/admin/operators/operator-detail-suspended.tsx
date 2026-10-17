@@ -8,6 +8,7 @@ import {
   adminResetOperatorPassword,
 } from '@/app/actions/operators';
 import type { OperatorRow } from '@/types/database';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 type Toast =
   | { kind: 'success'; message: string; details?: string }
@@ -24,18 +25,13 @@ function errorMessage(code?: string): string {
 }
 
 function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export function OperatorDetailSuspended({ operator }: { operator: OperatorRow }) {

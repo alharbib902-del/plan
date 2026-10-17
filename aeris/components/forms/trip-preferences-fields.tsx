@@ -57,7 +57,7 @@ import type { TripPreferences } from '@/lib/validators/trip-preferences';
 const fieldLabel = 'font-ar mb-2 block text-sm text-ink';
 const fieldHint = 'font-ar mt-1 block text-xs text-ink-muted';
 const fieldInput =
-  'font-ar block w-full rounded-md border border-border bg-navy-secondary/60 px-4 py-3 text-base text-ink placeholder:text-ink-muted/70 transition-colors hover:border-gold/40 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40 disabled:cursor-not-allowed disabled:opacity-60';
+  'font-ar block w-full rounded-md border border-field bg-navy-secondary/60 px-4 py-3 text-base text-ink placeholder:text-ink-muted/70 transition-colors hover:border-gold/70 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40 disabled:cursor-not-allowed disabled:opacity-60';
 
 export interface TripPreferencesFieldsProps {
   value: TripPreferences;

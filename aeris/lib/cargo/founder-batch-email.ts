@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { CargoRequestRow } from '@/lib/cargo/types';
 
 import { recordCargoEmailAlertStatus } from './email-alert-status';
+import { EMAIL_DARK_HEAD } from '@/lib/notifications/email-dark-head';
 
 /**
  * Phase 11 PR 3 §4.2 — founder batch alert when a cargo request
@@ -142,10 +143,11 @@ export async function sendFounderCargoBatchAlert(
   const subject = `[Aeris Cargo] طلب شحن جديد دُفع إلى ${args.dispatched_operator_ids.length} مشغّل — ${req.cargo_request_number}`;
   const html = `<!doctype html>
 <html lang="ar" dir="rtl">
-  <body style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic',sans-serif;color:#FAFAFA">
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0">
+  ${EMAIL_DARK_HEAD}
+  <body bgcolor="#050B14" style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic',sans-serif;color:#FAFAFA">
+    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#050B14" style="padding:24px 0">
       <tr><td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:32px">
+        <table width="600" cellpadding="0" cellspacing="0" bgcolor="#0A1628" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:32px">
           <tr><td>
             <div style="font-family:'Playfair Display',serif;letter-spacing:0.28em;color:#E8D4A8;font-size:22px">AERIS — CARGO</div>
             <h1 style="margin:18px 0 12px;font-size:20px">طلب شحن دُفع للمشغّلين</h1>

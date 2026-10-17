@@ -15,7 +15,7 @@
   --gold-dark: #8B7339;
   --text-primary: #FAFAFA;
   --text-secondary: #A8B2C1;
-  --text-muted: #6B7A8F;
+  --text-muted: #79879B; /* keep in sync with ink.muted — ≥4.5:1 on every navy surface */
   --border-default: rgba(201, 169, 97, 0.15);
   --border-strong: rgba(201, 169, 97, 0.35);
 }
@@ -107,4 +107,56 @@ body::before {
 ::selection {
   background: var(--gold);
   color: var(--bg-primary);
+}
+
+/* Autofill: Chromium/WebKit paint autofilled fields with a light-blue
+   UA background that `background` cannot override, leaving light text on
+   a light field. A large inset shadow paints over it instead; the
+   Tailwind ring/shadow vars are kept so `focus:ring-*` still shows. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text-primary);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000),
+    var(--tw-ring-shadow, 0 0 #0000),
+    var(--tw-shadow, 0 0 #0000),
+    0 0 0 1000px var(--bg-secondary) inset;
+  caret-color: var(--text-primary);
+}
+
+/* Firefox ignores ::-webkit-scrollbar. Scoped with @supports because
+   Chromium 121+ drops its ::-webkit-scrollbar styling (the gold gradient
+   thumb above) for every element once `scrollbar-color` is set, and the
+   property inherits. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-color: var(--gold-dark) var(--bg-secondary);
+    scrollbar-width: thin;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  /* 0.01ms (not 0/none) so `animationend`/`transitionend` still fire and
+     fill-mode `forwards` animations land on their visible end state. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -2,6 +2,9 @@ import 'server-only';
 
 import { Resend } from 'resend';
 
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
+import { EMAIL_DARK_HEAD } from './email-dark-head';
+
 /**
  * Phase 8 PR 2b — operator-facing emails sent by the admin
  * Server Actions in `app/actions/operators.ts`. Three flavours:
@@ -62,11 +65,12 @@ function shellHtml(opts: {
 
   return `<!doctype html>
 <html lang="ar" dir="rtl">
-  <body style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
+  ${EMAIL_DARK_HEAD}
+  <body bgcolor="#050B14" style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
     <span style="display:none;visibility:hidden;opacity:0;height:0;width:0">${escapeHtml(opts.preheader)}</span>
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#050B14;padding:24px 0">
+    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#050B14" style="background:#050B14;padding:24px 0">
       <tr><td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:32px">
+        <table width="600" cellpadding="0" cellspacing="0" bgcolor="#0A1628" style="max-width:600px;background:#0A1628;border:1px solid rgba(201,169,97,0.25);border-radius:14px;padding:32px">
           <tr><td>
             <div style="font-family:'Playfair Display',serif;letter-spacing:0.28em;color:#E8D4A8;font-size:22px">AERIS</div>
             <h1 style="margin:18px 0 12px;font-size:22px;color:#FAFAFA;font-weight:600">${escapeHtml(opts.heading)}</h1>
@@ -119,7 +123,7 @@ export async function sendOperatorWelcomeEmail(
     return { ok: false, reason: 'env_missing' };
   }
 
-  const expiresLabel = input.expires_at.toLocaleDateString('ar-SA', {
+  const expiresLabel = formatInRiyadh(input.expires_at, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',

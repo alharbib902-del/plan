@@ -400,7 +400,7 @@ export function PublishEmptyLegForm() {
 }
 
 const inputCls =
-  'font-ar block w-full rounded-md border border-border bg-navy-card/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold/60 focus:outline-none';
+  'font-ar block w-full rounded-md border border-field bg-navy-card/60 px-3 py-2 text-sm text-ink shadow-sm focus:border-gold focus:outline-none';
 
 function Section({
   title,

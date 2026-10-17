@@ -1,21 +1,12 @@
 import { MessageCircle, Phone } from 'lucide-react';
 import type { OfferStatus, UnifiedOfferRow } from '@/types/database';
 import { formatPhone, formatSAR } from '@/lib/utils/format';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 import { AIRCRAFT_CATEGORY_LABEL_AR } from '@/lib/validators/promote-lead';
 import { AcceptOfferUnifiedButton } from './accept-offer-unified-button';
 
 function formatDateTimeAr(value: string | null): string {
-  if (!value) return '—';
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
+  return formatInRiyadh(value, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 const STATUS_STYLE: Record<OfferStatus, string> = {

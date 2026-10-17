@@ -4,6 +4,7 @@ import { Resend } from 'resend';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { recordMedevacEmailAlertStatus } from './email-alert-status';
+import { EMAIL_DARK_HEAD } from '@/lib/notifications/email-dark-head';
 
 /**
  * This module provides the D11 cert warning and expiry
@@ -167,11 +168,12 @@ function shellHtml(opts: {
 }): string {
   return `<!doctype html>
 <html lang="ar" dir="rtl">
-  <body style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
+  ${EMAIL_DARK_HEAD}
+  <body bgcolor="#050B14" style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
     <span style="display:none;visibility:hidden;opacity:0;height:0;width:0">${escapeHtml(opts.preheader)}</span>
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#050B14;padding:24px 0">
+    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#050B14" style="background:#050B14;padding:24px 0">
       <tr><td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#0A1628;border:1px solid ${opts.toneColor}40;border-radius:14px;padding:32px">
+        <table width="600" cellpadding="0" cellspacing="0" bgcolor="#0A1628" style="max-width:600px;background:#0A1628;border:1px solid ${opts.toneColor}40;border-radius:14px;padding:32px">
           <tr><td>
             <div style="font-family:'Playfair Display',serif;letter-spacing:0.28em;color:${opts.toneColor};font-size:22px">AERIS · MEDEVAC CERT</div>
             <h1 style="margin:18px 0 12px;font-size:22px;color:#FAFAFA;font-weight:600">${escapeHtml(opts.heading)}</h1>

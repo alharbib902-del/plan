@@ -8,6 +8,7 @@ import type {
   MedevacRequestRedactedRow,
   MedevacSeverity,
 } from '@/lib/medevac/types';
+import { EMAIL_DARK_HEAD } from '@/lib/notifications/email-dark-head';
 
 /**
  * Phase 12 PR 3 — founder SLA escalation alert.
@@ -131,10 +132,11 @@ export async function sendFounderSlaEscalationEmail(
 
   const html = `<!doctype html>
 <html lang="ar" dir="rtl">
-  <body style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#050B14;padding:24px 0">
+  ${EMAIL_DARK_HEAD}
+  <body bgcolor="#050B14" style="margin:0;background:#050B14;font-family:'IBM Plex Sans Arabic','Inter',sans-serif;color:#FAFAFA">
+    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#050B14" style="background:#050B14;padding:24px 0">
       <tr><td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#0A1628;border:1px solid rgba(244,63,94,0.4);border-radius:14px;padding:32px">
+        <table width="600" cellpadding="0" cellspacing="0" bgcolor="#0A1628" style="max-width:600px;background:#0A1628;border:1px solid rgba(244,63,94,0.4);border-radius:14px;padding:32px">
           <tr><td>
             <div style="font-family:'Playfair Display',serif;letter-spacing:0.28em;color:#FCA5A5;font-size:22px">AERIS · SLA BREACH</div>
             <h1 style="margin:18px 0 12px;font-size:22px;color:#FAFAFA;font-weight:600">طلب إخلاء طبي تجاوز نافذة الـ SLA</h1>

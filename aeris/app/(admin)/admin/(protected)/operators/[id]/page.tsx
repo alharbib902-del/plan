@@ -5,6 +5,7 @@ import { ChevronRight } from 'lucide-react';
 
 import { getOperatorById } from '@/lib/admin/operators/queries';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 import { OperatorStatusBadge } from '@/components/admin/operators/status-badge';
 import { OperatorDetailPending } from '@/components/admin/operators/operator-detail-pending';
 import { OperatorDetailApproved } from '@/components/admin/operators/operator-detail-approved';
@@ -24,18 +25,13 @@ interface PageProps {
 }
 
 function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default async function AdminOperatorDetailPage({ params }: PageProps) {

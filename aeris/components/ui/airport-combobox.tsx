@@ -192,8 +192,8 @@ export function AirportCombobox({
             aria-expanded={open}
             aria-describedby={error ? `${inputId}-error` : undefined}
             className={cn(
-              'font-ar flex w-full items-center justify-between gap-3 rounded-md border border-border bg-navy-secondary/60 px-4 py-3 text-base text-ink transition-colors',
-              'hover:border-gold/40 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40',
+              'font-ar flex w-full items-center justify-between gap-3 rounded-md border border-field bg-navy-secondary/60 px-4 py-3 text-base text-ink transition-colors',
+              'hover:border-gold/70 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold/40',
               error && 'border-red-400/60'
             )}
           >
@@ -218,7 +218,7 @@ export function AirportCombobox({
         ) : (
           <div
             className={cn(
-              'flex items-stretch gap-2 rounded-md border border-border bg-navy-secondary/60 px-2 py-1 transition-colors',
+              'flex items-stretch gap-2 rounded-md border border-field bg-navy-secondary/60 px-2 py-1 transition-colors',
               'focus-within:border-gold focus-within:ring-1 focus-within:ring-gold/40',
               error && 'border-red-400/60'
             )}

@@ -22,6 +22,7 @@ import {
   type DispatchTripV2DispatchEntry,
 } from '@/app/(admin)/admin/actions/trips';
 import type { DispatchOperator } from '@/lib/supabase/queries/operators-list';
+import { formatInRiyadh } from '@/lib/utils/format-riyadh';
 
 const MAX_TOTAL_PHONES = 8;
 const MAX_MANUAL_PHONES = 3;
@@ -565,16 +566,7 @@ function CopyRow({
 }
 
 function formatExpires(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      dateStyle: 'short',
-      timeStyle: 'short',
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
+  return formatInRiyadh(iso, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function formatRelative(iso: string | null): string {
