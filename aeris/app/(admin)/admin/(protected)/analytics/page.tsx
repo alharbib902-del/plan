@@ -8,6 +8,7 @@ import {
   type AnalyticsOperator,
   type AnalyticsRoute,
 } from '@/lib/admin/analytics';
+import { getPendingOfflineTotals } from '@/lib/admin/bookings/queries';
 import { analyticsAr } from '@/lib/i18n/analytics-ar';
 import { formatSAR } from '@/lib/utils/format';
 
@@ -137,6 +138,7 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
   }
 
   const summary = await getAnalyticsSummary(fromIso, toIso);
+  const pendingOffline = await getPendingOfflineTotals();
 
   const today = new Date();
   const monthAgo = new Date(today);
@@ -204,6 +206,12 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
               value={formatSAR(summary.revenue.paid_total_sar)}
               accent
             />
+            {pendingOffline ? (
+              <Kpi
+                label={`بانتظار التحصيل اليدوي الآن (${formatInt(pendingOffline.count)} حجز)`}
+                value={formatSAR(pendingOffline.totalSar)}
+              />
+            ) : null}
             <Kpi
               label={analyticsAr.paidCountLabel}
               value={formatInt(summary.revenue.paid_count)}

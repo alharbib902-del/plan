@@ -68,6 +68,8 @@
     "test:privilege-cron-auth": "tsx app/api/cron/privilege/__tests__/cron-auth.test.ts",
     "test:admin-login-rate-limit": "tsx lib/admin/__tests__/login-rate-limit.test.ts",
     "test:admin-rbac": "tsx lib/admin/__tests__/rbac.test.ts",
+    "test:admin-offline-payment-migration": "tsx lib/admin/bookings/__tests__/offline-payment-migration.test.ts",
+    "test:admin-bookings-validators": "tsx lib/admin/bookings/__tests__/validators.test.ts",
     "test:public-action-rate-limit": "tsx lib/rate-limit/__tests__/public-action.test.ts",
     "test:login-rate-limit": "tsx lib/rate-limit/__tests__/login-rate-limit.test.ts",
     "test:admin-user-credentials": "tsx lib/admin/users/__tests__/credentials.test.ts",

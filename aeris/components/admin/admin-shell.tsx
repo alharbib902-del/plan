@@ -9,6 +9,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const navLinks: { href: string; label: string }[] = [
     { href: '/admin/leads', label: 'الطلبات' },
     { href: '/admin/trips', label: 'الرحلات' },
+    { href: '/admin/bookings', label: 'الحجوزات' },
     { href: '/admin/analytics', label: analyticsAr.nav },
     { href: '/admin/support', label: supportAr.nav },
     ...(process.env.ENABLE_EMPTY_LEGS_ADMIN_UI !== 'false'

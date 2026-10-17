@@ -22,6 +22,7 @@ import {
   buildOperatorWhatsAppLink,
 } from '@/lib/operator/links';
 import { issueOperatorTokenFromTarget } from '@/lib/operator/token';
+import { TripBookingLink } from '@/components/admin/bookings/trip-booking-link';
 import { TripDetailCard } from '@/components/admin/trip-detail-card';
 import { type DispatchPanelV2Props } from '@/components/admin/dispatch-panel-v2';
 import { OperatorPickerPanel } from '@/components/admin/operator-picker-panel';
@@ -94,7 +95,10 @@ async function Phase4TripView({ trip }: { trip: TripRequestRow }) {
     <section>
       <div className="flex items-center justify-between gap-3">
         <BackLink />
-        <AddonsTabLink tripId={trip.id} />
+        <div className="flex flex-wrap items-center gap-2">
+          <TripBookingLink tripId={trip.id} />
+          <AddonsTabLink tripId={trip.id} />
+        </div>
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.6fr,1fr] lg:items-start">
@@ -218,7 +222,10 @@ async function Phase5TripView({ trip }: { trip: TripRequestRow }) {
     <section>
       <div className="flex items-center justify-between gap-3">
         <BackLink />
-        <AddonsTabLink tripId={trip.id} />
+        <div className="flex flex-wrap items-center gap-2">
+          <TripBookingLink tripId={trip.id} />
+          <AddonsTabLink tripId={trip.id} />
+        </div>
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.6fr,1fr] lg:items-start">
