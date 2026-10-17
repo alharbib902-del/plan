@@ -73,7 +73,7 @@ export default async function OperatorMyCargoOffersPage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border">
+        <div className="overflow-x-auto rounded-xl border border-border">
           <table className="min-w-full divide-y divide-border">
             <thead className="bg-navy-card/40">
               <tr>

@@ -6,6 +6,7 @@ import {
   getOperatorRowById,
   getOperatorDashboardStats,
 } from '@/lib/operators/session-store';
+import { getOperatorBookingCounts } from '@/lib/operators/portal-queries';
 import { OperatorDashboardCards } from '@/components/operator/dashboard-cards';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 
@@ -19,9 +20,10 @@ export const metadata: Metadata = {
 
 export default async function OperatorDashboardPage() {
   const session = await requireOperatorSession();
-  const [operator, stats] = await Promise.all([
+  const [operator, stats, bookingCounts] = await Promise.all([
     getOperatorRowById(session.operator_id),
     getOperatorDashboardStats(session.operator_id),
+    getOperatorBookingCounts(session.operator_id),
   ]);
 
   return (
@@ -45,7 +47,7 @@ export default async function OperatorDashboardPage() {
         </Link>
       </header>
 
-      <OperatorDashboardCards stats={stats} />
+      <OperatorDashboardCards stats={stats} bookingCounts={bookingCounts} />
 
       {stats.active_legs + stats.reserved_legs + stats.sold_legs === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-navy-card/30 p-10 text-center">

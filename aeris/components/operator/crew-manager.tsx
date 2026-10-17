@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
 import { setCrewAvailability } from '@/app/actions/operators-crew';
 import type { OperatorCrewRow } from '@/lib/operators/crew';
+import { classifyExpiry } from '@/lib/operators/expiry-status';
+import { formatRiyadhDateAr } from '@/lib/utils/format';
 import { OperatorBanner, operatorErrorMessage } from './error-banner';
 import { CrewForm } from './crew-form';
 
@@ -24,14 +26,50 @@ function formatInt(n: number): string {
   }
 }
 
-function licenseLabel(c: OperatorCrewRow): string {
-  if (!c.license_number) return ar.none;
-  return c.license_expiry
-    ? `${c.license_number} · ${c.license_expiry}`
-    : c.license_number;
+const EXPIRY_TONE = {
+  expired: 'border-rose-400/40 bg-rose-500/10 text-rose-200',
+  expiring_soon: 'border-amber-400/40 bg-amber-500/10 text-amber-200',
+} as const;
+
+function LicenseCell({ c, today }: { c: OperatorCrewRow; today: string }) {
+  if (!c.license_number && !c.license_expiry) return <>{ar.none}</>;
+  const status = classifyExpiry(c.license_expiry, today);
+  return (
+    <div className="space-y-1">
+      {c.license_number ? (
+        <span dir="ltr" className="block">
+          {c.license_number}
+        </span>
+      ) : null}
+      {c.license_expiry ? (
+        <span className="flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
+          <span className="whitespace-nowrap">
+            {ar.licenseExpiresOn} {formatRiyadhDateAr(c.license_expiry)}
+          </span>
+          {status === 'expired' || status === 'expiring_soon' ? (
+            <span
+              className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-xs ${EXPIRY_TONE[status]}`}
+            >
+              {ar.expiry[status]}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
-export function CrewManager({ crew }: { crew: OperatorCrewRow[] }) {
+/**
+ * `today` is the Riyadh calendar date (YYYY-MM-DD) computed by the
+ * server page, so expiry badges match between SSR and hydration.
+ */
+export function CrewManager({
+  crew,
+  today,
+}: {
+  crew: OperatorCrewRow[];
+  today: string;
+}) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -119,7 +157,7 @@ export function CrewManager({ crew }: { crew: OperatorCrewRow[] }) {
                         {c.languages.length > 0 ? c.languages.join('، ') : ar.none}
                       </Td>
                       <Td>
-                        <span dir="ltr">{licenseLabel(c)}</span>
+                        <LicenseCell c={c} today={today} />
                       </Td>
                       <Td>{formatInt(c.extra_fee)}</Td>
                       <Td>

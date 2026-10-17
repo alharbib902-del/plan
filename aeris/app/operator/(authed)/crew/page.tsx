@@ -6,6 +6,7 @@ import { requireOperatorSession } from '@/lib/operators/auth';
 import { listOperatorCrew } from '@/lib/operators/crew';
 import { CrewManager } from '@/components/operator/crew-manager';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
+import { riyadhTodayIsoDate } from '@/lib/operators/expiry-status';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -30,7 +31,7 @@ export default async function OperatorCrewPage() {
         </p>
       </header>
 
-      <CrewManager crew={crew} />
+      <CrewManager crew={crew} today={riyadhTodayIsoDate()} />
     </section>
   );
 }

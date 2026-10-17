@@ -7,7 +7,9 @@ import { requireOperatorSession } from '@/lib/operators/auth';
 import { getOperatorLegById } from '@/lib/operators/portal-queries';
 import { OperatorLegActions } from '@/components/operator/empty-legs/operator-leg-actions';
 import { routeLabel } from '@/components/admin/empty-legs/formatters';
+import { formatSARLabel } from '@/components/clients/offer-format';
 import { operatorsAr } from '@/lib/i18n/operators-ar';
+import { formatRiyadhDateTimeAr } from '@/lib/utils/format';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -28,21 +30,6 @@ const STATUS_LABELS: Record<string, string> = {
   expired: 'منتهية',
   cancelled: 'ملغاة',
 };
-
-function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-}
 
 export default async function OperatorLegDetailPage({ params }: PageProps) {
   const { id } = await params;
@@ -77,10 +64,10 @@ export default async function OperatorLegDetailPage({ params }: PageProps) {
 
       <section className="grid gap-3 rounded-xl border border-border bg-navy-card/40 p-5 md:grid-cols-3">
         <Field label="الحالة" value={STATUS_LABELS[leg.status] ?? leg.status} />
-        <Field label="السعر الأصلي" value={Number(leg.original_price).toLocaleString('en-US')} />
-        <Field label="السعر الحالي" value={Number(leg.current_price).toLocaleString('en-US')} />
-        <Field label="المغادرة (من)" value={formatDateTime(leg.departure_window_start)} />
-        <Field label="المغادرة (إلى)" value={formatDateTime(leg.departure_window_end)} />
+        <Field label="السعر الأصلي" value={formatSARLabel(Number(leg.original_price))} />
+        <Field label="السعر الحالي" value={formatSARLabel(Number(leg.current_price))} />
+        <Field label="المغادرة (من)" value={formatRiyadhDateTimeAr(leg.departure_window_start)} />
+        <Field label="المغادرة (إلى)" value={formatRiyadhDateTimeAr(leg.departure_window_end)} />
         <Field label="عدد الركاب الأقصى" value={String(leg.max_passengers)} />
       </section>
 

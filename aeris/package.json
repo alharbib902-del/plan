@@ -31,6 +31,8 @@
     "test:notifications-whatsapp-templates": "tsx lib/notifications/__tests__/whatsapp-templates.test.ts",
     "test:operators-accept-offer-operator-link": "tsx lib/operators/__tests__/accept-offer-operator-link.test.ts",
     "test:operators-canary-stale": "tsx lib/admin/operators/__tests__/canary-stale.test.ts",
+    "test:operators-expiry-status": "tsx lib/operators/__tests__/expiry-status.test.ts",
+    "test:utils-riyadh-format": "tsx lib/utils/__tests__/riyadh-format.test.ts",
     "test:clients-password-reset-token": "tsx lib/clients/__tests__/password-reset-token.test.ts",
     "test:clients-auth-session": "tsx lib/clients/__tests__/auth-session.test.ts",
     "test:clients-email-normalize": "tsx lib/clients/__tests__/email-normalize.test.ts",

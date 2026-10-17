@@ -89,3 +89,56 @@ export function generateRequestNumber(prefix: 'AER' | 'EL' | 'MEV' | 'CGO' | 'SH
   const random = Math.random().toString(36).toUpperCase().slice(2, 5);
   return `${prefix}-${timestamp}${random}`;
 }
+
+// Zone, calendar and digits are pinned because Vercel renders in UTC:
+// without them a Riyadh wall-time shows 3h early and in Arabic-Indic digits.
+const RIYADH_AR_DATE = new Intl.DateTimeFormat('ar-SA', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  calendar: 'gregory',
+  numberingSystem: 'latn',
+  timeZone: 'Asia/Riyadh',
+});
+
+const RIYADH_AR_DATE_TIME = new Intl.DateTimeFormat('ar-SA', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true,
+  calendar: 'gregory',
+  numberingSystem: 'latn',
+  timeZone: 'Asia/Riyadh',
+});
+
+function toValidDate(value: Date | string | null | undefined): Date | null {
+  if (value === null || value === undefined || value === '') return null;
+  const d = typeof value === 'string' ? new Date(value) : value;
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Riyadh-zoned Arabic date ("17 أكتوبر 2026"), or `fallback` when the
+ * value is missing/invalid. Safe for nullable DB values.
+ */
+export function formatRiyadhDateAr(
+  value: Date | string | null | undefined,
+  fallback = '—'
+): string {
+  const d = toValidDate(value);
+  return d ? RIYADH_AR_DATE.format(d) : fallback;
+}
+
+/**
+ * Riyadh-zoned Arabic date + 12h time ("17 أكتوبر 2026، 12:30 ص"), or
+ * `fallback` when the value is missing/invalid.
+ */
+export function formatRiyadhDateTimeAr(
+  value: Date | string | null | undefined,
+  fallback = '—'
+): string {
+  const d = toValidDate(value);
+  return d ? RIYADH_AR_DATE_TIME.format(d) : fallback;
+}
