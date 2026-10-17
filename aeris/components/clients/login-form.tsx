@@ -53,7 +53,9 @@ export function ClientLoginForm() {
           type="email"
           dir="ltr"
           required
-          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
+          autoComplete="username"
+          enterKeyHint="next"
+          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-base text-ink-primary focus:border-gold/50 focus:outline-none sm:text-sm"
         />
       </div>
       <div>
@@ -69,7 +71,9 @@ export function ClientLoginForm() {
           type="password"
           dir="ltr"
           required
-          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
+          autoComplete="current-password"
+          enterKeyHint="go"
+          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-base text-ink-primary focus:border-gold/50 focus:outline-none sm:text-sm"
         />
       </div>
       <label className="font-ar flex items-center gap-2 text-sm text-ink-secondary">

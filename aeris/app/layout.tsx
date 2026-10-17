@@ -7,16 +7,19 @@ import './globals.css';
 // @import in globals.css). IBM Plex Sans Arabic = the primary UI
 // face; Playfair Display = the `font-display` wordmark. Inter was
 // dropped — it had no className usage, only a dead fallback slot.
+// Weights mirror real usage (every weight is a preloaded file): Plex
+// has no font-light, 700 stays for <strong>; Playfair only renders
+// at 400. Add a weight here before using it, or it gets faux-bolded.
 const ibmPlexArabic = IBM_Plex_Sans_Arabic({
   subsets: ['arabic', 'latin'],
-  weight: ['300', '400', '500', '600', '700'],
+  weight: ['400', '500', '600', '700'],
   variable: '--font-ibm-plex-arabic',
   display: 'swap',
 });
 
 const playfairDisplay = Playfair_Display({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+  weight: ['400'],
   variable: '--font-playfair-display',
   display: 'swap',
 });
@@ -27,16 +30,18 @@ export const metadata: Metadata = {
     template: '%s | Aeris',
   },
   description:
-    'منصة Aeris الذكية للطيران الخاص — حجز رحلات، خدمات مخصصة، إخلاء طبي، وشحن متخصص في المملكة العربية السعودية',
+    'منصة Aeris الذكية للطيران الخاص في المملكة العربية السعودية — استئجار طائرة خاصة حسب الطلب، رحلات فارغة بأسعار مخفّضة، وبرنامج Aeris Privilege للمسافرين الدائمين',
   keywords: [
     'طيران خاص',
+    'استئجار طائرة خاصة',
+    'رحلات فارغة',
     'Private Aviation',
+    'Private Jet Charter',
     'Charter Flight',
+    'Empty Legs',
+    'Aeris Privilege',
     'السعودية',
     'Saudi Arabia',
-    'Empty Legs',
-    'MedEvac',
-    'Cargo',
     'Aeris',
   ],
   authors: [{ name: 'Aeris' }],
@@ -53,13 +58,17 @@ export const metadata: Metadata = {
     ],
     apple: '/icons/apple-touch-icon.png',
   },
-  // Apple PWA + format-detection. theme-color must NOT be set here —
-  // it lives in `viewport.themeColor` below per Next.js 14 conventions.
-  other: {
-    'apple-mobile-web-app-capable': 'yes',
-    'apple-mobile-web-app-status-bar-style': 'black-translucent',
-    'apple-mobile-web-app-title': 'Aeris',
-    'format-detection': 'telephone=no',
+  // theme-color must NOT be set here — it lives in `viewport.themeColor`.
+  // `capable` renders `mobile-web-app-capable`; iOS standalone launch
+  // comes from manifest `display: 'standalone'`. black-translucent puts
+  // the page under the status bar — shells pad with safe-area insets.
+  appleWebApp: {
+    capable: true,
+    title: 'Aeris',
+    statusBarStyle: 'black-translucent',
+  },
+  formatDetection: {
+    telephone: false,
   },
   openGraph: {
     type: 'website',
@@ -69,8 +78,9 @@ export const metadata: Metadata = {
     description: 'منصة Aeris الذكية للطيران الخاص',
     siteName: 'Aeris',
   },
+  // No OG/Twitter image exists yet, and summary_large_image needs one.
   twitter: {
-    card: 'summary_large_image',
+    card: 'summary',
     title: 'Aeris — الفضاء يبدأ من هنا',
     description: 'منصة Aeris الذكية للطيران الخاص',
   },
@@ -89,11 +99,12 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   width: 'device-width',
+  viewportFit: 'cover',
   initialScale: 1,
   maximumScale: 5,
   // Phase 4.2: gold to match `manifest.theme_color`. This tints the
-  // mobile browser address bar and the PWA install banner accent.
-  themeColor: '#C9A961',
+  // browser bar; now deep navy (also in the manifest) — gold was too loud.
+  themeColor: '#050B14',
 };
 
 export default function RootLayout({
@@ -107,7 +118,10 @@ export default function RootLayout({
       dir="rtl"
       className={`h-full ${ibmPlexArabic.variable} ${playfairDisplay.variable}`}
     >
-      <body className="min-h-screen bg-navy text-ink antialiased">
+      {/* viewportFit 'cover' lets landscape iPhones draw under the
+          notch; physical left/right insets (they have no logical
+          equivalent) keep in-flow content clear of it. */}
+      <body className="min-h-screen bg-navy pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-ink antialiased">
         {children}
         <ServiceWorkerRegister />
       </body>

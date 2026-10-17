@@ -38,6 +38,7 @@
     "test:clients-offer-action-validators": "tsx lib/clients/__tests__/offer-action-validators.test.ts",
     "test:utils-datetime-local": "tsx lib/utils/__tests__/datetime-local.test.ts",
     "test:utils-uuid": "tsx lib/utils/__tests__/uuid.test.ts",
+    "test:utils-active-nav-href": "tsx lib/utils/__tests__/active-nav-href.test.ts",
     "test:automation-trip-distribution-scoring": "tsx lib/automation/__tests__/trip-distribution-scoring.test.ts",
     "test:clients-empty-legs-validators": "tsx lib/clients/__tests__/empty-legs-validators.test.ts",
     "test:empty-legs-matching-clients": "tsx lib/empty-legs/__tests__/matching-clients.test.ts",

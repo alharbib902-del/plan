@@ -90,6 +90,7 @@ export function ClientSignupForm({
         name="email"
         type="email"
         dir="ltr"
+        autoComplete="email"
         label={clientsAr.signupEmailLabel}
         error={fieldErrors.email}
       />
@@ -97,12 +98,14 @@ export function ClientSignupForm({
         name="password"
         type="password"
         dir="ltr"
+        autoComplete="new-password"
         label={clientsAr.signupPasswordLabel}
         error={fieldErrors.password}
       />
       <Field
         name="full_name"
         type="text"
+        autoComplete="name"
         label={clientsAr.signupFullNameLabel}
         error={fieldErrors.full_name}
       />
@@ -110,6 +113,7 @@ export function ClientSignupForm({
         name="phone"
         type="tel"
         dir="ltr"
+        autoComplete="tel"
         label={clientsAr.signupPhoneLabel}
         error={fieldErrors.phone}
       />
@@ -117,6 +121,8 @@ export function ClientSignupForm({
         name="referral_code"
         type="text"
         dir="ltr"
+        autoComplete="off"
+        enterKeyHint="go"
         label={clientsAr.signupReferralCodeLabel}
         error={fieldErrors.referral_code}
         defaultValue={initialReferralCode}
@@ -154,6 +160,8 @@ function Field({
   name,
   type,
   dir,
+  autoComplete,
+  enterKeyHint = 'next',
   label,
   error,
   optional = false,
@@ -162,6 +170,8 @@ function Field({
   name: string;
   type: string;
   dir?: 'ltr' | 'rtl';
+  autoComplete: string;
+  enterKeyHint?: 'next' | 'go';
   label: string;
   error?: string;
   optional?: boolean;
@@ -180,9 +190,11 @@ function Field({
         name={name}
         type={type}
         dir={dir}
+        autoComplete={autoComplete}
+        enterKeyHint={enterKeyHint}
         required={!optional}
         defaultValue={defaultValue}
-        className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
+        className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-base text-ink-primary focus:border-gold/50 focus:outline-none sm:text-sm"
       />
       {error ? (
         <p className="font-ar mt-1 text-xs text-rose-300" role="alert">

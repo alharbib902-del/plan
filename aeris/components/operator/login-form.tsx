@@ -41,22 +41,32 @@ export function OperatorLoginForm() {
       ) : null}
 
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.email}</label>
+        <label htmlFor="operator-login-email" className="font-ar mb-1 block text-xs text-ink-muted">
+          {ar.labels.email}
+        </label>
         <input
+          id="operator-login-email"
           name="email"
           type="email"
           dir="ltr"
           required
-          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
+          autoComplete="username"
+          enterKeyHint="next"
+          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-base text-ink-primary focus:border-gold/50 focus:outline-none sm:text-sm"
         />
       </div>
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.password}</label>
+        <label htmlFor="operator-login-password" className="font-ar mb-1 block text-xs text-ink-muted">
+          {ar.labels.password}
+        </label>
         <PasswordInput
+          id="operator-login-password"
           name="password"
           dir="ltr"
           required
-          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
+          autoComplete="current-password"
+          enterKeyHint="go"
+          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-base text-ink-primary focus:border-gold/50 focus:outline-none sm:text-sm"
         />
       </div>
       <label className="font-ar flex items-center gap-2 text-sm text-ink-secondary">

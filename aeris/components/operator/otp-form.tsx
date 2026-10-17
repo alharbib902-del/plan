@@ -44,21 +44,31 @@ export function OperatorOtpForm() {
       ) : null}
       <p className="font-ar text-sm text-ink-muted">{ar.subtitle}</p>
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.email}</label>
+        <label htmlFor="operator-otp-email" className="font-ar mb-1 block text-xs text-ink-muted">
+          {ar.labels.email}
+        </label>
         <input
+          id="operator-otp-email"
           name="email"
           type="email"
           dir="ltr"
           required
-          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
+          autoComplete="username"
+          enterKeyHint="next"
+          className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-base text-ink-primary focus:border-gold/50 focus:outline-none sm:text-sm"
         />
       </div>
       <div>
-        <label className="font-ar mb-1 block text-xs text-ink-muted">{ar.labels.code}</label>
+        <label htmlFor="operator-otp-code" className="font-ar mb-1 block text-xs text-ink-muted">
+          {ar.labels.code}
+        </label>
         <input
+          id="operator-otp-code"
           name="code"
           type="text"
           inputMode="numeric"
+          autoComplete="one-time-code"
+          enterKeyHint="go"
           pattern="\d{6}"
           maxLength={6}
           required

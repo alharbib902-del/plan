@@ -60,7 +60,7 @@ export async function DocumentList({ documents }: DocumentListProps) {
   );
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-navy-card/40">
+    <div className="overflow-x-auto rounded-xl border border-border bg-navy-card/40">
       <table className="w-full">
         <thead>
           <tr className="border-b border-border bg-navy-secondary/40">

@@ -59,6 +59,7 @@ export function ClientProfileForm({ initial }: ClientProfileFormProps) {
           type="email"
           dir="ltr"
           readOnly
+          autoComplete="email"
           defaultValue={initial.auth_email}
           className="font-ar w-full cursor-not-allowed rounded-lg border border-border bg-navy-secondary/30 px-3 py-2 text-sm text-ink-muted"
         />
@@ -76,6 +77,7 @@ export function ClientProfileForm({ initial }: ClientProfileFormProps) {
           name="full_name"
           type="text"
           required
+          autoComplete="name"
           defaultValue={initial.full_name}
           className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
         />
@@ -94,6 +96,7 @@ export function ClientProfileForm({ initial }: ClientProfileFormProps) {
           type="tel"
           dir="ltr"
           required
+          autoComplete="tel"
           defaultValue={initial.contact_phone}
           className="font-ar w-full rounded-lg border border-border bg-navy-secondary/60 px-3 py-2 text-sm text-ink-primary focus:border-gold/50 focus:outline-none"
         />
