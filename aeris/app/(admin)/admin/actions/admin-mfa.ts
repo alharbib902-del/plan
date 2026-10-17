@@ -64,7 +64,7 @@ export type StartEnrollmentResult =
     };
 
 export async function startMfaEnrollment(): Promise<StartEnrollmentResult> {
-  const session = await requireAdminSession();
+  const session = await requireAdminSession({ allowMfaUnenrolled: true });
 
   const begin = await beginAdminMfaEnrollment(session.adminUserId);
   if (!begin.ok) {
@@ -110,7 +110,7 @@ export type ConfirmEnrollmentResult =
 export async function confirmMfaEnrollment(input: {
   otp: string;
 }): Promise<ConfirmEnrollmentResult> {
-  const session = await requireAdminSession();
+  const session = await requireAdminSession({ allowMfaUnenrolled: true });
 
   const parsed = otpSchema.safeParse(input);
   if (!parsed.success) {

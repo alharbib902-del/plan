@@ -10,7 +10,11 @@ import {
   validateAdminUserSessionToken,
 } from '@/lib/admin/users/sessions';
 import type { AdminUserRole } from '@/lib/admin/users/queries';
-import { adminRoleAllowed } from '@/lib/admin/rbac';
+import { loadAdminMfaEnrollmentState } from '@/lib/admin/mfa/queries';
+import {
+  evaluateAdminSessionGate,
+  mfaEnrollmentGateApplies,
+} from '@/lib/admin/mfa/session-gate';
 
 /**
  * Admin auth module — Option B Phase 1b (login cutover).
@@ -171,6 +175,12 @@ export interface AdminSessionInfo {
  *       2. `changePassword` Server Action (it does the rotation).
  *       3. `signOut` Server Action (allow logging out even when
  *          rotation is pending).
+ *
+ *   - `allowMfaUnenrolled` (default false) — TOTP MFA is mandatory:
+ *     a fully authenticated admin with no confirmed enrolment is
+ *     redirected to `/admin/account/mfa/enroll`. Only the enrol
+ *     page, the start/confirm enrolment actions and `signOut` opt
+ *     in. Gate order + loop-avoidance: lib/admin/mfa/session-gate.ts.
  */
 export async function requireAdminSession(opts: {
   touchSession?: boolean;
@@ -181,6 +191,7 @@ export async function requireAdminSession(opts: {
    * is redirected to /admin/login/mfa before anything else.
    */
   allowMfaPending?: boolean;
+  allowMfaUnenrolled?: boolean;
   /**
    * Least-privilege gate (SEC-01). When set, an authenticated admin
    * whose role is NOT in this list is redirected to /admin/forbidden.
@@ -217,32 +228,29 @@ export async function requireAdminSession(opts: {
     redirect('/admin/login');
   }
 
-  // PR-3b — MFA challenge gate. Runs BEFORE the
-  // must_change_password gate because a session that just
-  // completed password verification but still owes MFA should
-  // never touch any other admin surface, including the password
-  // rotation page. The MFA challenge page + verify action +
-  // signOut explicitly opt in.
-  if (verdict.session.mfa_pending && opts.allowMfaPending !== true) {
-    redirect('/admin/login/mfa');
+  // Gates, in order (see lib/admin/mfa/session-gate.ts):
+  //   1. PR-3b MFA challenge — a session that passed the password
+  //      but still owes MFA touches nothing else, not even rotation.
+  //   2. PR #89 P1 — seed password not rotated yet (cookie kept;
+  //      the session itself is valid).
+  //   3. Mandatory TOTP enrolment.
+  //   4. SEC-01 least-privilege role gate — defense-in-depth for a
+  //      direct POST to a gated Server Action.
+  const gateState = {
+    mfaPending: verdict.session.mfa_pending,
+    mustChangePassword: userInfo.must_change_password,
+    role: userInfo.role,
+  };
+  const mfaEnrollment = mfaEnrollmentGateApplies(gateState, opts)
+    ? await loadAdminMfaEnrollmentState(verdict.session.admin_user_id)
+    : null;
+  const gate = evaluateAdminSessionGate({ ...gateState, mfaEnrollment }, opts);
+  if (gate.kind === 'redirect') {
+    redirect(gate.to);
   }
-
-  // Round-1 fix for PR #89 P1: deny by default when the admin
-  // has not rotated their seed password yet. Redirect to the
-  // rotation page; do NOT clear the cookie (the session itself
-  // is valid).
-  if (
-    userInfo.must_change_password &&
-    opts.allowMustChangePassword !== true
-  ) {
-    redirect('/admin/account/password');
-  }
-
-  // Least-privilege role gate (SEC-01). Defense-in-depth: the UI also
-  // hides controls a support admin can't use, but a direct POST to a
-  // gated Server Action lands here and is bounced to /admin/forbidden.
-  if (opts.roles && !adminRoleAllowed(userInfo.role, opts.roles)) {
-    redirect('/admin/forbidden');
+  if (gate.kind === 'mfa_state_unavailable') {
+    // Fail closed: never let a failed read stand in for "enrolled".
+    throw new Error('Admin MFA enrolment state unavailable');
   }
 
   if (opts.touchSession !== false) {

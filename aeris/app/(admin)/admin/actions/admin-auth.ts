@@ -19,7 +19,7 @@ import {
   verifyAdminCredentials,
 } from '@/lib/admin/users/queries';
 import { tryFounderSeed } from '@/lib/admin/users/founder-seed';
-import { adminHasActiveMfa } from '@/lib/admin/mfa/queries';
+import { loadAdminMfaEnrollmentState } from '@/lib/admin/mfa/queries';
 import {
   actorIdentityFromHeaders,
   fingerprintAdminLoginActor,
@@ -134,14 +134,25 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
   // PR-3b — if the admin has active MFA enrollment, issue the
   // session in mfa_pending state. requireAdminSession() then
   // routes the user to /admin/login/mfa for the challenge step
-  // before any other admin surface becomes accessible.
-  const mfaActive = await adminHasActiveMfa(verdict.user.id);
+  // before any other admin surface becomes accessible. An admin
+  // without enrollment gets a normal session and is forced into
+  // enrollment by the same gate.
+  const mfaState = await loadAdminMfaEnrollmentState(verdict.user.id);
+  if (mfaState === 'unknown') {
+    // Fail closed: a failed read must never skip the second factor.
+    // Same opaque error as the session-create failure below.
+    await recordAdminLoginAttempt(
+      rateLimit.actorFingerprint,
+      'invalid_password'
+    );
+    return { ok: false, error: 'invalid_credentials' };
+  }
 
   const issued = await issueAdminSession({
     adminUserId: verdict.user.id,
     userAgent,
     ipFingerprint,
-    mfaPending: mfaActive,
+    mfaPending: mfaState === 'enrolled',
   });
   if (!issued) {
     // createAdminUserSession failed — fail-closed. Reported as
@@ -187,15 +198,16 @@ export async function signOut(): Promise<void> {
   // requireAdminSession call also fail-closes on revoked /
   // disabled users so a stale cookie can't trigger revoke loops.
   //
-  // Opt-in to BOTH the must_change_password AND mfa_pending
-  // bypasses — letting a user log out without completing
-  // rotation or MFA challenge is the right UX. Without these
-  // flags, an admin mid-MFA-challenge who wants to walk away
-  // would get the logout request redirected back to the
-  // challenge page.
+  // Opt-in to the must_change_password, mfa_pending AND
+  // MFA-unenrolled bypasses — letting a user log out without
+  // completing rotation, the MFA challenge or enrollment is the
+  // right UX. Without these flags, an admin mid-MFA-challenge who
+  // wants to walk away would get the logout request redirected
+  // back to the challenge page.
   await requireAdminSession({
     allowMustChangePassword: true,
     allowMfaPending: true,
+    allowMfaUnenrolled: true,
   });
   await clearAdminCookieAndSession();
   redirect('/admin/login');

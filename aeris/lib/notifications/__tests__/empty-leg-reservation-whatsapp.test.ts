@@ -17,11 +17,17 @@
  *   6. Under the 1000-character WhatsApp soft limit even with
  *      a long name + long URL
  *   7. No HTML / markdown that WhatsApp would render literally
+ *   8. Phishing guard: the free-text guest name never carries a
+ *      URL, domain, digit, newline or control char, is capped at
+ *      40 chars, and falls back to a generic greeting
  */
 
 import { strict as assert } from 'node:assert';
 
-import { buildEmptyLegReservationWhatsAppBody } from '@/lib/notifications/whatsapp-templates/empty-leg-reservation-wa';
+import {
+  buildEmptyLegReservationWhatsAppBody,
+  sanitiseGreetingName,
+} from '@/lib/notifications/whatsapp-templates/empty-leg-reservation-wa';
 
 let passed = 0;
 let failed = 0;
@@ -99,6 +105,67 @@ test('no HTML / markdown rendered literally', () => {
   const body = buildEmptyLegReservationWhatsAppBody(SAMPLE);
   assert.equal(/<[a-z]+>/i.test(body), false);
   assert.equal(/\*\*[^*]+\*\*/.test(body), false);
+});
+
+// ============================================================
+// Phishing guard — the guest name is attacker-controlled free
+// text sent from Aeris's official number to a typed phone.
+// ============================================================
+
+function greetingLine(body: string): string {
+  return body.split('\n')[0] ?? '';
+}
+
+test('name with a URL cannot carry a link into the message', () => {
+  const body = buildEmptyLegReservationWhatsAppBody({
+    ...SAMPLE,
+    customer_name: 'حسابك موقوف ادخل https://evil.example/login فوراً',
+  });
+  const greeting = greetingLine(body);
+  assert.equal(/https?|\/\/|\.|evil|example|login/.test(greeting), false, greeting);
+  assert.equal(greeting, 'مرحباً حسابك موقوف ادخل فوراً،');
+  // The only URL in the whole body is the real manage URL.
+  assert.equal((body.match(/https?:\/\//g) ?? []).length, 1);
+});
+
+test('bare domains / emails are dropped whole', () => {
+  assert.equal(sanitiseGreetingName('www.evil-aeris.com'), '');
+  assert.equal(sanitiseGreetingName('سارة support@evil.co'), 'سارة');
+});
+
+test('name with phone numbers loses every digit (Western + Arabic-Indic)', () => {
+  const name = sanitiseGreetingName('اتصل +966 50 123 4567 أو ٠٥٠١٢٣٤٥٦٧');
+  assert.equal(/[0-9٠-٩۰-۹+]/.test(name), false, name);
+});
+
+test('newlines / control / bidi characters are stripped', () => {
+  const body = buildEmptyLegReservationWhatsAppBody({
+    ...SAMPLE,
+    customer_name: 'سارة\n\nرسالة مزيفة\r\n‮abc​',
+  });
+  const greeting = greetingLine(body);
+  assert.equal(/[\r‮​]/.test(body), false);
+  assert.match(greeting, /^مرحباً سارة رسالة مزيفة abc،$/);
+});
+
+test('name is capped at 40 characters', () => {
+  const name = sanitiseGreetingName('أ'.repeat(200));
+  assert.equal(Array.from(name).length, 40);
+});
+
+test('name with nothing usable falls back to a generic greeting', () => {
+  for (const raw of ['', '   ', '0501234567', 'https://x.y/z', '***']) {
+    const body = buildEmptyLegReservationWhatsAppBody({
+      ...SAMPLE,
+      customer_name: raw,
+    });
+    assert.equal(greetingLine(body), 'مرحباً،', JSON.stringify(raw));
+  }
+});
+
+test('ordinary Arabic / Latin names are kept (incl. diacritics, hyphen)', () => {
+  assert.equal(sanitiseGreetingName('  مُحَمَّد   العتيبي '), 'مُحَمَّد العتيبي');
+  assert.equal(sanitiseGreetingName("Anne-Marie O'Neil"), "Anne-Marie O'Neil");
 });
 
 // ============================================================

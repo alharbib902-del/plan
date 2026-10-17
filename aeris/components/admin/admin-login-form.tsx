@@ -37,15 +37,16 @@ export function AdminLoginForm() {
         //      enforces this server-side too).
         //   2. must_change_password → /admin/account/password
         //   3. default → /admin/leads
-        // Using window.location.href (hard nav) so the server
-        // layout re-evaluates all gates on the next request.
-        if (result.mfa_required) {
-          window.location.href = '/admin/login/mfa';
-        } else if (result.must_change_password) {
-          window.location.href = '/admin/account/password';
-        } else {
-          window.location.href = '/admin/leads';
-        }
+        // Full document load (not router.push) on purpose so the
+        // server layout re-evaluates all gates with the new
+        // session cookie; the absolute URL keeps that intent
+        // explicit for @next/next/no-location-assign-relative-destination.
+        const destination = result.mfa_required
+          ? '/admin/login/mfa'
+          : result.must_change_password
+            ? '/admin/account/password'
+            : '/admin/leads';
+        window.location.assign(new URL(destination, window.location.origin));
       } catch (err) {
         console.error('[admin-login] sign-in error', err);
         setError('تعذّر تسجيل الدخول. حاول مرة أخرى.');

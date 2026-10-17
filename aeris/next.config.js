@@ -15,6 +15,10 @@ const nextConfig = {
   },
   experimental: {
     serverActions: {
+      // Global (Next has no per-action limit). Sized for the admin-only
+      // adminUploadOperatorDocument (app/actions/operators.ts), which
+      // posts PDF/image regulatory documents as multipart FormData;
+      // every other Server Action takes small JSON-ish payloads.
       bodySizeLimit: '10mb',
     },
   },
@@ -91,5 +95,15 @@ module.exports = withSentryConfig(nextConfig, {
   authToken: process.env.SENTRY_AUTH_TOKEN,
   sourcemaps: {
     disable: !sentrySourceMapsEnabled,
+  },
+  // No Session Replay integration and no `debug` option are configured,
+  // so that SDK code is dead weight. Tracing is deliberately NOT
+  // excluded: it is off by default but can be switched on via
+  // SENTRY_TRACES_SAMPLE_RATE without a code change.
+  bundleSizeOptimizations: {
+    excludeDebugStatements: true,
+    excludeReplayIframe: true,
+    excludeReplayShadowDom: true,
+    excludeReplayWorker: true,
   },
 });

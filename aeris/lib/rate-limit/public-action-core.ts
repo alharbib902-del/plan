@@ -129,6 +129,117 @@ export const PUBLIC_ACTION_LIMITS: Record<
   },
 };
 
+/**
+ * Sub-buckets for public auth surfaces that have no dedicated
+ * `action` value. `public_action_attempts.action` is pinned by a DB
+ * CHECK constraint to the PublicAction set, so each bucket is stored
+ * under its parent action but HMAC-scoped by bucket name (see
+ * bucketActorIdentity): counts never mix with the parent (signup
+ * failures can't lock a user out of login) and each bucket carries
+ * its own limits — no migration needed.
+ *
+ * `*_email` buckets are keyed by the normalised target email instead
+ * of the caller IP, so a distributed attacker can't mail-bomb one
+ * inbox. They are counted for every request whether or not the
+ * account exists, so a lockout reveals nothing about existence.
+ */
+export type PublicActionBucket =
+  | 'client_signup'
+  | 'client_password_reset'
+  | 'client_password_reset_email'
+  | 'operator_signup'
+  | 'operator_password_reset'
+  | 'operator_password_reset_email'
+  | 'operator_otp_verify';
+
+export interface PublicActionBucketConfig {
+  action: PublicAction;
+  limits: PublicActionRateLimitConfig;
+}
+
+export const PUBLIC_ACTION_BUCKETS: Record<
+  PublicActionBucket,
+  PublicActionBucketConfig
+> = {
+  client_signup: {
+    action: 'client_login',
+    limits: {
+      failureWindowMs: 15 * 60 * 1000,
+      maxFailures: 5,
+      attemptWindowMs: 60 * 60 * 1000,
+      maxAttempts: 10,
+    },
+  },
+  client_password_reset: {
+    action: 'client_login',
+    limits: {
+      failureWindowMs: 15 * 60 * 1000,
+      maxFailures: 5,
+      attemptWindowMs: 60 * 60 * 1000,
+      maxAttempts: 10,
+    },
+  },
+  client_password_reset_email: {
+    action: 'client_login',
+    limits: {
+      failureWindowMs: 15 * 60 * 1000,
+      maxFailures: 3,
+      attemptWindowMs: 60 * 60 * 1000,
+      maxAttempts: 3,
+    },
+  },
+  operator_signup: {
+    action: 'operator_login',
+    limits: {
+      failureWindowMs: 15 * 60 * 1000,
+      maxFailures: 5,
+      attemptWindowMs: 60 * 60 * 1000,
+      maxAttempts: 10,
+    },
+  },
+  operator_password_reset: {
+    action: 'operator_login',
+    limits: {
+      failureWindowMs: 15 * 60 * 1000,
+      maxFailures: 5,
+      attemptWindowMs: 60 * 60 * 1000,
+      maxAttempts: 10,
+    },
+  },
+  operator_password_reset_email: {
+    action: 'operator_login',
+    limits: {
+      failureWindowMs: 15 * 60 * 1000,
+      maxFailures: 3,
+      attemptWindowMs: 60 * 60 * 1000,
+      maxAttempts: 3,
+    },
+  },
+  // The OTP row itself locks after 5 wrong codes; this per-IP cap
+  // stops spraying codes across many operators' OTPs and probing
+  // which auth emails exist.
+  operator_otp_verify: {
+    action: 'operator_login',
+    limits: {
+      failureWindowMs: 15 * 60 * 1000,
+      maxFailures: 5,
+      attemptWindowMs: 60 * 60 * 1000,
+      maxAttempts: 10,
+    },
+  },
+};
+
+export function bucketActorIdentity(
+  bucket: PublicActionBucket,
+  actorIdentity: string
+): string {
+  return `bucket:${bucket}|${actorIdentity}`;
+}
+
+export function emailActorIdentity(email: string): string {
+  return `email:${email.trim().toLowerCase()}`;
+}
+
 function secondsUntil(until: number, now: number): number {
   return Math.max(1, Math.ceil((until - now) / 1000));
 }

@@ -1,17 +1,22 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { LogOut } from 'lucide-react';
 
 import { requireAdminSession } from '@/lib/admin/auth';
 import { loadAdminMfaSecret } from '@/lib/admin/mfa/queries';
 import { startMfaEnrollment } from '@/app/(admin)/admin/actions/admin-mfa';
+import { signOut } from '@/app/(admin)/admin/actions/admin-auth';
 import { AdminMfaEnrollForm } from '@/components/admin/admin-mfa-enroll-form';
 
 /**
  * Admin MFA enrollment page.
  *
- * INSIDE the (protected) route group on purpose — only fully-
- * authenticated admins (NOT mfa_pending, NOT must_change_password)
- * can enroll. The layout's default gates ensure this.
+ * OUTSIDE the (protected) route group (whose layout would bounce an
+ * un-enrolled admin straight back here), but still only reachable
+ * by fully-authenticated admins (NOT mfa_pending, NOT
+ * must_change_password) via the inline requireAdminSession() gates.
+ * MFA is mandatory, so this is where every un-enrolled admin lands;
+ * it carries its own sign-out since there is no admin shell here.
  *
  * If the admin is ALREADY fully enrolled, redirect to the manage
  * page (they should disable/regenerate from there, not re-enroll).
@@ -32,7 +37,10 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminMfaEnrollPage() {
-  const session = await requireAdminSession();
+  // MFA is mandatory: requireAdminSession() forwards every
+  // un-enrolled admin HERE, so this page must opt out of that gate
+  // (it still requires a rotated password + no pending challenge).
+  const session = await requireAdminSession({ allowMfaUnenrolled: true });
 
   // If fully enrolled already, redirect to manage.
   const existing = await loadAdminMfaSecret(session.adminUserId);
@@ -65,8 +73,9 @@ export default async function AdminMfaEnrollPage() {
           تفعيل المصادقة الثنائية
         </h1>
         <p className="font-ar mt-2 text-sm text-ink-muted">
-          أضف طبقة حماية إضافية لحسابك. ستحتاج إلى تطبيق مصادقة على هاتفك
-          (Google Authenticator، Authy، 1Password…).
+          المصادقة الثنائية إلزامية لجميع حسابات فريق Aeris، ولن تتمكّن من
+          الوصول إلى لوحة التحكم قبل تفعيلها. ستحتاج إلى تطبيق مصادقة على
+          هاتفك (Google Authenticator، Authy، 1Password…).
         </p>
       </header>
 
@@ -75,6 +84,16 @@ export default async function AdminMfaEnrollPage() {
         secretBase32={enrollment.secret_base32}
         otpAuthUrl={enrollment.otpauth_url}
       />
+
+      <form action={signOut}>
+        <button
+          type="submit"
+          className="font-ar inline-flex items-center gap-2 rounded-md border border-border bg-navy-card/60 px-4 py-2 text-sm text-ink-secondary transition-all hover:border-gold/40 hover:text-gold-light"
+        >
+          <LogOut className="h-4 w-4" aria-hidden />
+          تسجيل الخروج
+        </button>
+      </form>
     </section>
   );
 }

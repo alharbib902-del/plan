@@ -57,7 +57,8 @@ export function AdminMfaDisableForm() {
     return (
       <div className="rounded-xl border border-rose-400/40 bg-rose-500/5 p-5">
         <p className="font-ar text-sm text-rose-100">
-          إيقاف المصادقة الثنائية يُضعف حماية حسابك. تأكّد أنك تفهم ذلك.
+          المصادقة الثنائية إلزامية: بعد إيقافها ستُنقل مباشرةً لإعادة
+          تفعيلها (مثلاً على جهاز جديد) قبل متابعة العمل.
         </p>
         <button
           type="button"

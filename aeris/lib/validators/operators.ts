@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { normaliseSaudiPhoneE164 } from '@/lib/notifications/whatsapp-provider';
+
 /**
  * Phase 8 — Zod schemas for the 9 admin Server Actions in
  * `app/actions/operators.ts`. Each schema mirrors the
@@ -222,11 +224,27 @@ const passwordPlaintextSchema = z
   .regex(/[A-Za-z]/, { message: 'يجب أن تحتوي حرفاً واحداً على الأقل' })
   .regex(/[0-9]/, { message: 'يجب أن تحتوي رقماً واحداً على الأقل' });
 
+// Charter bookings are linked to an operator account by an EXACT
+// E.164 match of contact_phone against the offer's operator_phone,
+// so the stored value must be canonical (+9665…), never "05…".
+const E164 = /^\+[1-9]\d{6,14}$/;
+
 const phoneSchema = z
   .string()
   .trim()
   .min(6, { message: 'رقم الجوّال قصير' })
-  .max(20, { message: 'رقم الجوّال طويل' });
+  .max(20, { message: 'رقم الجوّال طويل' })
+  .transform((value, ctx) => {
+    const normalised = normaliseSaudiPhoneE164(value);
+    if (!normalised || !E164.test(normalised)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'رقم الجوّال غير صالح',
+      });
+      return z.NEVER;
+    }
+    return normalised;
+  });
 
 const companyNameSchema = z
   .string()

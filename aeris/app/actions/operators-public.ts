@@ -38,8 +38,12 @@ import {
 } from '@/lib/validators/operators';
 import {
   checkPublicActionRateLimit,
+  passPublicActionBucket,
   recordPublicActionAttempt,
+  recordPublicActionBucketAttempt,
 } from '@/lib/rate-limit/public-action';
+import { emailActorIdentity } from '@/lib/rate-limit/public-action-core';
+import { revokeOtherOperatorSessions } from '@/lib/operators/session-store';
 
 /**
  * Phase 8 PR 2c — public + authed operator portal Server
@@ -179,6 +183,10 @@ export async function operatorSignup(input: {
   const ip = await clientIp();
   if (!ip) return { ok: false, error: 'ip_required' };
 
+  // Throttle BEFORE bcrypt so a signup flood can't pin the CPU.
+  const signupFingerprint = await passPublicActionBucket('operator_signup');
+  if (!signupFingerprint) return { ok: false, error: 'rate_limited' };
+
   let hash: string;
   try {
     hash = await hashOperatorPassword(parsed.data.password);
@@ -204,6 +212,11 @@ export async function operatorSignup(input: {
   const result = data as
     | { ok: true; operator_id: string; signup_status: 'pending' }
     | { ok: false; error: string };
+  await recordPublicActionBucketAttempt(
+    'operator_signup',
+    signupFingerprint,
+    result.ok ? 'success' : 'validation_failed'
+  );
   if (!result.ok) return { ok: false, error: result.error ?? 'unknown' };
 
   return result;
@@ -381,6 +394,32 @@ export async function operatorRequestPasswordReset(input: {
       field_errors: fieldErrorsFromZod(parsed.error.issues),
     };
   }
+
+  // Throttle before minting: per IP (spraying many addresses) and per
+  // target email (flooding one operator's email + WhatsApp). The email
+  // bucket counts every request whether or not the account exists, so
+  // a lockout leaks nothing. Its rejections are NOT recorded, otherwise
+  // an attacker could keep a victim's reset locked indefinitely.
+  const ipFingerprint = await passPublicActionBucket('operator_password_reset');
+  if (!ipFingerprint) return { ok: false, error: 'rate_limited' };
+  const emailFingerprint = await passPublicActionBucket(
+    'operator_password_reset_email',
+    emailActorIdentity(parsed.data.email),
+    { recordRejection: false }
+  );
+  if (!emailFingerprint) return { ok: false, error: 'rate_limited' };
+  await Promise.all([
+    recordPublicActionBucketAttempt(
+      'operator_password_reset',
+      ipFingerprint,
+      'success'
+    ),
+    recordPublicActionBucketAttempt(
+      'operator_password_reset_email',
+      emailFingerprint,
+      'success'
+    ),
+  ]);
 
   // Mint token first; on env failure surface a generic
   // 'rpc_failed' (don't leak env state to client).
@@ -569,6 +608,9 @@ export async function operatorVerifyOtp(input: {
     };
   }
 
+  const otpFingerprint = await passPublicActionBucket('operator_otp_verify');
+  if (!otpFingerprint) return { ok: false, error: 'rate_limited' };
+
   const client = createAdminClient();
 
   // Look up operator id by auth_email (case-insensitive,
@@ -583,7 +625,14 @@ export async function operatorVerifyOtp(input: {
     console.error('[operators-public.operatorVerifyOtp] op lookup error', opErr);
     return { ok: false, error: 'rpc_failed' };
   }
-  if (!opRow) return { ok: false, error: 'invalid_credentials' };
+  if (!opRow) {
+    await recordPublicActionBucketAttempt(
+      'operator_otp_verify',
+      otpFingerprint,
+      'auth_failed'
+    );
+    return { ok: false, error: 'invalid_credentials' };
+  }
 
   const codeHash = createHash('sha256').update(parsed.data.code).digest('hex');
 
@@ -598,7 +647,19 @@ export async function operatorVerifyOtp(input: {
   const result = data as
     | { ok: true; otp_id: string; purpose: string }
     | { ok: false; error: string };
-  if (!result.ok) return { ok: false, error: result.error ?? 'unknown' };
+  if (!result.ok) {
+    await recordPublicActionBucketAttempt(
+      'operator_otp_verify',
+      otpFingerprint,
+      'auth_failed'
+    );
+    return { ok: false, error: result.error ?? 'unknown' };
+  }
+  await recordPublicActionBucketAttempt(
+    'operator_otp_verify',
+    otpFingerprint,
+    'success'
+  );
 
   // OTP verified -> create a fresh session (DB-side helper
   // expects we set it via operator_login_create_session).
@@ -717,7 +778,7 @@ export async function operatorConsumeWelcomeToken(input: {
 // We do a direct UPDATE on operators (NOT via admin_reset RPC)
 // because admin_reset revokes all sessions — that would log
 // the operator out mid-flow. Operator-self-change preserves
-// the current session.
+// the current session and revokes every OTHER one.
 // ============================================================
 
 export type OperatorChangePasswordResult =
@@ -793,6 +854,15 @@ export async function operatorChangePassword(input: {
   if (updErr) {
     console.error('[operators-public.operatorChangePassword] update error', updErr);
     return { ok: false, error: 'rpc_failed' };
+  }
+
+  // A leaked cookie must not outlive the rotation.
+  const rawToken = await getRawSessionTokenFromCookie();
+  if (rawToken) {
+    await revokeOtherOperatorSessions(
+      session.operator_id,
+      hashSessionToken(rawToken)
+    );
   }
 
   revalidatePath('/operator/profile');

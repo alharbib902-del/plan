@@ -36,6 +36,32 @@ export interface BuildEmptyLegReservationWhatsAppBodyInput {
   hold_minutes: number;
 }
 
+const GREETING_NAME_MAX_CHARS = 40;
+
+/**
+ * The guest name is free text from an anonymous form, and the message
+ * goes from Aeris's official number to a phone the guest typed — so a
+ * raw echo would let anyone send "Aeris-branded" text (links, phone
+ * numbers, instructions) to an arbitrary victim. URL/domain/email-like
+ * tokens are dropped whole, then only letters, combining marks (Arabic
+ * diacritics), spaces and name punctuation survive: no digits, dots,
+ * slashes, '@' or newlines means no link or phone number can get
+ * through. Returns '' when nothing usable is left.
+ */
+export function sanitiseGreetingName(raw: string): string {
+  const lettersOnly = raw
+    .normalize('NFKC')
+    .replace(/\S*[.:/\\@]\S*/g, ' ')
+    .replace(/[^\p{L}\p{M}\s'-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const capped = Array.from(lettersOnly)
+    .slice(0, GREETING_NAME_MAX_CHARS)
+    .join('')
+    .trim();
+  return /\p{L}/u.test(capped) ? capped : '';
+}
+
 export function buildEmptyLegReservationWhatsAppBody(
   input: BuildEmptyLegReservationWhatsAppBodyInput
 ): string {
@@ -47,8 +73,9 @@ export function buildEmptyLegReservationWhatsAppBody(
     manage_url,
     hold_minutes,
   } = input;
+  const name = sanitiseGreetingName(customer_name);
   return [
-    'مرحباً ' + customer_name + '،',
+    name ? 'مرحباً ' + name + '،' : 'مرحباً،',
     '',
     'تم استلام طلب حجزك للرحلة ' +
       leg_number +

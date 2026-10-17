@@ -16,6 +16,7 @@ import {
   hashRecoveryCode,
   mintRecoveryCodes,
 } from '@/lib/admin/mfa/recovery-codes';
+import type { AdminMfaEnrollmentState } from '@/lib/admin/mfa/session-gate';
 
 /**
  * Server-only DB layer for admin MFA (Option B Phase 1c).
@@ -144,6 +145,29 @@ export async function adminHasActiveMfa(
   return row !== null && row.enrolled_at !== null;
 }
 
+/**
+ * Tri-state enrolment read for the security gates. Unlike
+ * adminHasActiveMfa (which folds a read error into "not enrolled"),
+ * 'unknown' lets callers fail CLOSED: the login must not skip the
+ * challenge and enrolment must not clobber a live secret just
+ * because a read failed.
+ */
+export async function loadAdminMfaEnrollmentState(
+  adminUserId: string
+): Promise<AdminMfaEnrollmentState> {
+  const { data, error } = await store()
+    .from(SECRETS_TABLE)
+    .select('enrolled_at')
+    .eq('admin_user_id', adminUserId)
+    .maybeSingle();
+  if (error) {
+    console.error('[admin-mfa.loadEnrollmentState] read failed', error);
+    return 'unknown';
+  }
+  const row = data as { enrolled_at: string | null } | null;
+  return row !== null && row.enrolled_at !== null ? 'enrolled' : 'not_enrolled';
+}
+
 // --------------------------------------------------------------
 // 2. Begin enrollment — overwrites any pending secret
 // --------------------------------------------------------------
@@ -161,8 +185,14 @@ export type BeginEnrollmentResult =
 export async function beginAdminMfaEnrollment(
   adminUserId: string
 ): Promise<BeginEnrollmentResult> {
-  const existing = await loadAdminMfaSecret(adminUserId);
-  if (existing && existing.enrolled_at !== null) {
+  // The upsert below overwrites the row, so a failed read must
+  // never be mistaken for "not enrolled" — that would silently
+  // replace an active secret with a pending one (MFA dropped).
+  const state = await loadAdminMfaEnrollmentState(adminUserId);
+  if (state === 'unknown') {
+    return { ok: false, reason: 'storage_error' };
+  }
+  if (state === 'enrolled') {
     return { ok: false, reason: 'already_enrolled' };
   }
 

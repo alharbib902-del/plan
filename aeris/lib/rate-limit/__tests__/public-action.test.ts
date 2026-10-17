@@ -12,8 +12,11 @@
 import { strict as assert } from 'node:assert';
 
 import {
+  PUBLIC_ACTION_BUCKETS,
   PUBLIC_ACTION_LIMITS,
   actorIdentityFromHeaders,
+  bucketActorIdentity,
+  emailActorIdentity,
   evaluatePublicActionRateLimit,
   fingerprintPublicActionActor,
   firstForwardedIp,
@@ -358,6 +361,99 @@ test('failureWindow < attemptWindow for every action', () => {
       cfg.failureWindowMs < cfg.attemptWindowMs,
       `${action} failureWindow >= attemptWindow`
     );
+  }
+});
+
+// ============================================================
+// Sub-buckets (signup / password reset / OTP verify)
+// ============================================================
+
+// The DB CHECK constraint on public_action_attempts.action (migration
+// 20260614000001) — buckets must store under one of these.
+const DB_ALLOWED_ACTIONS = new Set([
+  'flight_request',
+  'empty_leg_reserve',
+  'cargo_intake',
+  'medevac_intake',
+  'client_login',
+  'operator_login',
+  'client_authed_mutation',
+]);
+
+test('every bucket stores under a DB-allowed parent action (no migration)', () => {
+  for (const [bucket, cfg] of Object.entries(PUBLIC_ACTION_BUCKETS)) {
+    assert.ok(
+      DB_ALLOWED_ACTIONS.has(cfg.action),
+      `${bucket} → ${cfg.action} is not allowed by the CHECK constraint`
+    );
+  }
+});
+
+test('bucket fingerprints never collide with the parent action bucket', () => {
+  const secret = 'test-secret-at-least-16-chars';
+  const ip = 'ip:203.0.113.7';
+  const loginFp = fingerprintPublicActionActor(ip, 'client_login', secret);
+  const signupFp = fingerprintPublicActionActor(
+    bucketActorIdentity('client_signup', ip),
+    'client_login',
+    secret
+  );
+  const resetFp = fingerprintPublicActionActor(
+    bucketActorIdentity('client_password_reset', ip),
+    'client_login',
+    secret
+  );
+  assert.notEqual(signupFp, loginFp);
+  assert.notEqual(resetFp, loginFp);
+  assert.notEqual(signupFp, resetFp);
+});
+
+test('email identity is case/space-insensitive and distinct from IP identity', () => {
+  assert.equal(
+    emailActorIdentity('  Foo@Example.COM '),
+    emailActorIdentity('foo@example.com')
+  );
+  assert.notEqual(emailActorIdentity('1.2.3.4'), 'ip:1.2.3.4');
+});
+
+test('per-email reset buckets allow 3/hour, then lock', () => {
+  for (const bucket of [
+    'client_password_reset_email',
+    'operator_password_reset_email',
+  ] as const) {
+    const limits = PUBLIC_ACTION_BUCKETS[bucket].limits;
+    const two = [5, 10].map((m) => ({
+      outcome: 'success' as const,
+      attempted_at: minutesAgo(m),
+    }));
+    assert.deepEqual(evaluatePublicActionRateLimit(two, limits, NOW), {
+      ok: true,
+    });
+    const three = [...two, { outcome: 'success' as const, attempted_at: minutesAgo(1) }];
+    const verdict = evaluatePublicActionRateLimit(three, limits, NOW);
+    assert.equal(verdict.ok, false, bucket);
+  }
+});
+
+test('signup bucket locks after 5 rejected signups in 15 min', () => {
+  const limits = PUBLIC_ACTION_BUCKETS.client_signup.limits;
+  const rejected = [1, 2, 3, 4, 5].map((m) => ({
+    outcome: 'validation_failed' as const,
+    attempted_at: minutesAgo(m),
+  }));
+  const verdict = evaluatePublicActionRateLimit(rejected, limits, NOW);
+  assert.equal(verdict.ok, false);
+  if (!verdict.ok) assert.equal(verdict.reason, 'too_many_failures');
+});
+
+test('bucket limits are sane (failureWindow ≤ attemptWindow, caps ≥ 3)', () => {
+  for (const [bucket, { limits }] of Object.entries(PUBLIC_ACTION_BUCKETS)) {
+    assert.ok(
+      limits.failureWindowMs <= limits.attemptWindowMs,
+      `${bucket} failureWindow > attemptWindow`
+    );
+    assert.ok(limits.maxAttempts >= 3, `${bucket} maxAttempts < 3`);
+    assert.ok(limits.maxFailures >= 3, `${bucket} maxFailures < 3`);
   }
 });
 

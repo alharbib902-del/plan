@@ -18,7 +18,8 @@ import type {
  *
  * Mutations (insert / revoke) go through PR 2a RPCs — never
  * direct table writes — so this module is read-only EXCEPT
- * for an admin "force logout" which can land later.
+ * for revokeOtherOperatorSessions (self-service password
+ * change) and an admin "force logout" which can land later.
  */
 
 export async function getOperatorRowById(
@@ -55,6 +56,28 @@ export async function listActiveSessionsForOperator(
     throw new Error(`listActiveSessionsForOperator failed: ${error.message}`);
   }
   return (data ?? []) as OperatorSessionRow[];
+}
+
+/**
+ * Revoke every live session of the operator except the caller's own
+ * (identified by its token hash), so a leaked cookie stops working
+ * once the password rotates. Fail-soft like the admin equivalent:
+ * the rotation itself already succeeded.
+ */
+export async function revokeOtherOperatorSessions(
+  operatorId: string,
+  keepTokenHash: string
+): Promise<void> {
+  const client = createAdminClient();
+  const { error } = await client
+    .from('operator_sessions')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('operator_id', operatorId)
+    .neq('token_hash', keepTokenHash)
+    .is('revoked_at', null);
+  if (error) {
+    console.error('[operators.session-store] revokeOtherOperatorSessions', error);
+  }
 }
 
 export interface OperatorDashboardStats {

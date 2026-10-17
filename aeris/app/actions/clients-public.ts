@@ -32,6 +32,11 @@ import {
   clientRequestPasswordResetSchema,
   clientVerifyPasswordResetSchema,
 } from '@/lib/validators/clients';
+import {
+  passPublicActionBucket,
+  recordPublicActionBucketAttempt,
+} from '@/lib/rate-limit/public-action';
+import { emailActorIdentity } from '@/lib/rate-limit/public-action-core';
 /**
  * Phase 9 PR 1 — public + authed client portal Server Actions.
  *
@@ -173,6 +178,12 @@ export async function clientSignup(input: {
   const ip = await clientIp();
   if (!ip) return { ok: false, error: 'ip_required' };
 
+  // Throttle BEFORE the cost-12 bcrypt hash so a signup flood can't
+  // pin the CPU. RPC rejections (duplicate_email, …) count as
+  // failures, which also slows email-existence probing.
+  const signupFingerprint = await passPublicActionBucket('client_signup');
+  if (!signupFingerprint) return { ok: false, error: 'rate_limited' };
+
   let passwordHash: string;
   try {
     passwordHash = await hashClientPassword(parsed.data.password);
@@ -199,8 +210,18 @@ export async function clientSignup(input: {
     | { ok: true; client_id: string }
     | { ok: false; error: string };
   if (!result.ok) {
+    await recordPublicActionBucketAttempt(
+      'client_signup',
+      signupFingerprint,
+      'validation_failed'
+    );
     return { ok: false, error: result.error };
   }
+  await recordPublicActionBucketAttempt(
+    'client_signup',
+    signupFingerprint,
+    'success'
+  );
 
   // Best-effort referral linking. A blank / unknown / self / duplicate
   // code is a no-op (the RPC decides) and must NEVER fail the signup —
@@ -294,6 +315,32 @@ export async function clientRequestPasswordReset(input: {
       field_errors: fieldErrorsFromZod(parsed.error.issues),
     };
   }
+
+  // Throttle before minting: per IP (spraying many addresses) and per
+  // target email (flooding one inbox). The email bucket counts every
+  // request whether or not the account exists, so a lockout leaks
+  // nothing. Its rejections are NOT recorded, otherwise an attacker
+  // could keep a victim's reset locked indefinitely.
+  const ipFingerprint = await passPublicActionBucket('client_password_reset');
+  if (!ipFingerprint) return { ok: false, error: 'rate_limited' };
+  const emailFingerprint = await passPublicActionBucket(
+    'client_password_reset_email',
+    emailActorIdentity(parsed.data.email),
+    { recordRejection: false }
+  );
+  if (!emailFingerprint) return { ok: false, error: 'rate_limited' };
+  await Promise.all([
+    recordPublicActionBucketAttempt(
+      'client_password_reset',
+      ipFingerprint,
+      'success'
+    ),
+    recordPublicActionBucketAttempt(
+      'client_password_reset_email',
+      emailFingerprint,
+      'success'
+    ),
+  ]);
 
   // Mint placeholder token first (real client_id is bound by
   // the RPC's email→client lookup; the payload's client_id

@@ -55,6 +55,8 @@ interface FakeOptions {
   selectReturning?: unknown;
   /** Count returned by `.select(cols, {count:'exact', head:true})...` */
   countReturning?: number;
+  /** Error returned by a plain `.select(...).maybeSingle()` read. */
+  selectError?: { code?: string; message?: string };
 }
 
 interface FakeResult {
@@ -108,6 +110,9 @@ function buildFake(opts: FakeOptions = {}): FakeResult {
       // Returning shape: an update-then-select chain returns the
       // affected row; a plain select chain returns the row.
       const updated = call.ops.some((o) => o.startsWith('update'));
+      if (!updated && opts.selectError) {
+        return { data: null, error: opts.selectError };
+      }
       const data = updated ? opts.updateReturning ?? null : opts.selectReturning ?? null;
       return { data, error: null };
     };
@@ -211,8 +216,92 @@ console.log('\n[admin-mfa-queries-structural] running …\n');
 
 async function run(): Promise<void> {
   // Import dynamically so the hatch is installed first.
-  const { consumeAdminMfaRecoveryCode, verifyAdminMfaOtpChallenge } =
-    await import('@/lib/admin/mfa/queries');
+  const {
+    beginAdminMfaEnrollment,
+    consumeAdminMfaRecoveryCode,
+    loadAdminMfaEnrollmentState,
+    verifyAdminMfaOtpChallenge,
+  } = await import('@/lib/admin/mfa/queries');
+
+  // ============================================================
+  // loadAdminMfaEnrollmentState (mandatory-MFA gate input)
+  // ============================================================
+
+  await test('enrollment state: confirmed row → enrolled', async () => {
+    installFake(
+      buildFake({ selectReturning: { enrolled_at: '2026-01-01T00:00:00Z' } })
+        .client
+    );
+    try {
+      assert.equal(await loadAdminMfaEnrollmentState('admin-A'), 'enrolled');
+    } finally {
+      uninstallFake();
+    }
+  });
+
+  await test('enrollment state: pending or missing row → not_enrolled', async () => {
+    installFake(buildFake({ selectReturning: { enrolled_at: null } }).client);
+    try {
+      assert.equal(
+        await loadAdminMfaEnrollmentState('admin-A'),
+        'not_enrolled'
+      );
+    } finally {
+      uninstallFake();
+    }
+    installFake(buildFake({ selectReturning: null }).client);
+    try {
+      assert.equal(
+        await loadAdminMfaEnrollmentState('admin-A'),
+        'not_enrolled'
+      );
+    } finally {
+      uninstallFake();
+    }
+  });
+
+  await test('enrollment state: read error → unknown (fail closed)', async () => {
+    installFake(
+      buildFake({ selectError: { code: '57014', message: 'timeout' } }).client
+    );
+    try {
+      assert.equal(await loadAdminMfaEnrollmentState('admin-A'), 'unknown');
+    } finally {
+      uninstallFake();
+    }
+  });
+
+  await test('begin enrollment: read error never upserts over a live secret', async () => {
+    const fake = buildFake({
+      selectError: { code: '57014', message: 'timeout' },
+    });
+    installFake(fake.client);
+    try {
+      const result = await beginAdminMfaEnrollment('admin-A');
+      assert.deepEqual(result, { ok: false, reason: 'storage_error' });
+      assert.equal(
+        fake.calls.some((c) => c.ops.includes('upsert')),
+        false,
+        'upsert must not run when the enrolment read failed'
+      );
+    } finally {
+      uninstallFake();
+    }
+  });
+
+  await test('begin enrollment: already enrolled → refused, no upsert', async () => {
+    const fake = buildFake({
+      selectReturning: { enrolled_at: '2026-01-01T00:00:00Z' },
+    });
+    installFake(fake.client);
+    try {
+      const result = await beginAdminMfaEnrollment('admin-A');
+      assert.deepEqual(result, { ok: false, reason: 'already_enrolled' });
+      assert.equal(fake.calls.some((c) => c.ops.includes('upsert')), false);
+    } finally {
+      uninstallFake();
+    }
+  });
 
   // ============================================================
   // consumeAdminMfaRecoveryCode

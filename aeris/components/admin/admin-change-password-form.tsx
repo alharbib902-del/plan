@@ -56,10 +56,14 @@ export function AdminChangePasswordForm({
         }
         setSuccess(true);
         // Brief delay so the user sees the success banner before
-        // landing on the dashboard. Hard nav so the layout re-
-        // evaluates the must_change_password gate (now cleared).
+        // landing on the dashboard. Hard nav (absolute URL — see
+        // admin-login-form.tsx) so the layout re-evaluates the
+        // must_change_password gate (now cleared) and, for an
+        // admin without TOTP, forwards to MFA enrolment.
         setTimeout(() => {
-          window.location.href = '/admin/leads';
+          window.location.assign(
+            new URL('/admin/leads', window.location.origin)
+          );
         }, 800);
       } catch (err) {
         console.error('[admin-change-password] error', err);

@@ -4,13 +4,17 @@ import { headers } from 'next/headers';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
+  PUBLIC_ACTION_BUCKETS,
   PUBLIC_ACTION_LIMITS,
   actorIdentityFromHeaders,
+  bucketActorIdentity,
   evaluatePublicActionRateLimit,
   fingerprintPublicActionActor,
   type PublicAction,
   type PublicActionAttemptOutcome,
   type PublicActionAttemptRow,
+  type PublicActionBucket,
+  type PublicActionRateLimitConfig,
   type PublicActionRateLimitVerdict,
 } from '@/lib/rate-limit/public-action-core';
 
@@ -75,20 +79,27 @@ function publicActionStore(): PublicActionAttemptStore {
   return createAdminClient() as unknown as PublicActionAttemptStore;
 }
 
-async function currentActorFingerprint(
-  action: PublicAction
-): Promise<string | null> {
-  const secret = fingerprintSecret();
-  if (!secret) return null;
+async function currentActorIdentity(): Promise<string> {
   const h = await headers();
-  const identity = actorIdentityFromHeaders({
+  return actorIdentityFromHeaders({
     vercelForwardedFor: h.get('x-vercel-forwarded-for'),
     forwardedFor: h.get('x-forwarded-for'),
     realIp: h.get('x-real-ip'),
     cfConnectingIp: h.get('cf-connecting-ip'),
     userAgent: h.get('user-agent'),
   });
-  return fingerprintPublicActionActor(identity, action, secret);
+}
+
+async function currentActorFingerprint(
+  action: PublicAction
+): Promise<string | null> {
+  const secret = fingerprintSecret();
+  if (!secret) return null;
+  return fingerprintPublicActionActor(
+    await currentActorIdentity(),
+    action,
+    secret
+  );
 }
 
 async function actorFingerprintForIdentity(
@@ -123,7 +134,11 @@ export async function checkPublicActionRateLimit(
   action: PublicAction
 ): Promise<PublicActionRateLimitCheck> {
   const actorFingerprint = await currentActorFingerprint(action);
-  return checkPublicActionRateLimitForFingerprint(action, actorFingerprint);
+  return checkPublicActionRateLimitForFingerprint(
+    action,
+    PUBLIC_ACTION_LIMITS[action],
+    actorFingerprint
+  );
 }
 
 export async function checkPublicActionRateLimitForIdentity(
@@ -134,14 +149,40 @@ export async function checkPublicActionRateLimitForIdentity(
     action,
     actorIdentity
   );
-  return checkPublicActionRateLimitForFingerprint(action, actorFingerprint);
+  return checkPublicActionRateLimitForFingerprint(
+    action,
+    PUBLIC_ACTION_LIMITS[action],
+    actorFingerprint
+  );
+}
+
+/**
+ * Sub-bucket variant (see PUBLIC_ACTION_BUCKETS). Keys on the caller
+ * IP unless `actorIdentity` is given (e.g. emailActorIdentity(email)).
+ * Record outcomes with recordPublicActionBucketAttempt.
+ */
+export async function checkPublicActionBucketRateLimit(
+  bucket: PublicActionBucket,
+  actorIdentity?: string
+): Promise<PublicActionRateLimitCheck> {
+  const { action, limits } = PUBLIC_ACTION_BUCKETS[bucket];
+  const identity = actorIdentity ?? (await currentActorIdentity());
+  const actorFingerprint = await actorFingerprintForIdentity(
+    action,
+    bucketActorIdentity(bucket, identity)
+  );
+  return checkPublicActionRateLimitForFingerprint(
+    action,
+    limits,
+    actorFingerprint
+  );
 }
 
 async function checkPublicActionRateLimitForFingerprint(
   action: PublicAction,
+  config: PublicActionRateLimitConfig,
   actorFingerprint: string | null
 ): Promise<PublicActionRateLimitCheck> {
-  const config = PUBLIC_ACTION_LIMITS[action];
   if (!actorFingerprint) {
     console.error(
       '[public-action-rate-limit] fingerprint secret missing — denying',
@@ -197,4 +238,45 @@ export async function recordPublicActionAttempt(
       error,
     });
   }
+}
+
+/**
+ * Server Action gate over a bucket: the actor fingerprint when the
+ * request may proceed, null when the caller must answer `rate_limited`.
+ * Storage/secret faults fail closed without a synthetic ledger row.
+ * `recordRejection: false` skips the `rate_limited` row — used by
+ * per-target (email) buckets so an attacker hammering a victim's
+ * address can't keep extending the victim's lockout.
+ */
+export async function passPublicActionBucket(
+  bucket: PublicActionBucket,
+  actorIdentity?: string,
+  opts: { recordRejection: boolean } = { recordRejection: true }
+): Promise<string | null> {
+  const rl = await checkPublicActionBucketRateLimit(bucket, actorIdentity);
+  if (rl.ok) return rl.actorFingerprint;
+  if (
+    opts.recordRejection &&
+    rl.reason !== 'storage_error' &&
+    rl.reason !== 'secret_missing'
+  ) {
+    await recordPublicActionBucketAttempt(
+      bucket,
+      rl.actorFingerprint,
+      'rate_limited'
+    );
+  }
+  return null;
+}
+
+export async function recordPublicActionBucketAttempt(
+  bucket: PublicActionBucket,
+  actorFingerprint: string,
+  outcome: PublicActionAttemptOutcome
+): Promise<void> {
+  await recordPublicActionAttempt(
+    PUBLIC_ACTION_BUCKETS[bucket].action,
+    actorFingerprint,
+    outcome
+  );
 }
