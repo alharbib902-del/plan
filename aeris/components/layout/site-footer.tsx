@@ -9,6 +9,9 @@ const FOOTER_LINKS = [
   { href: '/#services', label: 'الخدمات' },
   { href: '/#why', label: 'لماذا Aeris' },
   { href: '/request', label: 'اطلب رحلة' },
+  ...(process.env.ENABLE_CLIENT_PORTAL === 'true'
+    ? [{ href: '/login', label: 'تسجيل الدخول' }]
+    : []),
 ];
 
 export function SiteFooter() {

@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fireAndForgetTripDispatch } from '@/lib/automation/trip-dispatch-fire';
+import { notifyFounderOfClientCharterRequest } from '@/lib/notifications/charter-offer-notify';
 import { redeemCashbackIfRequested } from '@/lib/privilege/redeem-helper';
 import {
   createTripRequestSchema,
@@ -116,9 +117,27 @@ export async function runCreateAuthenticatedTripRequest(
 
   if (!result.ok) return { ok: false, error: result.error };
 
-  if (isAutoDistributionEnabled()) {
+  const autoDistribution = isAutoDistributionEnabled();
+  if (autoDistribution) {
     fireAndForgetTripDispatch(result.trip_request_id);
   }
+
+  // With auto-distribution off (the default) nobody would otherwise
+  // learn of a signed-in request until the founder opened the admin
+  // list. Fail-soft + time-boxed; never affects the result.
+  await notifyFounderOfClientCharterRequest({
+    trip_request_id: result.trip_request_id,
+    request_number: result.request_number,
+    client_id: clientId,
+    departure_iata: parsed.data.departure_iata.toUpperCase(),
+    arrival_iata: parsed.data.arrival_iata.toUpperCase(),
+    departure_date: parsed.data.departure_date,
+    return_date: parsed.data.return_date ?? null,
+    passengers: parsed.data.passengers,
+    aircraft_pref: parsed.data.aircraft_pref ?? null,
+    special_requests: parsed.data.special_requests ?? null,
+    auto_distribution: autoDistribution,
+  });
 
   return {
     ok: true,

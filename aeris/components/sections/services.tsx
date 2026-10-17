@@ -2,6 +2,21 @@ import Link from 'next/link';
 import { Plane, Repeat, HeartPulse, Package, Handshake, ArrowLeft } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
+// Both CTAs fall back to the always-on intake when their surface is
+// flagged off, so the marketing grid never links to a 404.
+const EMPTY_LEGS_CTA_HREF =
+  process.env.ENABLE_EMPTY_LEGS_PUBLIC_MARKETPLACE === 'true'
+    ? '/empty-legs'
+    : '/request';
+
+const OPERATOR_CTA: { href: string; external: boolean } =
+  process.env.ENABLE_OPERATOR_PORTAL === 'true'
+    ? { href: '/operator/signup', external: false }
+    : {
+        href: 'mailto:partners@aeris.sa?subject=Aeris%20Operator%20Partnership',
+        external: true,
+      };
+
 type Service = {
   icon: LucideIcon;
   title: string;
@@ -34,7 +49,7 @@ const SERVICES: Service[] = [
       'إشعارات فورية للوجهات',
       'مرونة في تواريخ الإقلاع',
     ],
-    cta: { href: '/request', label: 'استعلم عن المتاح' },
+    cta: { href: EMPTY_LEGS_CTA_HREF, label: 'استعلم عن المتاح' },
   },
   // 2026-06 scope focus (charter / empty legs / privilege) — hidden
   // verticals drop out of the marketing grid entirely: a visible card
@@ -80,14 +95,11 @@ const SERVICES: Service[] = [
       'هل لديك أسطول طائرات خاصة؟ انضم إلى شبكة Aeris لتلقي طلبات الرحلات وتوزيع رحلاتك الفارغة.',
     highlights: [
       'طلبات مستهدفة بمواصفات واضحة',
-      'لوحة تحكم لإدارة العروض',
-      'تسوية مالية شفافة',
+      'نشر رحلاتك الفارغة لعملاء Aeris',
+      'تواصل مباشر مع فريق Aeris',
     ],
-    cta: {
-      href: 'mailto:partners@aeris.sa?subject=Aeris%20Operator%20Partnership',
-      label: 'انضم كمشغّل',
-    },
-    external: true,
+    cta: { href: OPERATOR_CTA.href, label: 'انضم كمشغّل' },
+    external: OPERATOR_CTA.external,
   },
 ];
 

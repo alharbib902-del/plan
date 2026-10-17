@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import {
@@ -70,6 +71,7 @@ export function ClientOfferCard({
   cashbackBalanceSar = 0,
 }: ClientOfferCardProps) {
   const showActions = tripIsActionable && offer.status === 'pending';
+  const router = useRouter();
   const [isAccepting, startAccept] = useTransition();
   const [isDeclining, startDecline] = useTransition();
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -99,14 +101,24 @@ export function ClientOfferCard({
         setErrorCode(result.error);
         return;
       }
-      if (
-        result.cashback_redemption &&
-        result.cashback_redemption.ok === false
-      ) {
-        setRedeemWarning(result.cashback_redemption.error);
+      const cashbackResult = result.cashback_redemption;
+      const redeemError =
+        cashbackResult && cashbackResult.ok === false
+          ? cashbackResult.error
+          : null;
+      if (result.booking_id) {
+        // The booking page owns the "what happens next" guidance, so
+        // land the client there instead of a now read-only offer list.
+        const params = new URLSearchParams({ accepted: '1' });
+        if (redeemError) params.set('cashback', 'failed');
+        router.push(
+          `/me/bookings/${encodeURIComponent(result.booking_id)}?${params.toString()}`
+        );
+        return;
       }
-      // success → page revalidates server-side via the Server
-      // Action; let the route refresh handle the UI update.
+      if (redeemError) setRedeemWarning(redeemError);
+      // No booking id → stay; the Server Action's revalidation
+      // refreshes this page in place.
     });
   };
 

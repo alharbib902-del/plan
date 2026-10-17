@@ -30,12 +30,34 @@ interface PageProps {
   searchParams?: Promise<{ token?: string }>;
 }
 
-function NotFoundCard() {
+// One card for every rejection layer so the visitor still cannot tell
+// which check failed; in practice the overwhelmingly common cause is a
+// lapsed hold, hence the expiry-first wording + a way back.
+function HoldUnavailableCard({ legNumber }: { legNumber: string }) {
   return (
     <section className="mx-auto max-w-2xl px-4 pb-16 pt-28 sm:px-6 lg:px-8">
-      <p className="font-ar rounded-md border border-border bg-navy-card/30 px-4 py-6 text-center text-sm text-ink-muted">
-        {emptyLegsAr.publicLegNotFound}
-      </p>
+      <div className="rounded-xl border border-border bg-navy-card/30 px-5 py-8 text-center">
+        <h1 className="font-ar text-xl text-ink sm:text-2xl">
+          {emptyLegsAr.publicReservedExpiredTitle}
+        </h1>
+        <p className="font-ar mx-auto mt-3 max-w-md text-sm leading-7 text-ink-secondary">
+          {emptyLegsAr.publicReservedExpiredBody}
+        </p>
+        <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <Link
+            href={`/empty-legs/${encodeURIComponent(legNumber)}`}
+            className="font-ar inline-flex min-h-[44px] items-center rounded-md border border-gold/40 bg-gold/10 px-5 py-2 text-sm text-gold-light transition-colors hover:border-gold hover:bg-gold/20"
+          >
+            {emptyLegsAr.publicReservedExpiredBackToLeg}
+          </Link>
+          <Link
+            href="/empty-legs"
+            className="font-ar inline-flex min-h-[44px] items-center px-3 text-sm text-ink-secondary transition-colors hover:text-gold-light"
+          >
+            {emptyLegsAr.publicReservedExpiredBrowse}
+          </Link>
+        </div>
+      </div>
     </section>
   );
 }
@@ -71,27 +93,27 @@ export default async function PublicEmptyLegReservedPage({
   //   Layer 3 — Row-level reservation_expires_at > NOW()
   //             — defense in depth alongside Layer 1.
   //
-  // Any failure renders the opaque `publicLegNotFound`
-  // copy — the visitor cannot tell which layer rejected.
+  // Any failure renders the same opaque hold-unavailable
+  // card — the visitor cannot tell which layer rejected.
   const token = resolvedSearchParams?.token ?? '';
   if (!token) {
-    return <NotFoundCard />;
+    return <HoldUnavailableCard legNumber={leg_number} />;
   }
 
   const verified = verifyReservationToken(token);
   if (!verified.valid) {
-    return <NotFoundCard />;
+    return <HoldUnavailableCard legNumber={leg_number} />;
   }
 
   const leg = await getPublicLegByNumber(leg_number, {
     allowedStatuses: ['available', 'reserved'],
   });
   if (!leg) {
-    return <NotFoundCard />;
+    return <HoldUnavailableCard legNumber={leg_number} />;
   }
 
   if (verified.payload.leg_id !== leg.id) {
-    return <NotFoundCard />;
+    return <HoldUnavailableCard legNumber={leg_number} />;
   }
 
   if (
@@ -99,14 +121,14 @@ export default async function PublicEmptyLegReservedPage({
     leg.reservation_token_hash === null ||
     hashReservationToken(token) !== leg.reservation_token_hash
   ) {
-    return <NotFoundCard />;
+    return <HoldUnavailableCard legNumber={leg_number} />;
   }
 
   if (
     leg.reservation_expires_at === null ||
     Date.parse(leg.reservation_expires_at) <= Date.now()
   ) {
-    return <NotFoundCard />;
+    return <HoldUnavailableCard legNumber={leg_number} />;
   }
 
   const expiresAt = leg.reservation_expires_at;

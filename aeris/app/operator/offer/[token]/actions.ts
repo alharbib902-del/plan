@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { notifyCharterOfferSubmitted } from '@/lib/notifications/charter-offer-notify';
 
 import { verifyOperatorToken } from '@/lib/operator/token';
 import { operatorOfferSchema } from '@/lib/validators/operator-offer';
@@ -140,6 +141,15 @@ export async function submitOperatorOffer(
       return { ok: false, error: result.error };
     }
 
+    // Fail-soft + time-boxed; never affects the submit result.
+    await notifyCharterOfferSubmitted({
+      trip_request_id: verified.payload.trip_request_id,
+      operator_name: parsed.data.operator_name,
+      total_price_sar: parsed.data.total_price_sar,
+      aircraft_type: parsed.data.aircraft_type ?? null,
+      aircraft_registration: parsed.data.aircraft_registration ?? null,
+    });
+
     revalidatePath(`/admin/trips/${verified.payload.trip_request_id}`);
     revalidatePath('/admin/trips');
     return { ok: true, offer_id: result.offer_id };
@@ -174,6 +184,14 @@ export async function submitOperatorOffer(
   if (!result.ok) {
     return { ok: false, error: result.error };
   }
+
+  await notifyCharterOfferSubmitted({
+    trip_request_id: verified.payload.trip_request_id,
+    operator_name: parsed.data.operator_name,
+    total_price_sar: parsed.data.total_price_sar,
+    aircraft_type: parsed.data.aircraft_type ?? null,
+    aircraft_registration: parsed.data.aircraft_registration ?? null,
+  });
 
   revalidatePath(`/admin/trips/${verified.payload.trip_request_id}`);
   revalidatePath('/admin/trips');

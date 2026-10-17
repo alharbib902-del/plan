@@ -45,6 +45,7 @@
     "test:notifications-client-empty-leg-alert-status": "tsx lib/notifications/__tests__/client-empty-leg-alert-status.test.ts",
     "test:notifications-empty-leg-reservation-email": "tsx lib/notifications/__tests__/empty-leg-reservation-email.test.ts",
     "test:notifications-empty-leg-reservation-whatsapp": "tsx lib/notifications/__tests__/empty-leg-reservation-whatsapp.test.ts",
+    "test:notifications-charter-offer": "tsx lib/notifications/__tests__/charter-offer-templates.test.ts",
     "test:cargo-request-validators": "tsx lib/cargo/__tests__/cargo-request-validators.test.ts",
     "test:cargo-offer-validators": "tsx lib/cargo/__tests__/cargo-offer-validators.test.ts",
     "test:cargo-accept-flow": "tsx lib/cargo/__tests__/accept-flow.test.ts",

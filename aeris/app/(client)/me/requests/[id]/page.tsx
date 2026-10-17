@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { CancelTripButton } from '@/components/clients/cancel-trip-button';
 import { OffersPanel, type PanelOfferRow } from '@/components/clients/offers-panel';
+import { aircraftCategoryLabel } from '@/components/clients/offer-format';
 import { TripStatusChip, type TripStatus } from '@/components/clients/status-chip';
 import { requireClientSession } from '@/lib/clients/auth';
 import { getTripRequestForClient } from '@/lib/clients/queries/me-requests';
@@ -112,7 +113,7 @@ export default async function ClientMeRequestDetailPage({
             {trip.passengers_count}
           </Field>
           <Field label={clientsAr.requestDetailAircraftLabel}>
-            {trip.aircraft_category_preference ?? '—'}
+            {aircraftCategoryLabel(trip.aircraft_category_preference)}
           </Field>
           {trip.special_requests ? (
             <div className="sm:col-span-2">

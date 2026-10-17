@@ -14,6 +14,12 @@ export const clientsAr = {
   navMyArea: 'حسابي',
   navProfile: 'الملف الشخصي',
   navLogout: 'تسجيل الخروج',
+  navNotifications: 'الإشعارات',
+  navEmptyLegAlerts: 'تنبيهات الأسعار',
+  navPrivilege: 'برنامج الولاء',
+  navMenuOpen: 'فتح القائمة',
+  navMenuClose: 'إغلاق القائمة',
+  navMenuLabel: 'قائمة حسابي',
 
   // Surfaced on the admin canary page (Phase 9 PR 1
   // 4th ChannelHealth card)
@@ -110,6 +116,10 @@ export const clientsAr = {
     'املأ تفاصيل رحلتك وسنوزّع طلبك على المشغّلين المؤهّلين.',
   charterDepartureIataLabel: 'كود مطار المغادرة (IATA)',
   charterArrivalIataLabel: 'كود مطار الوصول (IATA)',
+  charterDepartureAirportLabel: 'مطار المغادرة',
+  charterArrivalAirportLabel: 'مطار الوصول',
+  charterAirportPickFromList:
+    'اختر المطار من القائمة. للمطارات غير المدرجة اذكرها في «طلبات خاصة» أو تواصل معنا عبر واتساب.',
   charterDepartureDateLabel: 'تاريخ ووقت المغادرة',
   charterReturnDateLabel: 'تاريخ ووقت العودة (اختياري)',
   charterPassengersLabel: 'عدد الركاب',
@@ -125,7 +135,7 @@ export const clientsAr = {
   charterSubmitting: 'جارٍ الإرسال...',
   charterSuccessHeading: 'تم استلام طلبك',
   charterSuccessBody: (requestNumber: string): string =>
-    `رقم طلبك: ${requestNumber}. ستظهر العروض في «طلباتي» خلال دقائق.`,
+    `رقم طلبك: ${requestNumber}. سنُشعرك فور وصول العروض، وستجدها في «طلباتي».`,
   charterSuccessGoToRequests: 'الذهاب إلى طلباتي',
 
   cancelTripConfirm: 'هل أنت متأكد من إلغاء هذا الطلب؟',
@@ -259,6 +269,16 @@ export const clientsAr = {
   bookingFlightInFlight: 'في الجو',
   bookingFlightCompleted: 'مكتمل',
   bookingFlightCancelled: 'ملغى',
+  bookingAcceptedBanner: 'تم قبول العرض وإنشاء حجزك بنجاح.',
+  bookingAcceptedCashbackWarning:
+    'تم القبول، لكن لم يُحسم رصيد الاسترداد. ادفع المبلغ كاملاً نقداً.',
+  bookingNextStepsTitle: 'الخطوات التالية',
+  bookingNextStepsBody:
+    'سيتواصل معك فريق Aeris قريباً لتأكيد تفاصيل رحلتك، ثم يرسل لك رابط دفع آمناً خاصاً بحجزك.',
+  bookingNextStepsWhatsApp: 'تواصل معنا عبر واتساب',
+  bookingNextStepsWhatsAppMessage: (bookingNumber: string): string =>
+    `مرحباً Aeris، أتواصل بخصوص حجزي رقم ${bookingNumber}.`,
+  bookingNextStepsSupport: 'افتح تذكرة دعم',
 
   // Payment checkout surface (Phase payments PR #120 — client checkout UI).
   payNow: 'ادفع الآن',
@@ -302,7 +322,7 @@ export const clientsAr = {
     insufficient_balance: 'رصيد الاسترداد غير كافٍ.',
     redemption_exceeds_cap: 'الاسترداد يتجاوز الحدّ (50% من قيمة الحجز).',
     redemption_leaves_no_cash_payment:
-      'يجب أن يبقى مبلغ نقدي (١ ريال على الأقل).',
+      'يجب أن يبقى مبلغ نقدي (1 ريال على الأقل).',
     redeem_failed: 'تعذّر استخدام رصيد الاسترداد.',
     gateway_unreachable: 'تعذّر الوصول لبوّابة الدفع. حاول لاحقاً.',
     not_owner: 'هذا الحجز لا يخصّ حسابك.',
@@ -316,7 +336,7 @@ export const clientsAr = {
     bcrypt_failed: 'تعذّر تشفير كلمة المرور. حاول مرة أخرى.',
     rpc_failed: 'حدث خطأ في الخادم. حاول مرة أخرى لاحقاً.',
     rate_limited:
-      'تم تجاوز حدّ المحاولات (3/يوم/IP). جرّب لاحقاً أو غيّر الشبكة.',
+      'تجاوزت عدد المحاولات المسموح، حاول لاحقاً.',
     duplicate_email: 'هذا البريد مسجّل مسبقاً. سجّل الدخول بدلاً من ذلك.',
     invalid_credentials: 'البريد أو كلمة المرور غير صحيحة.',
     account_not_active:

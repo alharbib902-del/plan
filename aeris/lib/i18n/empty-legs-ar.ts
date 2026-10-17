@@ -295,6 +295,7 @@ export const emptyLegsAr = {
   publicLegOriginalPrice: 'السعر الأصلي',
   publicLegDiscount: 'الخصم الحالي',
   publicLegMaxPassengers: 'العدد الأقصى للركاب',
+  publicLegAircraft: 'الطائرة',
   publicLegSar: 'ريال',
   publicLegReserveCta: 'احجز الآن',
   publicLegSold: 'تم بيع هذه الرحلة',
@@ -303,7 +304,7 @@ export const emptyLegsAr = {
 
   publicAuctionTrajectoryTitle: 'مسار الخصم',
   publicAuctionTrajectoryHint:
-    'سيصل السعر إلى {floor} ريال عند انتهاء نافذة المزاد. كلّ تأخير في الحجز قد يعني سعراً أقل، لكن المقاعد تختفي بسرعة.',
+    'سيصل السعر إلى {floor} ريال عند انتهاء نافذة المزاد. كلّ تأخير في الحجز قد يعني سعراً أقل، لكن الرحلات تُحجز بسرعة.',
   publicAuctionFloorReached:
     'وصل السعر إلى أدنى حد. احجز قبل اختفاء الرحلة.',
   publicAuctionWillReachIn:
@@ -328,11 +329,16 @@ export const emptyLegsAr = {
     'ستحجز بحسابك — وسيظهر الحجز في «حجوزاتي»:',
   publicReservedTitle: 'تم تثبيت الحجز',
   publicReservedHint:
-    'يجب التواصل معنا خلال 60 دقيقة لتأكيد الدفع، وإلا سيُلغى الحجز تلقائياً.',
+    'نرجو تواصلك معنا عبر واتساب خلال 60 دقيقة لتأكيد الدفع، إذ ينتهي الحجز المؤقت بعدها تلقائياً.',
   publicReservedExpiresAt: 'ينتهي التحفّظ في',
   publicReservedCallUs: 'تواصل معنا عبر واتساب',
   publicReservedCancelButton: 'إلغاء حجزي',
   publicReservedCancelled: 'تم إلغاء الحجز.',
+  publicReservedExpiredTitle: 'انتهت مدة الحجز المؤقت',
+  publicReservedExpiredBody:
+    'انتهت مدة التحفّظ على هذه الرحلة أو لم يعد رابط الحجز صالحاً. يمكنك العودة لتفاصيل الرحلة وطلب الحجز من جديد إن كانت ما زالت متاحة.',
+  publicReservedExpiredBackToLeg: 'العودة لتفاصيل الرحلة',
+  publicReservedExpiredBrowse: 'تصفّح الرحلات المتاحة',
 
   publicOptOutTitle: 'إلغاء الاشتراك',
   publicOptOutHint:
@@ -343,7 +349,7 @@ export const emptyLegsAr = {
 
   homeEmptyLegsCtaTitle: 'اكتشف رحلات فارغة',
   homeEmptyLegsCtaSubtitle:
-    'رحلات عودة بأسعار مخفضة من 40% إلى 70%. مزاد ينخفض مع اقتراب موعد المغادرة.',
+    'رحلات عودة بخصومات تصل إلى 60%. السعر ينخفض مع اقتراب موعد المغادرة.',
   homeEmptyLegsCtaButton: 'تصفّح الرحلات',
   navEmptyLegsLabel: 'رحلات فارغة',
 
@@ -360,14 +366,14 @@ export const emptyLegsAr = {
   pricingHiddenSubmit: 'أرسل طلب الحجز',
   pricingHiddenDetailNote: 'يُرسل لك السعر بعد تأكيد طلب الحجز.',
   pricingHiddenReserveHint:
-    'طلبك يحفظ المقعد مؤقتاً لمدة 60 دقيقة — تواصل معنا عبر واتساب وسنرسل لك السعر وتفاصيل الدفع بعد تأكيد طلبك.',
+    'طلبك يحفظ الطائرة مؤقتاً لمدة 60 دقيقة — تواصل معنا عبر واتساب وسنرسل لك السعر وتفاصيل الدفع بعد تأكيد طلبك.',
   pricingHiddenReservedTitle: 'تم استلام طلبك',
   pricingHiddenReservedHint:
-    'تواصل معنا عبر واتساب خلال 60 دقيقة لتأكيد طلبك — بعد التأكيد نرسل لك السعر وتفاصيل الدفع، وإلا يُلغى الطلب تلقائياً.',
+    'يسعدنا تواصلك معنا عبر واتساب خلال 60 دقيقة لتأكيد طلبك، وبعد التأكيد نرسل لك السعر وتفاصيل الدفع. ينتهي الحجز المؤقت بعد هذه المدة تلقائياً.',
   pricingHiddenListSubtitle:
     'رحلات عودة بخصومات حصرية. أرسل طلب الحجز وسيؤكد لك فريق Aeris السعر والتفاصيل مباشرة.',
   pricingHiddenHomeSubtitle:
-    'رحلات عودة بخصومات تصل إلى 70% — أرسل طلب الحجز وسيتواصل معك فريق Aeris بالسعر والتفاصيل.',
+    'رحلات عودة بخصومات تصل إلى 60% — أرسل طلب الحجز وسيتواصل معك فريق Aeris بالسعر والتفاصيل.',
 
   // PR 2d — Validator + Server Action error codes
   errorRpcLegNumberMissing: 'رقم الرحلة مطلوب.',

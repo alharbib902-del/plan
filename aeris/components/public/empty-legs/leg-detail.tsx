@@ -45,6 +45,11 @@ export function PublicLegDetail({ leg }: { leg: EmptyLegRow }) {
         <Pair label={emptyLegsAr.publicLegMaxPassengers}>
           {leg.max_passengers}
         </Pair>
+        {leg.aircraft_snapshot ? (
+          <Pair label={emptyLegsAr.publicLegAircraft}>
+            <span dir="auto">{leg.aircraft_snapshot}</span>
+          </Pair>
+        ) : null}
         {clientPricingVisible() ? (
           <>
             <Pair label={emptyLegsAr.publicLegOriginalPrice}>

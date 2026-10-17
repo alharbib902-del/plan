@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { LifeBuoy, MessageCircle } from 'lucide-react';
 
 import { requireClientSession } from '@/lib/clients/auth';
 import {
@@ -8,6 +10,8 @@ import {
 } from '@/lib/clients/queries/me-bookings';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 import { BookingPaymentActions } from '@/components/clients/booking-payment-actions';
+import { ClientBanner } from '@/components/clients/error-banner';
+import { AERIS_CONTACT } from '@/lib/config/contact';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,7 +23,10 @@ export const metadata: Metadata = {
 
 interface PageProps {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ accepted?: string; cashback?: string }>;
 }
+
+const UNPAID_PAYMENT_STATUSES = new Set(['pending', 'pending_offline']);
 
 const PAYMENT_STATUS_LABEL: Record<string, string> = {
   pending: clientsAr.bookingPaymentPending,
@@ -67,10 +74,14 @@ function formatSAR(value: number | string | null): string {
 
 export default async function ClientMeBookingDetailPage({
   params,
+  searchParams,
 }: PageProps) {
   if (process.env.ENABLE_CLIENT_PORTAL !== 'true') notFound();
 
   const { id } = await params;
+  const query = (await searchParams) ?? {};
+  const justAccepted = query.accepted === '1';
+  const cashbackFailed = query.cashback === 'failed';
   const session = await requireClientSession();
   const booking = await getBookingForClient(session.client_id, id);
 
@@ -113,6 +124,16 @@ export default async function ClientMeBookingDetailPage({
       ? await getActiveCheckoutForBooking(id)
       : null;
 
+  // Manual-settlement mode: with the gateway off, an unpaid booking has
+  // no on-page action, so spell out the offline next step instead.
+  const showNextSteps =
+    !paymentsEnabled &&
+    UNPAID_PAYMENT_STATUSES.has(booking.payment_status ?? '') &&
+    booking.flight_status !== 'cancelled';
+  const nextStepsWhatsAppUrl = `https://wa.me/${AERIS_CONTACT.whatsappNumber}?text=${encodeURIComponent(
+    clientsAr.bookingNextStepsWhatsAppMessage(booking.booking_number)
+  )}`;
+
   return (
     <section className="space-y-6">
       <header>
@@ -126,6 +147,15 @@ export default async function ClientMeBookingDetailPage({
           {booking.booking_number}
         </p>
       </header>
+
+      {justAccepted ? (
+        <ClientBanner kind="success">{clientsAr.bookingAcceptedBanner}</ClientBanner>
+      ) : null}
+      {justAccepted && cashbackFailed ? (
+        <ClientBanner kind="warning">
+          {clientsAr.bookingAcceptedCashbackWarning}
+        </ClientBanner>
+      ) : null}
 
       <div className="rounded-xl border border-border bg-navy-card/40 p-5">
         <dl className="grid gap-3 sm:grid-cols-2">
@@ -144,7 +174,7 @@ export default async function ClientMeBookingDetailPage({
           <Field label={clientsAr.bookingDetailTotalLabel}>
             <span className="text-gold-light">
               {formatSAR(booking.total_amount as unknown as number | string | null)}{' '}
-              ريال
+              {clientsAr.currencySAR}
             </span>
           </Field>
           <Field label={clientsAr.bookingDetailPaymentStatusLabel}>
@@ -161,6 +191,41 @@ export default async function ClientMeBookingDetailPage({
           bookingId={id}
           activeCheckoutId={activeCheckoutId}
         />
+      ) : null}
+
+      {showNextSteps ? (
+        <section
+          aria-labelledby="booking-next-steps"
+          className="rounded-xl border border-gold/30 bg-gold/5 p-5"
+        >
+          <h2
+            id="booking-next-steps"
+            className="font-ar text-lg text-gold-light"
+          >
+            {clientsAr.bookingNextStepsTitle}
+          </h2>
+          <p className="font-ar mt-2 text-sm leading-7 text-ink-secondary">
+            {clientsAr.bookingNextStepsBody}
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <a
+              href={nextStepsWhatsAppUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-ar inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-gold/40 bg-gold/15 px-4 py-2 text-sm font-medium text-gold-light transition-colors hover:bg-gold/25"
+            >
+              <MessageCircle className="h-4 w-4" aria-hidden />
+              {clientsAr.bookingNextStepsWhatsApp}
+            </a>
+            <Link
+              href="/me/support"
+              className="font-ar inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-border bg-navy-card/60 px-4 py-2 text-sm text-ink-secondary transition-colors hover:border-gold/40 hover:text-gold-light"
+            >
+              <LifeBuoy className="h-4 w-4" aria-hidden />
+              {clientsAr.bookingNextStepsSupport}
+            </Link>
+          </div>
+        </section>
       ) : null}
     </section>
   );

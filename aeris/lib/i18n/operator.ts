@@ -485,12 +485,12 @@ const dictionary = {
     en: 'Confirm via WhatsApp',
   },
   checkout_prep_payment_offline_notice: {
-    ar: 'سيتواصل معك المؤسس عبر واتساب لإكمال الدفع',
-    en: 'The founder will contact you on WhatsApp to finalize payment',
+    ar: 'سيتواصل معك فريق Aeris عبر واتساب لإكمال الدفع',
+    en: 'The Aeris team will contact you on WhatsApp to finalize payment',
   },
   checkout_prep_confirm_success_message: {
-    ar: 'شكراً، سيتواصل معك المؤسس عبر واتساب لإكمال الدفع',
-    en: 'Thank you. The founder will reach out on WhatsApp to finalize payment.',
+    ar: 'شكراً، سيتواصل معك فريق Aeris عبر واتساب لإكمال الدفع',
+    en: 'Thank you. The Aeris team will reach out on WhatsApp to finalize payment.',
   },
   checkout_prep_link_personal_notice: {
     ar: 'هذا الرابط شخصي. لا تشاركه مع أحد.',
@@ -506,8 +506,8 @@ const dictionary = {
     en: 'This link has expired or has not been issued yet',
   },
   checkout_prep_expired_body: {
-    ar: 'تواصل مع المؤسس عبر واتساب للحصول على رابط جديد.',
-    en: 'Contact the founder on WhatsApp to receive a new link.',
+    ar: 'تواصل مع فريق Aeris عبر واتساب للحصول على رابط جديد.',
+    en: 'Contact the Aeris team on WhatsApp to receive a new link.',
   },
 
   // Route fallback used by lib/checkout/route-display.ts
@@ -649,8 +649,8 @@ const dictionary = {
   },
   err_trip_not_found: { ar: 'الرحلة غير موجودة.', en: 'Trip not found.' },
   err_invalid_token: {
-    ar: 'هذا الرابط منتهي الصلاحية أو لم يُصدَر بعد. تواصل مع المؤسس عبر واتساب.',
-    en: 'This link has expired or has not been issued. Contact the founder on WhatsApp.',
+    ar: 'هذا الرابط منتهي الصلاحية أو لم يُصدَر بعد. تواصل مع فريق Aeris عبر واتساب.',
+    en: 'This link has expired or has not been issued. Contact the Aeris team on WhatsApp.',
   },
   err_validation_failed: {
     ar: 'مدخلات غير صالحة.',
