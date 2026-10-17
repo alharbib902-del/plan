@@ -12,10 +12,10 @@ type LimitableQuery = LooseQueryBuilder & {
   limit: (count: number) => PromiseLike<LooseResult>;
 };
 
-// List bounds (no pagination UI yet). Ordered by latest activity, so
-// only the least recently active tickets fall off.
+// Client list bound (no pagination UI yet). Ordered by latest activity,
+// so only the least recently active tickets fall off. The admin list is
+// deliberately unbounded: an open-but-quiet ticket must never drop out.
 const CLIENT_TICKETS_LIMIT = 100;
-const ADMIN_TICKETS_LIMIT = 200;
 
 export type SupportTicketRow = {
   id: string;
@@ -76,13 +76,12 @@ export async function getTicketForClient(
   return (data ?? null) as SupportTicketRow | null;
 }
 
-/** Tickets for the admin view (latest 200), newest activity first. */
+/** All tickets (admin view), newest activity first. */
 export async function getAllTickets(): Promise<SupportTicketRow[]> {
-  const query = createLooseClient()
+  const { data, error } = await createLooseClient()
     .from('support_tickets')
     .select(TICKET_COLUMNS)
-    .order('updated_at', { ascending: false }) as LimitableQuery;
-  const { data, error } = await query.limit(ADMIN_TICKETS_LIMIT);
+    .order('updated_at', { ascending: false });
   if (error) {
     throw new Error(error.message);
   }

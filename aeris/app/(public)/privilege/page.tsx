@@ -16,11 +16,8 @@ import type { ClientPrivilegeTier } from '@/lib/privilege/types';
  * feature flag flips on production.
  */
 
-// ISR: the tier thresholds are seed-only reference data (no app writer)
-// and identical for every visitor, so an hourly refresh is plenty and
-// spares a DB round-trip on each marketing visit. With ENABLE_PRIVILEGE
-// on, the first render happens at build time (needs Supabase env there).
-export const revalidate = 3600;
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: privilegeAr.publicTitle,
