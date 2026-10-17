@@ -1,6 +1,21 @@
 import 'server-only';
 
-import { createLooseClient } from '@/lib/supabase/loose-query';
+import {
+  createLooseClient,
+  type LooseQueryBuilder,
+  type LooseResult,
+} from '@/lib/supabase/loose-query';
+
+// The shared loose builder type does not model `.limit`; the runtime
+// PostgREST builder behind it does.
+type LimitableQuery = LooseQueryBuilder & {
+  limit: (count: number) => PromiseLike<LooseResult>;
+};
+
+// List bounds (no pagination UI yet). Ordered by latest activity, so
+// only the least recently active tickets fall off.
+const CLIENT_TICKETS_LIMIT = 100;
+const ADMIN_TICKETS_LIMIT = 200;
 
 export type SupportTicketRow = {
   id: string;
@@ -32,11 +47,12 @@ const TICKET_COLUMNS =
 
 /** Tickets opened by a client (clients.id), newest activity first. */
 export async function getTicketsForClient(clientId: string): Promise<SupportTicketRow[]> {
-  const { data, error } = await createLooseClient()
+  const query = createLooseClient()
     .from('support_tickets')
     .select(TICKET_COLUMNS)
     .eq('client_id', clientId)
-    .order('updated_at', { ascending: false });
+    .order('updated_at', { ascending: false }) as LimitableQuery;
+  const { data, error } = await query.limit(CLIENT_TICKETS_LIMIT);
   if (error) {
     throw new Error(error.message);
   }
@@ -60,12 +76,13 @@ export async function getTicketForClient(
   return (data ?? null) as SupportTicketRow | null;
 }
 
-/** All tickets (admin view), newest activity first. */
+/** Tickets for the admin view (latest 200), newest activity first. */
 export async function getAllTickets(): Promise<SupportTicketRow[]> {
-  const { data, error } = await createLooseClient()
+  const query = createLooseClient()
     .from('support_tickets')
     .select(TICKET_COLUMNS)
-    .order('updated_at', { ascending: false });
+    .order('updated_at', { ascending: false }) as LimitableQuery;
+  const { data, error } = await query.limit(ADMIN_TICKETS_LIMIT);
   if (error) {
     throw new Error(error.message);
   }

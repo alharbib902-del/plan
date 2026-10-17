@@ -19,9 +19,8 @@ import { cargoAr } from '@/lib/i18n/cargo-ar';
  * the clients table).
  */
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-
+// Rendered statically on purpose: the only input is the ENABLE_* env
+// flag, which is fixed per Vercel deployment (an env change redeploys).
 export const metadata: Metadata = {
   title: cargoAr.publicPageTitle,
   description: cargoAr.publicPageSubtitle,

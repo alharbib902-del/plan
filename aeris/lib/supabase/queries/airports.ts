@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { unstable_noStore as noStore } from 'next/cache';
+import { unstable_cache, unstable_noStore as noStore } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { AirportRow } from '@/types/database';
 
@@ -13,6 +13,9 @@ import type { AirportRow } from '@/types/database';
 export { isIataFormat } from '@/lib/utils/iata';
 
 const TABLE = 'airports';
+
+/** Tag for `revalidateTag` should the reference table ever be edited. */
+export const AIRPORTS_CACHE_TAG = 'airports';
 
 export interface ListAirportsOptions {
   /**
@@ -32,6 +35,43 @@ export interface ListAirportsOptions {
   country?: string;
 }
 
+// Data-cached for a day: the table is seed-only reference data (no app
+// writer), yet it was re-read on every /request, checkout-prep and
+// operator page render. Errors throw and are therefore never cached.
+const readAirportsCached = unstable_cache(
+  async (
+    privateCapable: boolean | null,
+    country: string | null
+  ): Promise<AirportRow[]> => {
+    const client = createAdminClient();
+
+    let query = client
+      .from(TABLE)
+      .select(
+        'iata_code, icao_code, name, name_ar, city, city_ar, country, country_ar, latitude, longitude, timezone, is_private_capable, created_at'
+      );
+    if (privateCapable !== null) {
+      query = query.eq('is_private_capable', privateCapable);
+    }
+    if (country !== null) {
+      query = query.eq('country', country);
+    }
+
+    const { data, error } = await query
+      .order('country', { ascending: true })
+      .order('city', { ascending: true })
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('[airports] listAirports failed', error);
+      throw new Error(`listAirports failed: ${error.message}`);
+    }
+    return (data ?? []) as AirportRow[];
+  },
+  ['airports:list:v1'],
+  { revalidate: 86400, tags: [AIRPORTS_CACHE_TAG] }
+);
+
 /**
  * Read every airport in the reference table, ordered by
  * country (ASC) then city (ASC) then name (ASC) — a stable
@@ -48,27 +88,10 @@ export interface ListAirportsOptions {
 export async function listAirports(
   options: ListAirportsOptions = {}
 ): Promise<AirportRow[]> {
-  noStore();
-  const client = createAdminClient();
-
-  let query = client.from(TABLE).select('*');
-  if (options.privateCapable !== undefined) {
-    query = query.eq('is_private_capable', options.privateCapable);
-  }
-  if (options.country !== undefined) {
-    query = query.eq('country', options.country);
-  }
-
-  const { data, error } = await query
-    .order('country', { ascending: true })
-    .order('city', { ascending: true })
-    .order('name', { ascending: true });
-
-  if (error) {
-    console.error('[airports] listAirports failed', error);
-    throw new Error(`listAirports failed: ${error.message}`);
-  }
-  return (data ?? []) as AirportRow[];
+  return readAirportsCached(
+    options.privateCapable ?? null,
+    options.country ?? null
+  );
 }
 
 /**
@@ -87,7 +110,9 @@ export async function getAirportByCode(
   const client = createAdminClient();
   const { data, error } = await client
     .from(TABLE)
-    .select('*')
+    .select(
+      'iata_code, icao_code, name, name_ar, city, city_ar, country, country_ar, latitude, longitude, timezone, is_private_capable, created_at'
+    )
     .eq('iata_code', iata)
     .maybeSingle();
 

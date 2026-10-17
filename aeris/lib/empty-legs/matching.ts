@@ -12,10 +12,7 @@ import {
   type CandidateRow,
   type ClientCandidateRow,
 } from './candidate-pool';
-import {
-  shouldSkipCandidate,
-  shouldSkipClientCandidate,
-} from './frequency-cap';
+import { listClientsToSkip, listLeadsToSkip } from './frequency-cap';
 import {
   CAPACITY_WEIGHT,
   DISCOUNT_WEIGHT,
@@ -439,19 +436,21 @@ export async function matchLeg(
     };
   }
 
-  const eligible: { cand: CandidateRow; score: number }[] = [];
+  // Score in memory first, then run the frequency-cap reads ONCE for
+  // the scored set (batched) instead of 2 count queries per candidate
+  // (up to 1000 leads × 200 legs per drain). Same filters, same
+  // iteration order → same eligible list and top-N as before.
+  const scored: { cand: CandidateRow; score: number }[] = [];
   for (const cand of candidates) {
-    // shouldSkipCandidate runs two DB reads per pair —
-    // throttled by the candidate-pool 24h pre-filter so
-    // this loop typically iterates ≤ 50 candidates per
-    // cycle in practice.
-    const skip = await shouldSkipCandidate(cand.id, leg.id);
-    if (skip) continue;
-
     const score = scoreCandidateAgainstLeg(leg, cand);
     if (score <= 0) continue;
-    eligible.push({ cand, score });
+    scored.push({ cand, score });
   }
+  const leadsToSkip = await listLeadsToSkip(
+    scored.map((s) => s.cand.id),
+    leg.id
+  );
+  const eligible = scored.filter((s) => !leadsToSkip.has(s.cand.id));
 
   // Top-N by descending score.
   eligible.sort((a, b) => b.score - a.score);
@@ -522,11 +521,22 @@ export async function matchLeg(
         boost_hours_applied: number;
       }> = [];
 
+      // Same score-first + batched frequency-cap shape as the lead
+      // loop. The tier-boost gate stays AFTER the skip check so
+      // clients_skipped_tier_boost counts exactly the same clients.
+      const scoredClients: { cand: ClientCandidateRow; score: number }[] = [];
       for (const cand of clientCandidates) {
-        const skip = await shouldSkipClientCandidate(cand.client_id, leg.id);
-        if (skip) continue;
         const score = scoreCandidateAgainstLeg(leg, cand);
         if (score <= 0) continue;
+        scoredClients.push({ cand, score });
+      }
+      const clientsToSkip = await listClientsToSkip(
+        scoredClients.map((s) => s.cand.client_id),
+        leg.id
+      );
+
+      for (const { cand, score } of scoredClients) {
+        if (clientsToSkip.has(cand.client_id)) continue;
 
         // Phase 13 PR 3 D13 gate.
         if (tierBoostActive) {

@@ -34,16 +34,23 @@ export interface PublicListFilters {
   maxPrice?: number | null;
 }
 
+// No noStore() here on purpose: the home page renders this via ISR
+// (revalidate = 60). Every other caller is force-dynamic, so it still
+// reads fresh rows on each request there.
 export async function listPublicAvailableLegs(
   params: PublicListFilters & { limit?: number } = {}
 ): Promise<EmptyLegRow[]> {
-  noStore();
   const { departure, minPassengers, maxPrice, limit = 50 } = params;
   const client = createAdminClient();
 
+  // Explicit columns (= today's EmptyLegRow, which consumers are typed
+  // against) so a column added later never rides this hot public path
+  // by default; audit:db validates the list against the live schema.
   let query = client
     .from(TABLE)
-    .select('*')
+    .select(
+      'id, leg_number, parent_booking_id, operator_id, operator_name_snapshot, operator_phone_snapshot, operator_email_snapshot, operator_stub_id, aircraft_id, aircraft_snapshot, departure_airport, arrival_airport, departure_airport_freeform_snapshot, arrival_airport_freeform_snapshot, departure_window_start, departure_window_end, flexibility_hours, original_price, current_discount_pct, current_price, max_passengers, status, views_count, notifications_sent, reservation_token_hash, reservation_expires_at, reservation_customer_name_snapshot, reservation_customer_phone_snapshot, reservation_client_id, customer_booking_id, auction_initial_discount_pct, auction_floor_discount_pct, auction_curve, auction_window_start_at, auction_window_end_at, last_price_drop_at, suppress_notifications, created_at, expires_at, updated_at'
+    )
     .eq('status', 'available')
     // Most-urgent-first per §7.5 — auctions closing soonest
     // surface at the top.
@@ -105,7 +112,9 @@ export async function getPublicLegByNumber(
   const client = createAdminClient();
   const { data, error } = await client
     .from(TABLE)
-    .select('*')
+    .select(
+      'id, leg_number, parent_booking_id, operator_id, operator_name_snapshot, operator_phone_snapshot, operator_email_snapshot, operator_stub_id, aircraft_id, aircraft_snapshot, departure_airport, arrival_airport, departure_airport_freeform_snapshot, arrival_airport_freeform_snapshot, departure_window_start, departure_window_end, flexibility_hours, original_price, current_discount_pct, current_price, max_passengers, status, views_count, notifications_sent, reservation_token_hash, reservation_expires_at, reservation_customer_name_snapshot, reservation_customer_phone_snapshot, reservation_client_id, customer_booking_id, auction_initial_discount_pct, auction_floor_discount_pct, auction_curve, auction_window_start_at, auction_window_end_at, last_price_drop_at, suppress_notifications, created_at, expires_at, updated_at'
+    )
     .eq('leg_number', legNumber.trim())
     .in('status', allowed)
     .maybeSingle();

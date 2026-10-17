@@ -77,22 +77,47 @@ export async function readClientPrivilegeDashboardById(
 ): Promise<ClientPrivilegeDashboard> {
   const admin = createAdminClient() as unknown as LooseClient;
 
-  const { data: clientRow, error: clientErr } = await admin
-    .from('clients')
-    .select(
-      [
-        'full_name',
-        'privilege_tier',
-        'privilege_tier_assigned_at',
-        'privilege_tier_qualified_spend_12m_sar',
-        'privilege_below_threshold_since',
-        'tier_locked_until',
-        'cashback_balance_sar',
-        'two_factor_enabled',
-      ].join(',')
-    )
-    .eq('id', clientId)
-    .single();
+  // The three reads are independent (own-data, no audit row to write
+  // first — see header), so they run in parallel. Errors are still
+  // checked in the original order, so the thrown message is unchanged.
+  const [
+    { data: clientRow, error: clientErr },
+    { data: ledgerData, error: ledgerErr },
+    { data: changeLogData, error: changeLogErr },
+  ] = await Promise.all([
+    admin
+      .from('clients')
+      .select(
+        [
+          'full_name',
+          'privilege_tier',
+          'privilege_tier_assigned_at',
+          'privilege_tier_qualified_spend_12m_sar',
+          'privilege_below_threshold_since',
+          'tier_locked_until',
+          'cashback_balance_sar',
+          'two_factor_enabled',
+        ].join(',')
+      )
+      .eq('id', clientId)
+      .single(),
+    admin
+      .from('client_loyalty_ledger')
+      .select(
+        'id, client_id, event_type, amount_sar, balance_after_sar, booking_id, source_change_log_id, source_subscription_id, admin_actor_cookie_fingerprint, admin_reason, cashback_expiry_at, created_at'
+      )
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+      .limit(10),
+    admin
+      .from('privilege_tier_change_log')
+      .select(
+        'id, client_id, from_tier, to_tier, reason, qualified_spend_12m_sar, grace_started_at, admin_actor_cookie_fingerprint, admin_reason, lock_until, source_booking_id, created_at'
+      )
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+      .limit(5),
+  ]);
 
   if (clientErr || !clientRow) {
     throw new Error(
@@ -100,29 +125,11 @@ export async function readClientPrivilegeDashboardById(
     );
   }
 
-  const { data: ledgerData, error: ledgerErr } = await admin
-    .from('client_loyalty_ledger')
-    .select(
-      'id, client_id, event_type, amount_sar, balance_after_sar, booking_id, source_change_log_id, source_subscription_id, admin_actor_cookie_fingerprint, admin_reason, cashback_expiry_at, created_at'
-    )
-    .eq('client_id', clientId)
-    .order('created_at', { ascending: false })
-    .limit(10);
-
   if (ledgerErr) {
     throw new Error(
       `readClientPrivilegeDashboard ledger: ${ledgerErr.message ?? 'unknown'}`
     );
   }
-
-  const { data: changeLogData, error: changeLogErr } = await admin
-    .from('privilege_tier_change_log')
-    .select(
-      'id, client_id, from_tier, to_tier, reason, qualified_spend_12m_sar, grace_started_at, admin_actor_cookie_fingerprint, admin_reason, lock_until, source_booking_id, created_at'
-    )
-    .eq('client_id', clientId)
-    .order('created_at', { ascending: false })
-    .limit(5);
 
   if (changeLogErr) {
     throw new Error(

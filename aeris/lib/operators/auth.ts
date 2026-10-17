@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createHash, randomBytes } from 'crypto';
@@ -126,8 +127,18 @@ export async function validateOperatorSession(): Promise<ValidateOperatorSession
   const raw = await getRawSessionTokenFromCookie();
   if (!raw) return { ok: false, reason: 'no_cookie' };
 
-  const tokenHash = hashSessionToken(raw);
+  return validateOperatorSessionByHash(hashSessionToken(raw));
+}
 
+// React `cache()`: the operator layout and the page under it both call
+// requireOperatorSession, so one render shares ONE RPC (keyed by the
+// token hash). The memo is scoped to a single RSC render; Server Actions
+// run outside one, so a mid-session revoke is still honoured next request.
+const validateOperatorSessionByHash = cache(lookupOperatorSessionByHash);
+
+async function lookupOperatorSessionByHash(
+  tokenHash: string
+): Promise<ValidateOperatorSessionResult> {
   const client = createAdminClient();
   const { data, error } = await client.rpc('operator_session_validate', {
     p_token_hash: tokenHash,

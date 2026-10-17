@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -117,8 +118,16 @@ export type ValidateClientSessionResult =
  * (`validateClientSession`, web) and the Bearer path
  * (`requireClientSessionFromBearer`, mobile API) so the two
  * surfaces can never drift in how a session is judged valid.
+ *
+ * Wrapped in React `cache()` so the `/me` layout and the page under it
+ * (both call requireClientSession) share ONE RPC per render, keyed by the
+ * token hash. The memo lives only inside a single RSC render: Server
+ * Actions and the Bearer route handlers run outside one, so they still
+ * hit the RPC on every call and a revoke is honoured on the next request.
  */
-export async function validateClientSessionByHash(
+export const validateClientSessionByHash = cache(lookupClientSessionByHash);
+
+async function lookupClientSessionByHash(
   tokenHash: string
 ): Promise<ValidateClientSessionResult> {
   const client = createAdminClient();

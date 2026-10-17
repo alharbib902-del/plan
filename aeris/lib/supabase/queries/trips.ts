@@ -2,6 +2,7 @@ import 'server-only';
 
 import { unstable_noStore as noStore } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { countRowsByStatus } from '@/lib/supabase/queries/status-counts';
 import type {
   AcceptPhase4OfferArgs,
   AcceptPhase4OfferResult,
@@ -64,27 +65,16 @@ export async function listTrips(
 export async function countTripsByStatus(): Promise<TripStatusCounts> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from(TABLE)
-    .select('status', { count: 'exact', head: false });
+  const { counts, error } = await countRowsByStatus(TRIP_STATUSES, (status) => {
+    const query = client
+      .from(TABLE)
+      .select('status', { count: 'exact', head: true });
+    return status === null ? query : query.eq('status', status);
+  });
 
   if (error) {
     console.error('[trips] countTripsByStatus failed', error);
     throw new Error(`countTripsByStatus failed: ${error.message}`);
-  }
-
-  const counts: TripStatusCounts = {
-    total: 0,
-    pending: 0,
-    distributed: 0,
-    offered: 0,
-    booked: 0,
-    cancelled: 0,
-  };
-  for (const row of data ?? []) {
-    counts.total += 1;
-    const s = (row as { status: TripRequestStatus }).status;
-    if ((TRIP_STATUSES as readonly string[]).includes(s)) counts[s] += 1;
   }
   return counts;
 }

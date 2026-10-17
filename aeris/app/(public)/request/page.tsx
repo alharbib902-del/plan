@@ -12,6 +12,9 @@ import { listAirports } from '@/lib/supabase/queries/airports';
 // Phase 6.0 PR 2 (S3): airports fetched server-side and shipped
 // in the page bundle. Picker is purely client-render with no
 // runtime fetch (RLS-public table; data is small and stable).
+// Kept dynamic rather than prerendered: a build-time render would need
+// Supabase creds (CI builds without them). The airports read itself is
+// data-cached in listAirports, so a visit costs no DB round-trip.
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 

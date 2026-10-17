@@ -5,9 +5,8 @@ import { ClientPublicShell } from '@/components/clients/public-shell';
 import { ClientLoginForm } from '@/components/clients/login-form';
 import { clientsAr } from '@/lib/i18n/clients-ar';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-
+// Rendered statically on purpose: the only input is the ENABLE_* env
+// flag, which is fixed per Vercel deployment (an env change redeploys).
 export const metadata: Metadata = {
   title: clientsAr.loginTitle,
   robots: { index: false, follow: false },

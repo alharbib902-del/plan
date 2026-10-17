@@ -2,6 +2,7 @@ import 'server-only';
 
 import { unstable_noStore as noStore } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { countRowsByStatus } from '@/lib/supabase/queries/status-counts';
 import type {
   OperatorRow,
   OperatorSignupStatus,
@@ -86,38 +87,27 @@ export async function listOperators(
 // ============================================================
 // countOperatorsByStatus
 //
-// One round-trip; counts are aggregated in-memory. The list
-// page renders 5 filter chips (all + 4 statuses) so we compute
-// all 4 counts at once.
+// The list page renders 5 filter chips (all + 4 statuses);
+// each count is a parallel head-only query (countRowsByStatus).
 // ============================================================
 
 export async function countOperatorsByStatus(): Promise<OperatorStatusCounts> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from(TABLE)
-    .select('signup_status', { count: 'exact', head: false });
+  const { counts, error } = await countRowsByStatus(
+    OPERATOR_SIGNUP_STATUSES,
+    (status) => {
+      const query = client
+        .from(TABLE)
+        .select('signup_status', { count: 'exact', head: true });
+      return status === null ? query : query.eq('signup_status', status);
+    }
+  );
 
   if (error) {
     console.error('[operators] countOperatorsByStatus failed', error);
     throw new Error(`countOperatorsByStatus failed: ${error.message}`);
   }
-
-  const counts: OperatorStatusCounts = {
-    total: data?.length ?? 0,
-    pending: 0,
-    approved: 0,
-    suspended: 0,
-    rejected: 0,
-  };
-
-  for (const row of data ?? []) {
-    const status = row.signup_status as OperatorSignupStatus;
-    if (status in counts) {
-      counts[status as keyof Omit<OperatorStatusCounts, 'total'>] += 1;
-    }
-  }
-
   return counts;
 }
 

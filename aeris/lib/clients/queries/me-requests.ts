@@ -50,6 +50,10 @@ export function isClientTripStatusFilter(
   );
 }
 
+// Bounds the /me + mobile list payload; newest-first, so only the oldest
+// rows of an unusually long history fall off (no pagination UI yet).
+const LIST_LIMIT = 100;
+
 export async function listTripRequestsForClient(
   clientId: string,
   filter: ClientTripStatusFilter
@@ -67,7 +71,7 @@ export async function listTripRequestsForClient(
     query = query.eq('status', filter);
   }
 
-  const { data, error } = await query;
+  const { data, error } = await query.limit(LIST_LIMIT);
 
   if (error) {
     console.error('[me-requests.list] read failed', error);

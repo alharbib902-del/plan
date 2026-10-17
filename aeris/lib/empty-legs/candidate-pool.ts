@@ -32,7 +32,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
  *
  * The matcher then scores each candidate against the leg
  * via `lib/empty-legs/score-weights.ts`, applies
- * `frequency-cap.ts::shouldSkipCandidate` to drop
+ * `frequency-cap.ts::listLeadsToSkip` to drop
  * candidates already notified on this leg, and takes the
  * top 50.
  *
@@ -160,7 +160,7 @@ export async function listEligibleCandidates(
 //
 // The matcher then scores each candidate against the leg via
 // `scoreCandidateAgainstLeg` (signal substitutions per
-// Decision #13), applies `frequency-cap.ts::shouldSkipClientCandidate`
+// Decision #13), applies `frequency-cap.ts::listClientsToSkip`
 // to drop clients already notified on this leg, takes the top N.
 // ============================================================
 

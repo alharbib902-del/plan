@@ -2,6 +2,7 @@ import 'server-only';
 
 import { unstable_noStore as noStore } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { countRowsByStatus } from '@/lib/supabase/queries/status-counts';
 import type {
   LeadInquiryInsert,
   LeadInquiryRow,
@@ -54,27 +55,16 @@ export async function listLeads(
 export async function countLeadsByStatus(): Promise<LeadStatusCounts> {
   noStore();
   const client = createAdminClient();
-  const { data, error } = await client
-    .from(TABLE)
-    .select('status', { count: 'exact', head: false });
+  const { counts, error } = await countRowsByStatus(LEAD_STATUSES, (status) => {
+    const query = client
+      .from(TABLE)
+      .select('status', { count: 'exact', head: true });
+    return status === null ? query : query.eq('status', status);
+  });
 
   if (error) {
     console.error('[leads] countLeadsByStatus failed', error);
     throw new Error(`countLeadsByStatus failed: ${error.message}`);
-  }
-
-  const counts: LeadStatusCounts = {
-    total: 0,
-    new: 0,
-    contacted: 0,
-    quoted: 0,
-    converted: 0,
-    closed: 0,
-  };
-  for (const row of data ?? []) {
-    counts.total += 1;
-    const s = (row as { status: LeadStatus }).status;
-    if (LEAD_STATUSES.includes(s)) counts[s] += 1;
   }
   return counts;
 }

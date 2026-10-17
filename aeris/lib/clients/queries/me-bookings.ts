@@ -20,6 +20,10 @@ import type { BookingRow } from '@/types/database';
  * appear on a client's own list.
  */
 
+// Bounds the /me + mobile list payload; newest-first, so only the oldest
+// rows of an unusually long history fall off (no pagination UI yet).
+const LIST_LIMIT = 100;
+
 export async function listBookingsForClient(
   clientId: string
 ): Promise<BookingRow[]> {
@@ -30,7 +34,8 @@ export async function listBookingsForClient(
     .from('bookings')
     .select('*')
     .eq('client_id', clientId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(LIST_LIMIT);
 
   if (error) {
     console.error('[me-bookings.list] read failed', error);
